@@ -13,6 +13,7 @@ CHANGES:
     v0.4 - Write element size into dataset attributes so that it can be read by ImageJ automatically by ImageJ
          - Trim first 800 frames and final frames (number calculated from frame rate and scan speed with track lenght of 4 mm)
     v1.0 - Fixed bugs, testing on full Al dataset
+    v1.1 - Working on workstation MXIF27, added some extra print statements to make it easier to keep track of progress
     
 INTENDED CHANGES:
     - Switch to chunked storage to allow lossless compression
@@ -21,8 +22,9 @@ INTENDED CHANGES:
 """
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = '1.0'
+__version__ = '1.1'
 
+username = 'lbn38569' # Set to PC username so that correct Dropbox directory can be located
 
 import h5py
 import numpy as np
@@ -64,14 +66,17 @@ def output_query(data_root):
     return output_root
 
 def duplicate_folder_tree(data_root, output_root, logbook):
-    for material_folder in glob.glob('%s/*/' % data_root):     # Iterate through material folders (top level of folder structure in data root folder)
+    for material_folder in sorted(glob.glob('%s/*/' % data_root)):     # Iterate through material folders (top level of folder structure in data root folder)
         material_output_folder = duplicate_folder(material_folder, output_root)
+        print('\nMaterial: %s' % str(pathlib.PurePath(material_folder).name))
         
-        for substrate_folder in glob.glob('%s/*/' % material_folder):      # For each material, iterate through contained substrate folders
+        for substrate_folder in sorted(glob.glob('%s/*/' % material_folder)):      # For each material, iterate through contained substrate folders
             substrate_number = pathlib.PurePath(substrate_folder).name
+            print('\nSubstrate: %s' % str(pathlib.PurePath(substrate_folder).name))
                 
-            for track_folder in glob.glob('%s/*/' % substrate_folder):     # For each substrate, iterate through track folders
+            for track_folder in sorted(glob.glob('%s/*/' % substrate_folder)):     # For each substrate, iterate through track folders
                 track_number = pathlib.PurePath(track_folder).name
+                print('Track: %s' % str(track_number))
                 try:
                     make_hdf5(material_output_folder, track_folder, substrate_number, track_number, logbook)
                 except ValueError as e:
@@ -85,7 +90,7 @@ def duplicate_folder(original_dir, output_dir):
     return output_path
 
 def get_logbook():
-    logbook_path = pathlib.PurePath('C:/Users/rlamb/Dropbox (UCL)/BeamtimeData/ME-1573 - ESRF ID19', '220121-Logbook_EndofBeamtime.xlsx')
+    logbook_path = pathlib.PurePath('C:/Users/%s/Dropbox (UCL)/BeamtimeData/ME-1573 - ESRF ID19', '220121-Logbook_EndofBeamtime.xlsx' % username)
     logbook = pd.read_excel(logbook_path,
                             usecols='C,D,P,AJ',
                             converters={'Substrate No.': str, 'Sample position': str}
@@ -101,7 +106,6 @@ def get_logbook_data(logbook, trackid):  # Get scan speed and framerate from log
     return framerate, scan_speed
     
 def make_hdf5(substrate_output_folder, track_folder, substrate_number, track_number, logbook):
-    print('')
     trackid = '%s_%s' % (substrate_number, track_number)
     input_subfolders = sorted(glob.glob('%s/*/' % track_folder))   # Sorted list of subfolders containing tiff stacks. When sorted, image folder is at index zero and flats are at index 1 due to the file naming convention.
     output_filepath = pathlib.PurePath(substrate_output_folder, '%s.hdf5' % trackid)
@@ -117,7 +121,7 @@ def make_hdf5(substrate_output_folder, track_folder, substrate_number, track_num
         print('Error: %s - Skipping file' % str(e))
         
 def create_dataset(file, dset_name, dset_folders, n_frames, first_frame, index, element_size):
-    dset_source = sorted(dset_folders)[index]
+    dset_source = dset_folders[index]
     dset_images = sorted(glob.glob('%s/*.tif' % dset_source))
     dset_im0 = imread(dset_images[0])
     dset_shape = tuple([n_frames] + list(dset_im0.shape))
