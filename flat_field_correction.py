@@ -13,7 +13,8 @@ CHANGES:
     v0.4 - Added logging
     
 INTENDED CHANGES:
-    - 
+    - Solve divide by zero errors - only affecting first file?
+    - Add numpy warnings to logfile
     
 """
 __version__ = '0.4'
@@ -23,12 +24,14 @@ import numpy as np
 import pandas as pd
 from datetime import datetime as dt
 
+np.seterr(all='print')
+
 def create_log(folder):  # Create log file for storing error details
     init_time = dt.today().strftime('%Y-%m-%d_%H-%M-%S')
     if not os.path.exists(folder):
             os.makedirs(folder)
     log_file_path = pathlib.PurePath(folder, 'flat_field_correction_%s.log' % init_time)
-    logging.basicConfig(filename=log_file_path, level=logging.DEBUG, format='%(asctime)s    %(message)s', datefmt='%Y-%m-%d_%H-%M-%S')
+    logging.basicConfig(filename=log_file_path, level=logging.DEBUG, format='%(asctime)s    %(message)s', datefmt='%Y/%m/%d %H:%M:%S')
     print('\nLogging to: %s' % str(log_file_path))
 
 def wd_query():
@@ -63,7 +66,7 @@ def flat_field_correction(images, flats):
     avg_flat = np.zeros(flats[0].shape, dtype=np.uint32)       # Initialise array for storing averaged flat field
     for im in flats:
         avg_flat = np.add(avg_flat, im)
-    avg_flat = (avg_flat / len(flats)).astype(np.uint8)
+    avg_flat = (avg_flat / len(flats)).astype(np.uint8)     # Is rounding down here causing divide by zero errors on line 73?
     # Subtract the averaged flat field from each image
     ff_corrected_images = np.zeros(images.shape, dtype=np.uint8)
     avg_flat_mean = avg_flat.mean()
