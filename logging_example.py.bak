@@ -14,9 +14,9 @@ def create_log(folder):  # Create log file for storing error details
     init_time = dt.today().strftime('%Y-%m-%d_%H-%M-%S')
     if not os.path.exists(folder):
             os.makedirs(folder)
-    log_file_path = pathlib.PurePath(folder, 'flat_field_correction_%s.log' % init_time)
-    logging.basicConfig(filename=log_file_path, level=logging.DEBUG, format='%(asctime)s    %(message)s', datefmt='%Y-%m-%d_%H-%M-%S')
-    print('\nLogging to: %s' % str(log_file_path))
+    log_file_path = pathlib.PurePath(folder, 'logging_test_%s.log' % init_time)
+    logging.basicConfig(filename=log_file_path, level=logging.DEBUG)
+    print('Logging to: %s' % str(log_file_path))
     
 create_log('logs')
 logging.info('test')
