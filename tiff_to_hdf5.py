@@ -7,11 +7,13 @@ Created on Thu Feb 10 09:32:09 2022
 ---------------------------------------------------
 
 CHANGES:
-    v0.1 - Initial version. Makes a copy of the original folder structure and creates hdf5 files for each individual track containing datasets for xray images and flat field images.
+    v0.1 - Initial version. Makes a copy of the original folder structure and creates hdf5 files for each individual
+           track containing datasets for xray images and flat field images.
     v0.2 - Added file skipping if file already exists so that process can be interrupted and restarted easily
     v0.3 - Added pixel value conversion to 8-bit greyscale to save space and speed up subsequent processing
     v0.4 - Write element size into dataset attributes so that it can be read by ImageJ automatically by ImageJ
-         - Trim first 800 frames and final frames (number calculated from frame rate and scan speed with track lenght of 4 mm)
+         - Trim empty frames from the start and end of each dataset (start time defined in dictionary, number of
+           frames calculated from frame rate and scan speed with track lenght of 4 mm)
     v1.0 - Fixed bugs, testing on full Al dataset
     v1.1 - Working on workstation MXIF27, added some extra print statements to make it easier to keep track of progress
     v1.2 - Added logging for full error messages to clean up console output and facillitate debugging
@@ -34,9 +36,9 @@ from skimage.io import imread
 from datetime import datetime as dt
 
 # Dict containing starting frame number for each track position on substrate
-start_frames = {'01': 850,
-                '02': 890,
-                '03': 930,
+start_frames = {'01': 840,
+                '02': 880,
+                '03': 830,
                 '04': 970,
                 '05': 1010,
                 '06': 1050
