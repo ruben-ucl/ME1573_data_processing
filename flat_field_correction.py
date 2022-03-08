@@ -11,20 +11,22 @@ CHANGES:
     v0.2 - Deactivated rotation feature, added background subtraction and 8-bit conversion stages.
     v0.3 - Stripped down to just flat field correction functionality to work with tiff_to_hdf5 v1.3, saves output as new hdf5 file
     v0.4 - Added logging
+    v0.4.1 - Added logging of warnings to catch zero division RuntimeWarnings from numpy
     
 INTENDED CHANGES:
     - Solve divide by zero errors - only affecting first file?
-    - Add numpy warnings to logfile
+    - 
     
 """
-__version__ = '0.4'
+__version__ = '0.4.1'
 
-import h5py, os, glob, pathlib, logging
+import h5py, os, glob, pathlib, logging, warnings
 import numpy as np
 import pandas as pd
 from datetime import datetime as dt
 
-np.seterr(all='print')
+np.seterr(divide='warn')
+
 
 def create_log(folder):  # Create log file for storing error details
     init_time = dt.today().strftime('%Y-%m-%d_%H-%M-%S')
@@ -32,6 +34,8 @@ def create_log(folder):  # Create log file for storing error details
             os.makedirs(folder)
     log_file_path = pathlib.PurePath(folder, 'flat_field_correction_%s.log' % init_time)
     logging.basicConfig(filename=log_file_path, level=logging.DEBUG, format='%(asctime)s    %(message)s', datefmt='%Y/%m/%d %H:%M:%S')
+    logging.captureWarnings(capture=True)  # Capture warnings with the logging module and write to the the same log
+    warnings.formatwarning(message='%(asctime)s    %(message)s', category=Warning, filename=log_file_path, lineno=-1)
     print('\nLogging to: %s' % str(log_file_path))
 
 def wd_query():
