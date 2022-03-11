@@ -1,19 +1,18 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Mar  1 15:45:39 2022
+#############################################################################
+#############################################################################
+# Code description
+"""PyAMPM viewer is an AMPM file reader script."""
 
-@author: Ruben
-"""
-
-# Appends a DataFrame containing AMPM data to exisiting HDF5 files for each experiment
+# Author
+__author__ = 'Samy Hocine'
 
 #############################################################################
 #############################################################################
 # Modules & libraries
-import os, glob, h5py
+import os
 from pathlib import Path
+import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 
 #############################################################################
 #############################################################################
@@ -184,49 +183,48 @@ def readAMPMdat(datFolder, datFile): # Equivalent of ReadAMPMDataFast on Matlab
             # channel in a 2 MHz file
             data = read2Mdata(datHandle, u16, numChannels*numSamples)
 
-    print(f'Data read for file {Path(datFile).name}')
+    print(f'Data read for file {datFile}')
     return t, data, sampleFreq
 
-def make_dataframe(t, AMPM_data):
-    df = pd.DataFrame()
-    df['Time'] = t
-    for i in range(29):
-        df[ChannelNames[i]] = AMPM_data[i]
-    return df
-    
+
 #############################################################################
 #############################################################################
 # Main body
 
 # Default path
 # datFolder = Path(__location__)
-AMPM_path = Path('C:/Users/rlamb/Dropbox (UCL)/BeamtimeData/ME-1573 - ESRF ID19/ME1573_AMPM_data')
+
 # Custom path (uncomment)
-custom_path = r'C:\Users\rlamb\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\ESRF ME1573 Python sandbox\hdf5 test sandbox\0103 AlSi10Mg'
+custom_path = 'C:/Users/rlamb/Dropbox (UCL)/BeamtimeData/ME-1573 - ESRF ID19/ME1573_AMPM_data'
 datFolder = Path(custom_path)
 
 # File name to load
-# trackid = input('Enter the number of the track to be analysed (format: SSSS_TT)\n')
-for material_folder in glob.glob('%s/*/' % datFolder):
-    for file in glob.glob('%s/*.hdf5' % material_folder):
-        trackid = Path(file).name
-        print('Working on %s' % trackid)    
-        datFile = glob.glob('%s/%s_AMPM_%s_L4_*.dat' % (AMPM_path, trackid[:4], trackid[-6]))[0]
+datFile = '0103_AMPM_1_L4_100K_2022-01-26_06-22-31.dat'
 
-        try:
-            ft, fData, _ = readAMPMdat(datFolder, datFile)
-        except Exception as e:
-            print(str(e))
-            continue
-            
-        AMPM_dataframe = make_dataframe(ft, fData)
-        print('Appending AMPM data to file')
-        try:
-            with h5py.File(file, 'a') as f:
-                for col in AMPM_dataframe:
-                    f['AMPM_data/%s' % col] = AMPM_dataframe[col]
-            print('Done\n')
-        except OSError as e:
-            print('Dataset with the same name already exists - skipping file\n')
-        
+ft, fData, fsampleFreq = readAMPMdat(datFolder, datFile)
+
+# Trim to region of interest
+for i, val in enumerate(fData[15]):
+    start = 0
+    if val > 100:
+        start = i - 20
+        break
+
+fig, ax = plt.subplots(figsize=(16,9))
+
+if fsampleFreq == 100000: # For 100K files
+    ind = 15 #Channel index (see above)
+    # ax.plot(ft, fData[ind])
+    ax.plot(np.subtract(ft[start:], ft[start]), fData[ind][start:])
+    ax.set_ylabel(ChannelNames[ind])
+
+if fsampleFreq == 2000000: # For 2M files
+    ax.plot(ft, fData)
+    ax.set_ylabel('BDPD [arbitrary units]')
+
+ax.grid(True)
+ax.set_title(datFile)
+ax.set_xlabel('Time [s]')
+
+plt.show()
 

@@ -220,6 +220,8 @@ for material_folder in glob.glob('%s/*/' % datFolder):
             continue
             
         AMPM_dataframe = make_dataframe(ft, fData)
+        print(np.array(AMPM_dataframe))
+        input('')
         print('Appending AMPM data to file')
         try:
             with h5py.File(file, 'a') as f:
