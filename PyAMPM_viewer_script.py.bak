@@ -204,18 +204,18 @@ datFile = '0103_AMPM_1_L4_100K_2022-01-26_06-22-31.dat'
 ft, fData, fsampleFreq = readAMPMdat(datFolder, datFile)
 
 # Trim to region of interest
-for i, val in enumerate(fData[15]):
-    start = 0
-    if val > 100:
-        start = i - 20
-        break
+# for i, val in enumerate(fData[15]):
+    # start = 0
+    # if val > 100:
+        # start = i - 20
+        # break
 
 fig, ax = plt.subplots(figsize=(16,9))
 
 if fsampleFreq == 100000: # For 100K files
-    ind = 15 #Channel index (see above)
-    # ax.plot(ft, fData[ind])
-    ax.plot(np.subtract(ft[start:], ft[start]), fData[ind][start:])
+    ind = 24 #Channel index (see above)
+    ax.plot(ft, fData[ind])
+    # ax.plot(np.subtract(ft[start:], ft[start]), fData[ind][start:])
     ax.set_ylabel(ChannelNames[ind])
 
 if fsampleFreq == 2000000: # For 2M files

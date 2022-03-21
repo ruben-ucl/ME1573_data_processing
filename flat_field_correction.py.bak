@@ -11,13 +11,14 @@ CHANGES:
     v0.2 - Deactivated rotation feature, added background subtraction and 8-bit conversion stages.
     v0.3 - Stripped down to just flat field correction functionality to work with tiff_to_hdf5 v1.3, saves output as new hdf5 file
     v0.4 - Added logging
+    v0.4.1 - Added logging of warnings to catch zero division RuntimeWarnings from numpy
     
 INTENDED CHANGES:
     - Solve divide by zero errors - only affecting first file?
-    - Add numpy warnings to logfile
+    - 
     
 """
-__version__ = '0.4'
+__version__ = '0.4.1'
 
 import h5py, os, glob, pathlib, logging, warnings
 import numpy as np

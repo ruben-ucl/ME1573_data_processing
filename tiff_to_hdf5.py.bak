@@ -142,7 +142,7 @@ def make_hdf5(substrate_output_folder, track_folder, trackid, logbook):
     first_frame = start_frames[trackid[-2:]]
     try:
         with h5py.File(output_filepath, 'x') as output_file:
-            create_dataset(output_file, 'xray_images', input_subfolders, index = 0, element_size = [0, 4.3, 4.3], n_frames=n_frames, first_frame=first_frame)
+            create_dataset(output_file, 'xray_images', input_subfolders, index = 0, element_size = [0, 4.3, 4.3], n_frames, first_frame)
             create_dataset(output_file, 'xray_flats', input_subfolders, index = 1, element_size = [0, 4.3, 4.3])
             logging.info('File complete')
     except OSError as e:

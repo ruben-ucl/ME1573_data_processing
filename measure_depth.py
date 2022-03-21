@@ -5,11 +5,12 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = 'v0.1'
+__version__ = 'v0.2'
 
 '''
 CHANGELOG
     v0.1 - Measures keyhole depth in segmented images as the lowest white pixel in each frame
+    v0.2 - Added subplot for photodiode signal to compare with keyhole depth
            
 INTENDED CHANGES
     - 
@@ -37,34 +38,36 @@ def main():
                     d = measure_depth(frame)
                     depth.append(d)
                     
-                fig, ax1 = plt.subplots()
-                ax1.plot(time, depth, 'b-')
-                ax1.set_ylim(-500, 0)
+                fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
+                ax1.scatter(time, depth, s=1, c='b')
+                ax1.set_ylim(-800, 0)
                 ax1.set_xlim(0, time[-1])
-                ax1.set_xlabel('Time (ms)')
-                ax1.set_ylabel('Keyhole depth (um)')
+                ax1.set_ylabel('Keyhole depth (um)', color='b')
                 ax1.set_title(trackid)
                 
-                # ax2 = ax1.twinx()
-                # AMPM_time = list(file['AMPM_data/Time'])
-                # AMPM_pd = list(file['AMPM_data/Photodiode1Normalised'])
-                # ax2.plot(trim_pd(AMPM_time, AMPM_pd), 'r-')
-                # ax2.set_ylabel('Photodiode signal strength (-)')
+                AMPM_time = list(file['AMPM_data/Time'])
+                AMPM_pd = list(file['AMPM_data/Photodiode1Bits'])
+                AMPM_pwr = list(file['AMPM_data/BeamDumpDiodeNormalised'])
+                t, pd = trim_pd(AMPM_time, AMPM_pd, AMPM_pwr)
+                ax2.scatter(t, pd, s=1, c='r')
+                ax2.set_ylim(0, 1000)
+                ax2.set_ylabel('Photodiode signal strength (-)', color='r')
+                ax2.set_xlabel('Time (ms)')
                 
-                plt.show()
-                # plt.savefig(str(Path(filepath, '%s keyhole depth plot.png' % trackid)))
+                # plt.show()
+                plt.savefig(str(Path(filepath, '%s keyhole depth plot.png' % trackid)))
                 
             print('Done\n')
         except OSError as e:
             print('Error: output dataset with the same name already exists - skipping file')
             
-def trim_pd(t, pd):
-    for i, val in enumerate(pd):
-        start = 0
-        if val > 100:
+def trim_pd(t, pd, pwr):
+    start = 0
+    for i, val in enumerate(pwr):        
+        if (val > 100):
             start = i - 20
             break
-    t = np.subtract(t[start:], t[start])
+    t = t[start:] - t[start]
     pd = pd[start:]
     return t, pd
 

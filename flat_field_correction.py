@@ -44,7 +44,7 @@ def wd_query():
         if wd_query_response == 'y':
             data_root = os.getcwd()
         elif wd_query_response == 'n':
-            data_root = input('\nPlease input the global path of the beamtime data root folder.\n')
+            data_root = input('\nPlease input the global path of the input data root folder.\n')
         else:
             raise ValueError('Invalid input, try again.')
     except ValueError:
