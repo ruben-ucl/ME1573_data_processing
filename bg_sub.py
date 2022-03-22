@@ -21,7 +21,7 @@ input_dset_name = 'ff_corrected'
 
 # Output information
 mode = 'prev_n_frames' # Set to 'first_n_frames' or 'prev_frame'
-n = 10
+n = 5
 
 def main(mode, n=1):
     for f in glob.glob(str(Path(filepath, '*.hdf5'))):
