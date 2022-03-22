@@ -1,4 +1,4 @@
-import h5py, glob
+import h5py, glob, cv2
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -22,9 +22,9 @@ INTENDED CHANGES
 '''
 # Input data informaton
 filepath = r'C:\Users\rlamb\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\ESRF ME1573 Python sandbox\hdf5 test sandbox\0103 AlSi10Mg'
-input_dset_name = 'bg_sub_prev_10_frames'
+input_dset_name = 'bg_sub_prev_20_frames'
 
-mode = 'apply' # Set to 'preview' or 'apply' to either preview a single image or apply to the entire dataset
+mode = 'preview' # Set to 'preview' or 'apply' to either preview a single image or apply to the entire dataset
 
 # Iterate through files and datasets to perform filtering and thresholding
 def main(mode):
@@ -34,26 +34,30 @@ def main(mode):
             with h5py.File(f, 'a') as file:
                 dset = file[input_dset_name]
                 print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))
-                print('Calculating output')
                 if mode == 'preview':
                     threshold_im(dset[262, :, :])
                 elif mode == 'apply':
-                    dset_filt_seg = threshold_timeseries(dset)
-                    output_dset_name = 'bg_sub_prev_10_frames_/median_filt_r1_tri-thresh'
+                    output_dset_name = f'{input_dset_name}_/median_filt_r1_tri-thresh'
                     output_dset = file.require_dataset(output_dset_name, shape=dset.shape, dtype=np.uint8)
+                    dset_filt_seg = threshold_timeseries(dset)
                     transfer_attr(dset, output_dset, 'element_size_um')
-                    output_dset = dset_filt_seg.astype(np.uint8)
+                    output_dset[:, :, :] = dset_filt_seg
                 print('Done\n')
         except OSError as e:
             print('Error: output dataset with the same name already exists - skipping file\n')
 
 def threshold_timeseries(dset):
     # dset_filt = filters.gaussian(dset) * 255
-    dset_filt = filters.median(dset, footprint=np.ones((3, 3, 3)))
+    print('Applying median filter')
+    dset_filt = filters.rank.median(dset, footprint=np.ones((3, 3, 3)))
+    print('Calculating threshold')
     thresh = filters.threshold_triangle(dset_filt)
+    print(f'Applying threshold: {thresh}')
     mask = dset_filt > thresh
     binary = np.zeros_like(dset)
     binary[mask] = 255
+    print('Removing outliers from binary image')
+    binary = remove_outliers(binary)
     return binary
     
 def threshold_im(im):
@@ -73,8 +77,9 @@ def threshold_im(im):
                    scalebar=True
                    )
                    
-    im_filt = filters.median(im, footprint=np.ones((3, 3)))
+    # im_filt = filters.median(im, footprint=np.ones((3, 3)))
     # im_filt = filters.gaussian(im) * 255
+    im_filt = cv2.bilateralFilter(im, 8, 75, 75)
     create_subplot(im_filt,
                    ax3,
                    'Flat field correction, background subtraction, median filter (radius=1)',

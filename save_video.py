@@ -17,22 +17,27 @@ INTENDED CHANGES
 '''
 # Input informaton
 filepath = r'C:\Users\rlamb\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\ESRF ME1573 Python sandbox\hdf5 test sandbox\0103 AlSi10Mg'
-input_dset_name = 'ff_corrected'
+input_dset_name = 'bg_sub_prev_20_frames_/median_filt_r1_tri-thresh'
+output_name = 'bg_sub_prev_20_frames_median_filt_r1_tri-thresh'
 capture_framerate = 40000
 output_framerate = 30
+text_colour = 'black'   # 'black' or 'white'
 
 def main():
+    print(f'Creating videos from dataset: {input_dset_name}\n')
     for file in glob.glob(str(Path(filepath, '*.hdf5'))):
         with h5py.File(file, 'a') as f:
             dset = f[input_dset_name]
             trackid = Path(file).name[:-5]
+            print(trackid)
             fileext = '.mp4'
-            vid_filename = f'{trackid}_{input_dset_name}{fileext}'
-            output_folder = 'videos_overlayed'
+            vid_filename = f'{trackid}_{output_name}{fileext}'
+            output_folder = 'videos'
             create_video_from_dset(dset, vid_filename, output_folder)
+            print('Done\n')
 
 def create_video_from_dset(dset, vid_filename, output_folder, overlay=True):
-    output_path = Path(filepath, output_folder)
+    output_path = Path(filepath, output_folder, output_name)
     if not os.path.exists(output_path):
         os.makedirs(output_path)
     frame_size = (dset.shape[-1], dset.shape[-2])
@@ -45,6 +50,10 @@ def create_video_from_dset(dset, vid_filename, output_folder, overlay=True):
     out.release()
 
 def create_overlay(i, frame):
+    if text_colour == 'black':
+        bgr_colour = (0, 0, 0)
+    elif text_colour == 'white':
+        bgr_colour = (255, 255, 255)
     timestamp = str(format(i * 1/capture_framerate * 1000, '.3f')) + ' ms'        # in milliseconds
     # Add timestamp to frame
     new_frame = cv2.putText(frame,                          # Original frame
@@ -52,7 +61,7 @@ def create_overlay(i, frame):
                             (10, 32),                       # Text origin
                             cv2.FONT_HERSHEY_DUPLEX,        # Font
                             0.9,                            # Fontscale
-                            (0, 0, 0),                      # Font colour (BGR)
+                            bgr_colour,                     # Font colour (BGR)
                             1,                              # Line thickness
                             cv2.LINE_AA                     # Line type
                             )
@@ -63,7 +72,7 @@ def create_overlay(i, frame):
                             (890, 500),                     # Text origin
                             cv2.FONT_HERSHEY_DUPLEX,        # Font
                             0.9,                            # Fontscale
-                            (0, 0, 0),                      # Font colour (BGR)
+                            bgr_colour,                     # Font colour (BGR)
                             1,                              # Line thickness
                             cv2.LINE_AA                     # Line type
                             )
@@ -72,14 +81,13 @@ def create_overlay(i, frame):
     bar_originy = 470
     bar_length = int(500/4.3)
     bar_thickness = 4
-    new_frame = cv2.rectangle(new_frame,
-                              (bar_originx, bar_originy),
-                              (bar_originx+bar_length, bar_originy-bar_thickness),
-                              (0, 0, 0),
-                              -1
+    new_frame = cv2.rectangle(new_frame,                                            # Original frame
+                              (bar_originx, bar_originy),                           # Top left corner
+                              (bar_originx+bar_length, bar_originy-bar_thickness),  # Bottom right corner
+                              bgr_colour,                                           # Colour (BGR)
+                              -1                                                    # Line thickness (-ve means fill shape inwards)
                               )
     return new_frame
-    
     
 if __name__ == "__main__":
 	main()
