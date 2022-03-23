@@ -3,8 +3,21 @@
 Created on Tue Mar  1 15:45:39 2022
 
 @author: Ruben
+
+Using code originally from Samy Hocine and Renishaw PLC
 """
 
+__version__ = '0.2'
+
+'''
+CHANGELOG
+    v0.1 - Writes corresponding AMPM data to xray data file as a single dataset array
+    v0.2 - Writes AMPM data columns as separate datasets within a group 'AMPM data'
+           
+INTENDED CHANGES
+    - 
+    
+'''
 # Appends a DataFrame containing AMPM data to exisiting HDF5 files for each experiment
 
 #############################################################################

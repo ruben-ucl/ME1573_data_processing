@@ -18,6 +18,7 @@ CHANGES:
     v1.1 - Working on workstation MXIF27, added some extra print statements to make it easier to keep track of progress
     v1.2 - Added logging for full error messages to clean up console output and facillitate debugging
     v1.3 - Now copies all flat field frames
+    v1.3.1 - Updated all start frames with intention that all videos start 50 frames before laser onset
     
 INTENDED CHANGES:
     - Switch to chunked storage to allow lossless compression
@@ -36,13 +37,13 @@ import pandas as pd
 from skimage.io import imread
 from datetime import datetime as dt
 
-# Dict containing starting frame number for each track position on substrate
-start_frames = {'01': 840,
-                '02': 880,
-                '03': 830,
-                '04': 990,
-                '05': 1010,
-                '06': 1050
+# Frame number at which laser interaction begins for each track position on substrate
+start_frames = {'01': 867,
+                '02': 910,
+                '03': 851,
+                '04': 1006,
+                '05': 947,
+                '06': 1102
                 }
 
 # File structure: '\Beamtime root folder\Material\Substrate\Track\[Datasets]',
@@ -138,8 +139,8 @@ def make_hdf5(substrate_output_folder, track_folder, trackid, logbook):
     output_filepath = pathlib.PurePath(substrate_output_folder, '%s.hdf5' % trackid)
     framerate, scan_speed = get_logbook_data(logbook, trackid)
     n_frames = round(framerate * 4 / scan_speed) # based on track length of 4 mm
-    n_frames += 100 # Margin to allow for variation in track start time due to different scan speeds
-    first_frame = start_frames[trackid[-2:]]
+    n_frames += 100     # Margin for ~50 frames before and after scan
+    first_frame = start_frames[trackid[-2:]] - 50   # Begin video 50 frames before laser onset
     try:
         with h5py.File(output_filepath, 'x') as output_file:
             create_dataset(output_file, 'xray_images', input_subfolders, index = 0, element_size = [0, 4.3, 4.3], n_frames=n_frames, first_frame=first_frame)
