@@ -18,11 +18,14 @@ INTENDED CHANGES
     
 '''
 # Input data informaton
-filepath = r'C:\Users\rlamb\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\ESRF ME1573 Python sandbox\hdf5 test sandbox\0103 AlSi10Mg'
+with open('data_path.txt', encoding='utf8') as f:
+    filepath = fr'{f.read()}'
+    print(f'Reading from {filepath}\n')
+    
 input_dset_name = 'bg_sub_prev_10_frames'
 
-kernel_diameters = [5, 10, 15]
-sigma_values = [10, 30, 60]
+kernel_diameters = [5, 8, 15]
+sigma_values = [50, 75, 100]
 
 # Iterate through files and datasets to perform filtering and thresholding
 def main():

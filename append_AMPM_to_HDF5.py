@@ -213,9 +213,10 @@ def make_dataframe(t, AMPM_data):
 
 # Default path
 # datFolder = Path(__location__)
-AMPM_path = Path('C:/Users/rlamb/Dropbox (UCL)/BeamtimeData/ME-1573 - ESRF ID19/ME1573_AMPM_data')
+AMPM_path = Path('C:/Users/lbn38569/Dropbox (UCL)/BeamtimeData/ME-1573 - ESRF ID19/ME1573_AMPM_data')
 # Custom path (uncomment)
-custom_path = r'C:\Users\rlamb\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\ESRF ME1573 Python sandbox\hdf5 test sandbox\0103 AlSi10Mg'
+# custom_path = r'C:\Users\rlamb\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\ESRF ME1573 Python sandbox\hdf5 test sandbox\0103 AlSi10Mg'
+custom_path = r'K:\working_folder'
 datFolder = Path(custom_path)
 
 # File name to load

@@ -16,14 +16,17 @@ INTENDED CHANGES
     
 '''
 # Input informaton
-filepath = r'C:\Users\rlamb\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\ESRF ME1573 Python sandbox\hdf5 test sandbox\0103 AlSi10Mg'
+with open('data_path.txt', encoding='utf8') as f:
+    filepath = fr'{f.read()}'
+    print(f'Reading from {filepath}\n')
+    
 input_dset_name = 'ff_corrected'
 
 # Output information
-mode = 'first_n_frames' # Set to 'first_n_frames' or 'prev_frame'
+mode = 'prev_n_frames' # Set to 'first_n_frames' or 'prev_frame'
 n = 10
 
-def main(mode, n=1):
+def main(mode, n):
     for f in glob.glob(str(Path(filepath, '*.hdf5'))):
         print('Reading %s' % Path(f).name)
         try:

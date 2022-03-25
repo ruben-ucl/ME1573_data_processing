@@ -26,12 +26,14 @@ with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
     
-input_dset_name = 'bg_sub_prev_20_frames'
+input_dset_name = 'bg_sub_prev_10_frames'
 
 mode = 'preview' # Set to 'preview' or 'apply' to either preview a single image or apply to the entire dataset
 
+filter_mode = 'bilateral'
+
 # Iterate through files and datasets to perform filtering and thresholding
-def main(mode):
+def main(mode, filt):
     for f in glob.glob(str(Path(filepath, '*.hdf5'))):
         print('Reading %s' % Path(f).name)
         try:
@@ -39,21 +41,33 @@ def main(mode):
                 dset = file[input_dset_name]
                 print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))
                 if mode == 'preview':
-                    threshold_im(dset[262, :, :])
+                    threshold_im(dset[262, :, :], filt)
                 elif mode == 'apply':
-                    output_dset_name = f'{input_dset_name}_/median_filt_r1_tri-thresh'
+                    output_dset_name = f'{input_dset_name}_/bilat_filt_r1_tri-thresh'
                     output_dset = file.require_dataset(output_dset_name, shape=dset.shape, dtype=np.uint8)
-                    dset_filt_seg = threshold_timeseries(dset)
+                    dset_filt_seg = threshold_timeseries(dset, filt)
                     transfer_attr(dset, output_dset, 'element_size_um')
                     output_dset[:, :, :] = dset_filt_seg
                 print('Done\n')
         except OSError as e:
             print('Error: output dataset with the same name already exists - skipping file\n')
 
-def threshold_timeseries(dset):
-    # dset_filt = filters.gaussian(dset) * 255
-    print('Applying median filter')
-    dset_filt = filters.rank.median(dset, footprint=np.ones((3, 3, 3)))
+def threshold_timeseries(dset, filt):
+    if filt == 'gauss':
+        print('Applying Gaussian filter')
+        dset_filt = filters.gaussian(dset) * 255
+    elif filt == 'median':
+        print('Applying median filter')
+        dset_filt = filters.rank.median(dset, footprint=np.ones((3, 3, 3)))
+    elif filt == 'bilateral':
+        print('Applying bilateral filter')
+        dset_filt = np.zeros_like(dset)
+        for i, im in enumerate(dset):
+            im_filt = cv2.bilateralFilter(im, 8, 75, 75)
+            dset_filt[i, :, :] = im_filt
+    else:
+        print('No filter applied')
+        dset_filt = dset
     print('Calculating threshold')
     thresh = filters.threshold_triangle(dset_filt)
     print(f'Applying threshold: {thresh}')
@@ -64,7 +78,7 @@ def threshold_timeseries(dset):
     binary = remove_outliers(binary)
     return binary
     
-def threshold_im(im):
+def threshold_im(im, filt):
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharex=True, sharey=True)    # Initialise figure with four subplots
     
     create_subplot(im,
@@ -80,10 +94,14 @@ def threshold_im(im):
                    'Triangle threshold',
                    scalebar=True
                    )
-                   
-    # im_filt = filters.median(im, footprint=np.ones((3, 3)))
-    # im_filt = filters.gaussian(im) * 255
-    im_filt = cv2.bilateralFilter(im, 8, 75, 75)
+    if filt == 'median':   
+        im_filt = filters.median(im, footprint=np.ones((3, 3)))
+    elif filt == 'gauss':
+        im_filt = filters.gaussian(im) * 255
+    elif filt == 'bilateral':
+        im_filt = cv2.bilateralFilter(im, 8, 75, 75)
+    else:
+        im_filt = im
     create_subplot(im_filt,
                    ax3,
                    'Flat field correction, background subtraction, median filter (radius=1)',
@@ -134,4 +152,4 @@ def transfer_attr(dset_1, dset_2, attr):    # Copy attribute from dset_1 to dset
     data = dset_1.attrs.get(attr)
     dset_2.attrs.create(attr, data)
     
-main(mode)
+main(mode, filter_mode)

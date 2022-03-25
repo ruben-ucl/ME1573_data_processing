@@ -3,7 +3,7 @@ import numpy as np
 from pathlib import Path
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = 'v0.1'
+__version__ = 'v0.2'
 
 '''
 CHANGELOG
@@ -16,9 +16,14 @@ INTENDED CHANGES
     
 '''
 # Input informaton
-filepath = r'C:\Users\rlamb\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\ESRF ME1573 Python sandbox\hdf5 test sandbox\0103 AlSi10Mg'
-input_dset_name = 'bg_sub_prev_20_frames_/median_filt_r1_tri-thresh'
-output_name = 'bg_sub_prev_20_frames_median_filt_r1_tri-thresh'
+
+# Read data folder path from .txt file
+with open('data_path.txt', encoding='utf8') as f:
+    filepath = fr'{f.read()}'
+    print(f'Reading from {filepath}\n')
+    
+input_dset_name = 'bg_sub_first_30_frames'
+output_name = input_dset_name
 capture_framerate = 40000
 output_framerate = 30
 text_colour = 'black'   # 'black' or 'white'

@@ -1,6 +1,7 @@
 import h5py, glob, os, imageio
 import numpy as np
 from pathlib import Path
+from skimage import filters
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v0.1'
@@ -8,18 +9,25 @@ __version__ = 'v0.1'
 '''
 CHANGELOG
     v0.1 - Iterates through hdf5 files and saves the spcified frame number from each as a still image
+    v0.2 - Added function to apply threshold to frame before saving
            
 INTENDED CHANGES
     - 
     
 '''
 # Input informaton
-filepath = r'C:\Users\rlamb\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\ESRF ME1573 Python sandbox\hdf5 test sandbox\0103 AlSi10Mg'
-input_dset_name = 'bg_sub_prev_10_frames'
-frame_no = 100
+# Read data folder path from .txt file
+with open('data_path.txt', encoding='utf8') as f:
+    filepath = fr'{f.read()}'
+    print(f'Reading from {filepath}\n')
+    
+input_dset_name = 'bg_sub_first_30_frames'
+frame_no = -1
 folder_name = f'{input_dset_name}_frame_{frame_no}_stills'
 
 folder_path = Path(filepath, folder_name)
+
+make_binary = False  # Set to True to threshold frame using triangle algorithm
 
 def main():
     print(f'Saving frame no. {frame_no} from dataset: {input_dset_name}\n')
@@ -28,10 +36,23 @@ def main():
     for file in glob.glob(str(Path(filepath, '*.hdf5'))):
         with h5py.File(file, 'a') as f:
             dset = f[input_dset_name]
+            im = dset[frame_no]
             trackid = Path(file).name[:-5]
-            print(trackid)
+            print(f'Saving {trackid} frame {frame_no}')
             output_filename = f'{trackid}_{input_dset_name}_frame_{frame_no}.png'
-            imageio.imwrite(output_filename, dset[frame_no])
+            
+            if make_binary == True:
+                output_filename = f'{output_filename[:-4]}_tri-thresh{output_filename[-4:]}'
+                im_filt = filters.rank.median(im, footprint=np.ones((3, 3)))
+                thresh = filters.threshold_triangle(im_filt)
+                print(f'Applying threshold: {thresh}')
+                mask = im_filt > thresh
+                binary = np.zeros_like(im)
+                binary[mask] = 255
+                im = binary
+                
+            output_filepath = Path(folder_path, output_filename)
+            imageio.imwrite(output_filepath, im)
         print('Done\n')
 
 if __name__ == "__main__":
