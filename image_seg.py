@@ -15,13 +15,17 @@ CHANGELOG
     v0.2 - Restructured for readability and flexibility
     v0.3 - Made it easier to switch between plotting and processing entire datasets with 'mode' field
     v0.4 - Switched to triangle thresholding algorithm
+    v0.4.1 - Moved data folder path storage to text file for ease of copying script to different machines
            
 INTENDED CHANGES
     - Streamline changing between different filters and kernel dimensions
     
 '''
-# Input data informaton
-filepath = r'C:\Users\rlamb\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\ESRF ME1573 Python sandbox\hdf5 test sandbox\0103 AlSi10Mg'
+# Read data folder path from .txt file
+with open('data_path.txt', encoding='utf8') as f:
+    filepath = fr'{f.read()}'
+    print(f'Reading from {filepath}\n')
+    
 input_dset_name = 'bg_sub_prev_20_frames'
 
 mode = 'preview' # Set to 'preview' or 'apply' to either preview a single image or apply to the entire dataset

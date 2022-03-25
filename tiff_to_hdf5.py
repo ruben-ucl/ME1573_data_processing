@@ -19,6 +19,7 @@ CHANGES:
     v1.2 - Added logging for full error messages to clean up console output and facillitate debugging
     v1.3 - Now copies all flat field frames
     v1.3.1 - Updated all start frames with intention that all videos start 50 frames before laser onset
+             Only saves first 100 flat field frames to reduce file size
     
 INTENDED CHANGES:
     - Switch to chunked storage to allow lossless compression
@@ -144,7 +145,7 @@ def make_hdf5(substrate_output_folder, track_folder, trackid, logbook):
     try:
         with h5py.File(output_filepath, 'x') as output_file:
             create_dataset(output_file, 'xray_images', input_subfolders, index = 0, element_size = [0, 4.3, 4.3], n_frames=n_frames, first_frame=first_frame)
-            create_dataset(output_file, 'xray_flats', input_subfolders, index = 1, element_size = [0, 4.3, 4.3])
+            create_dataset(output_file, 'xray_flats', input_subfolders, index = 1, element_size = [0, 4.3, 4.3], n_frames=200)
             logging.info('File complete')
     except OSError as e:
         print('Error: file already exists - skipping file')

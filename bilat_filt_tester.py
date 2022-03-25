@@ -34,7 +34,7 @@ def main():
             create_plot(dset[262, :, :])
             print('Done\n')
   
-def create_plot(im, threshold=False):
+def create_plot(im, threshold=True):
     fig, axs = plt.subplots(3, 3, sharex=True, sharey=True)    # Initialise figure with nine subplots
     for i, row in enumerate(axs):
         for j, ax in enumerate(row):
