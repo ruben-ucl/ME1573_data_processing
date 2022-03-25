@@ -89,6 +89,5 @@ def create_overlay(i, frame):
                               )
     return new_frame
     
-    
 if __name__ == "__main__":
 	main()

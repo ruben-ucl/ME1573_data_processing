@@ -7,7 +7,7 @@ from skimage import filters
 from skimage.morphology import disk, ball
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = 'v0.4'
+__version__ = 'v0.4.1'
 
 '''
 CHANGELOG

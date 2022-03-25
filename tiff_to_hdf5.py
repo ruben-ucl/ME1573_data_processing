@@ -28,7 +28,7 @@ INTENDED CHANGES:
 """
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = '1.3'
+__version__ = '1.3.1'
 
 username = 'lbn38569' # Set to PC username so that correct Dropbox directory can be located
 

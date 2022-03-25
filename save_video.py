@@ -3,7 +3,7 @@ import numpy as np
 from pathlib import Path
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = 'v0.2'
+__version__ = 'v0.1'
 
 '''
 CHANGELOG

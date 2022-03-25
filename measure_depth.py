@@ -5,19 +5,23 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = 'v0.2'
+__version__ = 'v0.2.1'
 
 '''
 CHANGELOG
     v0.1 - Measures keyhole depth in segmented images as the lowest white pixel in each frame
     v0.2 - Added subplot for photodiode signal to compare with keyhole depth
+    v0.2.1 - Moved filepath storage to external text file called 'data_path.txt'
            
 INTENDED CHANGES
     - 
     
 '''
 # Input informaton
-filepath = r'C:\Users\rlamb\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\ESRF ME1573 Python sandbox\hdf5 test sandbox\0103 AlSi10Mg'
+with open('data_path.txt', encoding='utf8') as f:
+    filepath = fr'{f.read()}'
+    print(f'Reading from {filepath}\n')
+
 input_dset_name = 'bg_sub_prev_10_frames_/median_filt_r1_segmented_171-255'
 
 

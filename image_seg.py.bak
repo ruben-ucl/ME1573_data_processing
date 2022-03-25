@@ -22,7 +22,7 @@ INTENDED CHANGES
     
 '''
 # Read data folder path from .txt file
-with open('data_path.txt') as f:
+with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
     

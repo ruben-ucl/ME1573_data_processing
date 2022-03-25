@@ -145,7 +145,7 @@ def make_hdf5(substrate_output_folder, track_folder, trackid, logbook):
     try:
         with h5py.File(output_filepath, 'x') as output_file:
             create_dataset(output_file, 'xray_images', input_subfolders, index = 0, element_size = [0, 4.3, 4.3], n_frames=n_frames, first_frame=first_frame)
-            create_dataset(output_file, 'xray_flats', input_subfolders, index = 1, element_size = [0, 4.3, 4.3], n_frames=100)
+            create_dataset(output_file, 'xray_flats', input_subfolders, index = 1, element_size = [0, 4.3, 4.3], n_frames=200)
             logging.info('File complete')
     except OSError as e:
         print('Error: file already exists - skipping file')
