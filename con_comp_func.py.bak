@@ -37,5 +37,6 @@ def con_comp(im, connectivity):
             componentMask = (labels == i).astype("uint8") * 255
             mask += componentMask
             output_im = cv2.rectangle(output_im, (x, y), (x + w, y + h), (0, 255, 0), 1)
+            bounding_box_mask = output_im != 0
             
-    return output_im, con_comp_dict
+    return bounding_box_mask, con_comp_dict
