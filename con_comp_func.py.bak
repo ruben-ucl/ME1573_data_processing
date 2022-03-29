@@ -1,3 +1,6 @@
+import numpy as np
+import cv2
+
 def con_comp(im, connectivity):
     
     # Get connected components with stats
@@ -5,18 +8,12 @@ def con_comp(im, connectivity):
     con_comp_dict = {'numLabels': numLabels,
                      'labels': labels,
                      'stats': stats,
-                     'centroid': centroid
+                     'centroid': centroids
                      }
     
     # Initialise mask to store component locations and RGB image to store bounding boxes
     mask = np.zeros_like(im)
     output_im = cv2.cvtColor(np.zeros_like(im), cv2.COLOR_GRAY2RGB)
-    
-    # Set selection criteria for components
-    keepWidth = w > 3 and w < 50
-    keepHeight = h > 3 and h < 50
-    keepArea = area > 30 and area < 1000
-    keepY = y > 320 and y < 450
     
     # Loop through all components
     for i in range(1, numLabels):
@@ -27,6 +24,12 @@ def con_comp(im, connectivity):
         h = stats[i, cv2.CC_STAT_HEIGHT]
         area = stats[i, cv2.CC_STAT_AREA]
         (cX, cY) = centroids[i]
+        
+        # Set selection criteria for components
+        keepWidth = w > 3 and w < 50
+        keepHeight = h > 3 and h < 50
+        keepArea = area > 30 and area < 1000
+        keepY = y > 320 and y < 450
         
         # For components that satisfy conditions: print details, add to mask, and add bounding box to output image
         if all((keepWidth, keepHeight, keepArea, keepY)):

@@ -19,6 +19,7 @@ with open('data_path.txt', encoding='utf8') as f:
     print(f'Reading from {filepath}\n')
     
 dset_name = 'bg_sub_first_30_frames_/bilateral_filt_r8_li-thresh'
+output_im_dset_name = dset_name
     
 def main():
     for file in glob.glob(str(Path(filepath, '*.hdf5'))):
@@ -26,11 +27,11 @@ def main():
         with h5py.File(file, 'a') as f:
             dset = f[dset_name]
             im = np.array(dset[-1])
-            output = cv2.connectedComponentsWithStats(im, 4, cv2.CV_32S)
+            output = cv2.connectedComponentsWithStats(im, 8, cv2.CV_32S)
             (numLabels, labels, stats, centroids) = output
             
             mask = np.zeros_like(im)
-            output_im = cv2.cvtColor(f['bg_sub_first_30_frames'][-1], cv2.COLOR_GRAY2RGB)
+            output_im = cv2.cvtColor(f[output_im_dset_name][-1], cv2.COLOR_GRAY2RGB)
             # loop over the number of unique connected component labels
             for i in range(1, numLabels):
                 # if this is the first component then we examine the
@@ -62,9 +63,9 @@ def main():
                 # output_im = cv2.rectangle(output_im, (x, y), (x + w, y + h), (0, 255, 0), 3)
                 # output_im = cv2.circle(output_im, (int(cX), int(cY)), 4, (0, 0, 255), -1)
                 
-                keepWidth = w > 3 and w < 50
-                keepHeight = h > 3 and h < 50
-                keepArea = area > 30 and area < 1000
+                keepWidth = w > 2 and w < 50
+                keepHeight = h > 2 and h < 50
+                keepArea = area > 5 and area < 1000
                 keepY = y > 320 and y < 450
                 
                 if all((keepWidth, keepHeight, keepArea, keepY)):
