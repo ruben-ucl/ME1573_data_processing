@@ -25,9 +25,9 @@ input_dset_name = 'bg_sub_first_30_frames'
 frame_no = -1
 folder_name = f'{input_dset_name}_frame_{frame_no}_stills'
 
-folder_path = Path(filepath, folder_name)
+folder_path = Path(filepath, 'still_frames', folder_name)
 
-make_binary = False  # Set to True to threshold frame using triangle algorithm
+make_binary = True  # Set to True to threshold frame using triangle algorithm
 
 def main():
     print(f'Saving frame no. {frame_no} from dataset: {input_dset_name}\n')
@@ -42,9 +42,9 @@ def main():
             output_filename = f'{trackid}_{input_dset_name}_frame_{frame_no}.png'
             
             if make_binary == True:
-                output_filename = f'{output_filename[:-4]}_tri-thresh{output_filename[-4:]}'
-                im_filt = filters.rank.median(im, footprint=np.ones((3, 3)))
-                thresh = filters.threshold_triangle(im_filt)
+                output_filename = f'{output_filename[:-4]}_li-thresh{output_filename[-4:]}'
+                im_filt = filters.rank.median(im, footprint=np.ones((7, 7)))
+                thresh = filters.threshold_li(im_filt, initial_guess=170)
                 print(f'Applying threshold: {thresh}')
                 mask = im_filt > thresh
                 binary = np.zeros_like(im)

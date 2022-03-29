@@ -34,10 +34,10 @@ def main():
         with h5py.File(f, 'a') as file:
             dset = file[input_dset_name]
             print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))
-            create_plot(dset[262, :, :])
+            create_plot(dset[296, :, :])
             print('Done\n')
   
-def create_plot(im, threshold=True):
+def create_plot(im, threshold=False):
     fig, axs = plt.subplots(3, 3, sharex=True, sharey=True)    # Initialise figure with nine subplots
     for i, row in enumerate(axs):
         for j, ax in enumerate(row):

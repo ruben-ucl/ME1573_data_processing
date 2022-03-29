@@ -44,7 +44,7 @@ def main(mode, n):
                 transfer_attr(file[input_dset_name], file[output_dset_name], 'element_size_um')
             print('Done\n')
         except OSError as e:
-            print('Error: output dataset with the same name already exists - skipping file')
+            print('Error: output dataset with the same name already exists - skipping file\n')
 
 def prev_n_frames(dset, n):
     output_dset = np.zeros_like(dset[n:])

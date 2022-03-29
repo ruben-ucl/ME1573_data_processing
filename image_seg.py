@@ -7,7 +7,7 @@ from skimage import filters
 from skimage.morphology import disk, ball
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = 'v0.4.1'
+__version__ = 'v0.5'
 
 '''
 CHANGELOG
@@ -16,6 +16,7 @@ CHANGELOG
     v0.3 - Made it easier to switch between plotting and processing entire datasets with 'mode' field
     v0.4 - Switched to triangle thresholding algorithm
     v0.4.1 - Moved data folder path storage to text file for ease of copying script to different machines
+    v0.5 - Added Li thresholding
            
 INTENDED CHANGES
     - Streamline changing between different filters and kernel dimensions
@@ -26,11 +27,13 @@ with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
     
-input_dset_name = 'bg_sub_prev_10_frames'
+input_dset_name = 'bg_sub_first_30_frames'
 
-mode = 'preview' # Set to 'preview' or 'apply' to either preview a single image or apply to the entire dataset
+mode = 'apply' # Set to 'preview' or 'apply' to either preview a single image or apply to the entire dataset
 
-filter_mode = 'bilateral'
+filter_mode = 'bilateral'      # 'median', 'gauss' or 'bilateral'
+filter_radius = 8
+threshold_mode = 'li'       # 'triangle' or 'li'
 
 # Iterate through files and datasets to perform filtering and thresholding
 def main(mode, filt):
@@ -39,11 +42,12 @@ def main(mode, filt):
         try:
             with h5py.File(f, 'a') as file:
                 dset = file[input_dset_name]
-                print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))
+                print('Shape: %s, dtype: %s'% (dset.shape, dset.dtype))
                 if mode == 'preview':
                     threshold_im(dset[262, :, :], filt)
                 elif mode == 'apply':
-                    output_dset_name = f'{input_dset_name}_/bilat_filt_r1_tri-thresh'
+                    output_dset_name = f'{input_dset_name}_/{filter_mode}_filt_r{filter_radius}_{threshold_mode}-thresh'
+                    print(f'Output dataset name: {output_dset_name}')
                     output_dset = file.require_dataset(output_dset_name, shape=dset.shape, dtype=np.uint8)
                     dset_filt_seg = threshold_timeseries(dset, filt)
                     transfer_attr(dset, output_dset, 'element_size_um')
@@ -58,19 +62,22 @@ def threshold_timeseries(dset, filt):
         dset_filt = filters.gaussian(dset) * 255
     elif filt == 'median':
         print('Applying median filter')
-        dset_filt = filters.rank.median(dset, footprint=np.ones((3, 3, 3)))
+        dset_filt = filters.rank.median(dset, footprint=get_kernel(dset, filter_radius))
     elif filt == 'bilateral':
         print('Applying bilateral filter')
         dset_filt = np.zeros_like(dset)
         for i, im in enumerate(dset):
-            im_filt = cv2.bilateralFilter(im, 8, 75, 75)
+            im_filt = cv2.bilateralFilter(im, filter_radius, 75, 75)
             dset_filt[i, :, :] = im_filt
     else:
         print('No filter applied')
         dset_filt = dset
     print('Calculating threshold')
-    thresh = filters.threshold_triangle(dset_filt)
-    print(f'Applying threshold: {thresh}')
+    if threshold_mode == 'triangle':
+        thresh = filters.threshold_triangle(dset_filt)
+    elif threshold_mode == 'li':
+        thresh = filters.threshold_li(dset_filt, initial_guess=170)
+    print(f'Applying {threshold_mode} threshold: {thresh}')
     mask = dset_filt > thresh
     binary = np.zeros_like(dset)
     binary[mask] = 255
@@ -79,7 +86,7 @@ def threshold_timeseries(dset, filt):
     return binary
     
 def threshold_im(im, filt):
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharex=True, sharey=True)    # Initialise figure with four subplots
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, sharex=True, sharey=True)    # Initialise figure with four subplots
     
     create_subplot(im,
                    ax1,
@@ -89,31 +96,28 @@ def threshold_im(im, filt):
                    
     thresh = filters.threshold_triangle(im)
     binary = im > thresh
-    create_subplot(binary,
-                   ax2,
-                   'Triangle threshold',
-                   scalebar=True
-                   )
     if filt == 'median':   
-        im_filt = filters.median(im, footprint=np.ones((3, 3)))
+        im_filt = filters.median(im, footprint=get_kernel(im, filter_radius))
     elif filt == 'gauss':
         im_filt = filters.gaussian(im) * 255
     elif filt == 'bilateral':
-        im_filt = cv2.bilateralFilter(im, 8, 75, 75)
+        im_filt = cv2.bilateralFilter(im, filter_radius, 75, 75)
     else:
         im_filt = im
     create_subplot(im_filt,
-                   ax3,
-                   'Flat field correction, background subtraction, median filter (radius=1)',
+                   ax2,
+                   f'{filter_mode} filter (radius={filter_radius})',
                    cmap='gray',
                    scalebar=True
                    )
-                   
-    thresh = filters.threshold_triangle(im_filt)
+    if threshold_mode == 'triangle':               
+        thresh = filters.threshold_triangle(im_filt)
+    elif threshold_mode == 'li':
+        thresh = filters.threshold_li(im_filt, initial_guess=170)
     binary = im_filt > thresh
     create_subplot(remove_outliers(binary),
-                   ax4,
-                   'Triangle threshold of filtered image, outliers removed',
+                   ax3,
+                   f'{threshold_mode} threshold of filtered image, outliers removed',
                    scalebar=True
                    )
                    
@@ -151,5 +155,10 @@ def create_subplot(im, ax, title, cmap=None, scalebar=False):
 def transfer_attr(dset_1, dset_2, attr):    # Copy attribute from dset_1 to dset_2
     data = dset_1.attrs.get(attr)
     dset_2.attrs.create(attr, data)
-    
+
+def get_kernel(data, radius):
+    footprint_function = disk if data.ndim == 2 else ball
+    filter_kernel = footprint_function(radius=filter_radius)
+    return filter_kernel
+
 main(mode, filter_mode)

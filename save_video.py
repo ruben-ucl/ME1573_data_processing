@@ -3,7 +3,7 @@ import numpy as np
 from pathlib import Path
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = 'v0.2'
+__version__ = 'v0.1'
 
 '''
 CHANGELOG
@@ -22,11 +22,11 @@ with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
     
-input_dset_name = 'bg_sub_first_30_frames'
-output_name = input_dset_name
+input_dset_name = 'bg_sub_first_30_frames' # _/bilateral_filt_r8_li-thresh'
+output_name = input_dset_name.replace('/', '')
 capture_framerate = 40000
 output_framerate = 30
-text_colour = 'black'   # 'black' or 'white'
+text_colour = 'white'   # 'black' or 'white'
 
 def main():
     print(f'Creating videos from dataset: {input_dset_name}\n')
