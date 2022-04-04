@@ -213,34 +213,35 @@ def make_dataframe(t, AMPM_data):
 
 # Default path
 # datFolder = Path(__location__)
-AMPM_path = Path('C:/Users/lbn38569/Dropbox (UCL)/BeamtimeData/ME-1573 - ESRF ID19/ME1573_AMPM_data')
-# Custom path (uncomment)
-# custom_path = r'C:\Users\rlamb\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\ESRF ME1573 Python sandbox\hdf5 test sandbox\0103 AlSi10Mg'
-custom_path = r'K:\working_folder'
+AMPM_path = Path('C:/Users/rlamb/Dropbox (UCL)/BeamtimeData/ME-1573 - ESRF ID19/ME1573_AMPM_data')
+
+with open('data_path.txt', encoding='utf8') as f:
+    custom_path = fr'{f.read()}'
+    print(f'Reading from {custom_path}\n')
+
 datFolder = Path(custom_path)
 
 # File name to load
 # trackid = input('Enter the number of the track to be analysed (format: SSSS_TT)\n')
-for material_folder in glob.glob('%s/*/' % datFolder):
-    for file in glob.glob('%s/*.hdf5' % material_folder):
-        trackid = Path(file).name
-        print('Working on %s' % trackid)    
-        datFile = glob.glob('%s/%s_AMPM_%s_L4_*.dat' % (AMPM_path, trackid[:4], trackid[-6]))[0]
+for file in glob.glob('%s/*.hdf5' % datFolder):
+    trackid = Path(file).name
+    print('Working on %s' % trackid)    
+    datFile = glob.glob('%s/%s_AMPM_%s_L4_*.dat' % (AMPM_path, trackid[:4], trackid[-6]))[0]
 
-        try:
-            ft, fData, _ = readAMPMdat(datFolder, datFile)
-        except Exception as e:
-            print(str(e))
-            continue
-            
-        AMPM_dataframe = make_dataframe(ft, fData)
-        print('Appending AMPM data to file')
-        try:
-            with h5py.File(file, 'a') as f:
-                for col in AMPM_dataframe:
-                    f['AMPM_data/%s' % col] = AMPM_dataframe[col]
-            print('Done\n')
-        except OSError as e:
-            print('Dataset with the same name already exists - skipping file\n')
+    try:
+        ft, fData, _ = readAMPMdat(datFolder, datFile)
+    except Exception as e:
+        print(str(e))
+        continue
+        
+    AMPM_dataframe = make_dataframe(ft, fData)
+    print('Appending AMPM data to file')
+    try:
+        with h5py.File(file, 'a') as f:
+            for col in AMPM_dataframe:
+                f['AMPM_data/%s' % col] = AMPM_dataframe[col]
+        print('Done\n')
+    except OSError as e:
+        print('Dataset with the same name already exists - skipping file\n')
         
 
