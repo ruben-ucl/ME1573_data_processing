@@ -5,7 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = 'v0.3'
+__version__ = 'v0.3.1'
 
 '''
 CHANGELOG
@@ -13,6 +13,7 @@ CHANGELOG
     v0.2 - Added subplot for photodiode signal to compare with keyhole depth
     v0.2.1 - Moved filepath storage to external text file called 'data_path.txt'
     v0.3 - Corrected for image slant in depth calculation
+    v0.3.1 - Saves measurements to csv
            
 INTENDED CHANGES
     - 
@@ -23,7 +24,7 @@ with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
 
-input_dset_name = 'bg_sub_prev_10_frames_/median_filt_r1_tri-thresh'
+input_dset_name = 'bg_sub_prev_10_frames_/bilateral_filt_r8_triangle-thresh'
 
 # For image slant compensation (WIP)
 # Meaaure the y value at the top of the powder surface on the left and right extremes of the image
@@ -31,6 +32,8 @@ input_dset_name = 'bg_sub_prev_10_frames_/median_filt_r1_tri-thresh'
 # left_top_edge = 295
 # right_top_edge = 276
 # surface_slant = (right_top_edge - left_top_edge) / 1024
+
+measurements = pd.DataFrame()
 
 def main():
     for f in glob.glob(str(Path(filepath, '*.hdf5'))):
@@ -49,7 +52,9 @@ def main():
                     time.append(i * exp_t)
                     d = measure_depth(i, frame, n_frames)
                     depth.append(d)
-                    
+                if 'time' not in measurements.columns:
+                    measurements['time (ms)'] = time
+                measurements[f'{trackid} keyhole depth (um)'] = depth
                 AMPM_time = list(file['AMPM_data/Time'])
                 AMPM_pd = list(file['AMPM_data/Photodiode1Bits'])
                 AMPM_pwr = list(file['AMPM_data/BeamDumpDiodeNormalised'])
@@ -68,13 +73,15 @@ def main():
                 ax2.set_ylabel('Keyhole depth (um)', color='b')
                 ax2.set_xlabel('Time (ms)')
                 
-                # plt.show()
-                plt.savefig(str(Path(filepath, '%s keyhole depth plot.png' % trackid)))
+                plt.show()
+                # plt.savefig(str(Path(filepath, '%s keyhole depth plot.png' % trackid)))
                 
             print('Done\n')
         except OSError as e:
             print('Error: output dataset with the same name already exists - skipping file')
             
+    measurements.to_csv(Path(filepath, 'keyhole depth measurements.csv'))
+    
 def trim_pd(t, pd, pwr):
     start = 0
     for i, val in enumerate(pwr):        
