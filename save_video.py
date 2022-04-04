@@ -23,9 +23,9 @@ with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
     
-input_dset_name = 'bg_sub_first_30_frames'
+input_dset_name = 'bg_sub_first_30_frames_/median_filt_r3_li-thresh'
 binary_dset_name = 'bg_sub_first_30_frames_/bilateral_filt_r8_li-thresh'
-output_name = 'bg_sub_first_30_frames_pore_tracking'
+output_name = 'bg_sub_first_30_frames_median_r3_li-thresh'
 capture_framerate = 40000
 output_framerate = 30
 text_colour = 'white'   # 'black' or 'white'
@@ -42,14 +42,15 @@ def main():
             output_folder = 'videos'
             create_video_from_dset(dset, binary_dset, vid_filename, output_folder)
 
-def create_video_from_dset(dset, binary_dset, vid_filename, output_folder, con_comp_label=True, overlay=True):
+def create_video_from_dset(dset, binary_dset, vid_filename, output_folder, con_comp_label=False, overlay=True):
     n_frames = len(dset)
     output_path = Path(filepath, output_folder, output_name)
     if not os.path.exists(output_path):
         os.makedirs(output_path)
     frame_size = (dset.shape[-1], dset.shape[-2])
     output_filepath = Path(output_path, vid_filename)
-    out = cv2.VideoWriter(str(output_filepath), cv2.VideoWriter_fourcc(*'mp4v'), output_framerate , frame_size) # Add argument False to switch to greyscale
+    isRGB = con_comp_label  # Sets mode video mode to RGB if saving con comp labels (in colour), else greyscale
+    out = cv2.VideoWriter(str(output_filepath), cv2.VideoWriter_fourcc(*'mp4v'), output_framerate , frame_size, isRGB) # Add argument False to switch to greyscale
     for i, frame in enumerate(dset):
         if con_comp_label == True:
             binary_im = binary_dset[i, :, :]
