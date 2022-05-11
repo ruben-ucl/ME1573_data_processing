@@ -20,6 +20,7 @@ CHANGES:
     v1.3 - Now copies all flat field frames
     v1.3.1 - Updated all start frames with intention that all videos start 50 frames before laser onset
              Only saves first 100 flat field frames to reduce file size
+    v1.3.2 - Added ability to output 16-bit int images
     
 INTENDED CHANGES:
     - Switch to chunked storage to allow lossless compression
@@ -28,7 +29,7 @@ INTENDED CHANGES:
 """
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = '1.3.1'
+__version__ = '1.3.2'
 
 username = 'lbn38569' # Set to PC username so that correct Dropbox directory can be located
 
@@ -47,8 +48,10 @@ start_frames = {'01': 867,
                 '06': 1102
                 }
 
+output_dtype = '16_bit' # Set to '8_bit' or '16_bit'
+
 # File structure: '\Beamtime root folder\Material\Substrate\Track\[Datasets]',
-# E.g '\ESRF ME1573\AlSi10Mg\0101\1\flats'
+# E.g '\ESRF ME1573\AlSi10Mg\0101\01\flats'
 
 # Query user to confirm working directory. Working directory should be the root folder of the beamtime data, e.g. '\ESRF ME1573\'. 
 def wd_query():
@@ -165,8 +168,11 @@ def create_dataset(file, dset_name, dset_folders, index, element_size, n_frames=
     logging.debug('%s - Writing %s %s' % (file, dset_name, dset_shape))
     for i, tiff_file in enumerate(dset_images[first_frame:first_frame+n_frames]):
         im = np.flip(imread(tiff_file), axis=(0, 1)) # Read TIFF image and rotate 180 degrees (by flipping along both axes)
-        im_8bit = np.round(im / 4095 * 255).astype(np.uint8) # Convert to 8-bit greyscale 
-        dset[i, :, :] = im_8bit
+        if output_dtype == '8_bit':
+            im_converted = np.round(im / 4095 * 255).astype(np.uint8) # Convert to 8-bit greyscale
+        elif output_dtype == '16_bit':
+            im_converted = np.round(im / 4095 * 65535).astype(np.uint16) # Convert to 16-bit greyscale
+        dset[i, :, :] = im_converted
         
 def main():
     data_root = wd_query()
