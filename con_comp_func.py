@@ -1,44 +1,61 @@
+import math
+import matplotlib.pyplot as plt
 import numpy as np
-import cv2
+import pandas as pd
+from skimage import measure
+from skimage.draw import ellipse
+from skimage.transform import rotate
+
+__author__ = 'Rubén Lambert-Garcia'
+__version__ = 'v0.2'
+
+"""
+CHANGELOG
+    v0.1 - Connected component analysis of single binary image using opencv
+    v0.2 - Switched from opencv to scikit-image connected component analysis for better compatibilty
+           
+INTENDED CHANGES
+    - 
+"""
 
 def con_comp(im, connectivity):
+    # Get labels and region properties using skimage connected component analysis functions
+    label_im, num_labels = measure.label(im, return_num = True, connectivity=connectivity)
+    print(f'num_labels = {num_labels}')
+    props = measure.regionprops(label_im)
     
-    # Get connected components with stats
-    (numLabels, labels, stats, centroids) = cv2.connectedComponentsWithStats(im, connectivity, cv2.CV_32S)
+    compMask = np.zeros_like(im, dtype=bool)
     
-    con_comp_dict = {'numLabels': numLabels,
-                     'labels': labels,
-                     'stats': stats,
-                     'centroid': centroids
-                     }
-    
-    # Initialise mask to store component locations and RGB image to store bounding boxes
-    mask = np.zeros_like(im)
-    output_im = np.zeros_like(im)
-    output_box_mask = np.zeros_like(im)
-    
-    # Loop through all components
-    for i in range(1, numLabels):
-        # Get stats for component i
-        x = stats[i, cv2.CC_STAT_LEFT]
-        y = stats[i, cv2.CC_STAT_TOP]
-        w = stats[i, cv2.CC_STAT_WIDTH]
-        h = stats[i, cv2.CC_STAT_HEIGHT]
-        area = stats[i, cv2.CC_STAT_AREA]
-        (cX, cY) = centroids[i]
+    for i in range(num_labels):
+        area_i = props[i].area
+        print(f'Area {i} = {area_i}') 
         
-        # Set selection criteria for components
-        keepWidth = w > 2 and w < 50
-        keepHeight = h > 2 and h < 50
-        keepArea = area > 5 and area < 1000
-        keepY = y > 320 and y < 450
+        conditions = [area_i < 10000]
         
-        # For components that satisfy conditions: print details, add to mask, and add bounding box to output image
-        if all((keepWidth, keepHeight, keepArea, keepY)):
-            # print(f'Keeping component {i+1}/{numLabels}\nx: {x}, y: {y}, w: {w}, h: {h}, area: {area}, centroid: {(cX, cY)}')
-            componentMask = (labels == i).astype("uint8") * 255
-            mask += componentMask
-            output_im = cv2.rectangle(output_im, (x, y), (x + w, y + h), 255, 1)
-            output_box_mask = output_im == 255
+        if all(conditions):
+            label_i = props[i].label
+            compMask[label_im == label_i] = True
+
+            contour = measure.find_contours(label_im == label_i)[0]
+            y, x = contour.T
+     
+    return compMask, props
     
-    return output_box_mask, con_comp_dict
+# Test image
+image = np.zeros((600, 600))
+rr, cc = ellipse(300, 350, 100, 220)
+image[rr, cc] = 1
+image = rotate(image, angle=15, order=0)
+rr, cc = ellipse(100, 100, 60, 50)
+image[rr, cc] = 1
+
+compMask, props = con_comp(image, 2)
+
+overlay = np.ones_like(image)
+overlay = np.ma.masked_where(np.invert(compMask), overlay)
+
+alphas = np.ones_like(image) * 0.75 
+
+plt.imshow(image, cmap='gray')
+plt.imshow(overlay, cmap='plasma', vmin=0, vmax=1, alpha=alphas)
+plt.show()
