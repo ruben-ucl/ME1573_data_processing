@@ -1,4 +1,4 @@
-import h5py, glob, os, imageio
+import h5py, glob, os, imageio, cv2
 import numpy as np
 from pathlib import Path
 from skimage import filters
@@ -22,12 +22,44 @@ with open('data_path.txt', encoding='utf8') as f:
     print(f'Reading from {filepath}\n')
     
 input_dset_name = 'bg_sub_first_30_frames'
-frame_no = -1
+frame_no = 306
 folder_name = f'{input_dset_name}_frame_{frame_no}_stills'
+
+add_scalebar = True
+text_colour = 'white'
 
 folder_path = Path(filepath, 'still_frames', folder_name)
 
-make_binary = True  # Set to True to threshold frame using triangle algorithm
+make_binary = False  # Set to True to threshold frame using triangle algorithm
+
+def create_overlay(im):
+    if text_colour == 'black':
+        bgr_colour = (0, 0, 0)
+    elif text_colour == 'white':
+        bgr_colour = (255, 255, 255)
+    # Add scale bar text to frame
+    scalebar_text = '500 um'
+    im = cv2.putText(im,                      # Original frame
+                     scalebar_text,                  # Text to add
+                     (890, 500),                     # Text origin
+                     cv2.FONT_HERSHEY_DUPLEX,        # Font
+                     0.9,                            # Fontscale
+                     bgr_colour,                     # Font colour (BGR)
+                     1,                              # Line thickness
+                     cv2.LINE_AA                     # Line type
+                     )
+    # Add scalebar to frame
+    bar_originx = 889
+    bar_originy = 470
+    bar_length = int(500/4.3)
+    bar_thickness = 4
+    im = cv2.rectangle(im,                                            # Original frame
+                       (bar_originx, bar_originy),                           # Top left corner
+                       (bar_originx+bar_length, bar_originy-bar_thickness),  # Bottom right corner
+                       bgr_colour,                                           # Colour (BGR)
+                       -1                                                    # Line thickness (-ve means fill shape inwards)
+                       )
+    return im
 
 def main():
     print(f'Saving frame no. {frame_no} from dataset: {input_dset_name}\n')
@@ -51,6 +83,9 @@ def main():
                 binary[mask] = 255
                 im = binary
                 
+            if add_scalebar == True:
+                im = create_overlay(im)
+            
             output_filepath = Path(folder_path, output_filename)
             imageio.imwrite(output_filepath, im)
         print('Done\n')
