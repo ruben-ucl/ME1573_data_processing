@@ -1,3 +1,4 @@
 # Ignore Notepad++ backup files
 *.bak
-# desktop.ini
+desktop.ini
+data_path.txt
