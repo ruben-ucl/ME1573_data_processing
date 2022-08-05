@@ -20,6 +20,9 @@ INTENDED CHANGES
 with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
+    
+repeat_for_all = True
+dset_to_delete_all = 'ffcorr'
 
 # Iterate through files and datasets to perform filtering and thresholding
 def main():
@@ -40,16 +43,19 @@ def inspect_and_delete(f):
         shape, dtype, nbytes = v
         print('{:<30} {:<25} {:<15} {:<10}'.format(k, str(shape), str(dtype), str(round(nbytes/(10**9), 6))))
     try:
-        dset_to_delete = input('\nEnter name of dataset you would like to delete, or \'c\' to continue\n')
-        if dset_to_delete == 'c':
-            cont = 'y'
+        if repeat_for_all != True:
+            dset_to_delete = input('\nEnter name of dataset you would like to delete or \'c\' to continue\n')
+            if dset_to_delete == 'c':
+                cont = 'y'
+            else:
+                del f[dset_to_delete]
+                cont = input('Move on to next file? (y/n)\n')
+            if cont == 'n':
+                inspect_and_delete(f)
+            else:
+                pass
         else:
-            del f[dset_to_delete]
-            cont = input('Move on to next file? (y/n)\n')
-        if cont == 'n':
-            inspect_and_delete(f)
-        else:
-            pass
+            del f[dset_to_delete_all]
     except KeyError:
         pass
         
