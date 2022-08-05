@@ -23,9 +23,9 @@ with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
     
-input_dset_name = 'bg_sub_first_30_frames_/median_filt_r3_li-thresh'
+input_dset_name = 'bg_sub_first_50_frames'
 binary_dset_name = 'bg_sub_first_30_frames_/bilateral_filt_r8_li-thresh'
-output_name = 'bg_sub_first_30_frames_median_r3_li-thresh'
+output_name = 'bg_sub_first_50_frame'
 capture_framerate = 40000
 output_framerate = 30
 text_colour = 'white'   # 'black' or 'white'
@@ -35,14 +35,14 @@ def main():
     for file in glob.glob(str(Path(filepath, '*.hdf5'))):
         with h5py.File(file, 'a') as f:
             dset = f[input_dset_name]
-            binary_dset = f[binary_dset_name]
+            # binary_dset = f[binary_dset_name]
             trackid = Path(file).name[:-5]
             fileext = '.mp4'
             vid_filename = f'{trackid}_{output_name}{fileext}'
             output_folder = 'videos'
-            create_video_from_dset(dset, binary_dset, vid_filename, output_folder)
+            create_video_from_dset(dset, vid_filename, output_folder)
 
-def create_video_from_dset(dset, binary_dset, vid_filename, output_folder, con_comp_label=False, overlay=True):
+def create_video_from_dset(dset, vid_filename, output_folder, binary_dset=None, con_comp_label=False, overlay=True):
     n_frames = len(dset)
     output_path = Path(filepath, output_folder, output_name)
     if not os.path.exists(output_path):
@@ -57,7 +57,7 @@ def create_video_from_dset(dset, binary_dset, vid_filename, output_folder, con_c
             con_comp_box_mask, _ = con_comp(binary_im, 4)
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
             if True in con_comp_box_mask:
-                frame[con_comp_box_mask] = (0, 255, 0)           
+                frame[con_comp_bx_mask] = (0, 255, 0)           
         if overlay == True:
             frame = create_overlay(i, frame)
         out.write(frame)
