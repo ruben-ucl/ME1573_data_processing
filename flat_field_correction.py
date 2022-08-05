@@ -12,10 +12,11 @@ CHANGES:
     v0.3 - Stripped down to just flat field correction functionality to work with tiff_to_hdf5 v1.3, saves output as new hdf5 file
     v0.4 - Added logging
     v0.4.1 - Added logging of warnings to catch zero division RuntimeWarnings from numpy
+    v0.5 - Added dynamic range adjustment before compresing to 8-bit
     
 INTENDED CHANGES:
     - Solve divide by zero errors - only affecting first file?
-    - 
+    - Finish implementing dynamic range adjustment
     
 """
 __version__ = '0.4.1'
@@ -24,9 +25,16 @@ import h5py, os, glob, pathlib, logging, warnings
 import numpy as np
 import pandas as pd
 from datetime import datetime as dt
+import matplotlib.pyplot as plt
 
 np.seterr(divide='warn')
 
+# Read data folder path from .txt file
+def get_filepath():
+    with open('data_path.txt', encoding='utf8') as f:
+        filepath = fr'{f.read()}'
+        print(f'Reading from {filepath}\n')
+        return filepath
 
 def create_log(folder):  # Create log file for storing error details
     init_time = dt.today().strftime('%Y-%m-%d_%H-%M-%S')
@@ -38,18 +46,18 @@ def create_log(folder):  # Create log file for storing error details
     warnings.formatwarning(message='%(asctime)s    %(message)s', category=Warning, filename=log_file_path, lineno=-1)
     print('\nLogging to: %s' % str(log_file_path))
 
-def wd_query():
-    try:
-        wd_query_response = input('\nIs the current working directory the root folder for the input data? (y/n)\n')
-        if wd_query_response == 'y':
-            data_root = os.getcwd()
-        elif wd_query_response == 'n':
-            data_root = input('\nPlease input the global path of the input data root folder.\n')
-        else:
-            raise ValueError('Invalid input, try again.')
-    except ValueError:
-        wd_query()
-    return data_root
+# def wd_query():
+    # try:
+        # wd_query_response = input('\nIs the current working directory the root folder for the input data? (y/n)\n')
+        # if wd_query_response == 'y':
+            # data_root = os.getcwd()
+        # elif wd_query_response == 'n':
+            # data_root = input('\nPlease input the global path of the input data root folder.\n')
+        # else:
+            # raise ValueError('Invalid input, try again.')
+    # except ValueError:
+        # wd_query()
+    # return data_root
 
 def output_query(data_root):
     output_query_response = input('\nNow enter the name of the output root folder.\n')
@@ -67,16 +75,22 @@ def duplicate_folder(original_dir, output_dir):
 
 def flat_field_correction(images, flats):
     # Calculate averaged flat field
-    avg_flat = np.zeros(flats[0].shape, dtype=np.uint32)       # Initialise array for storing averaged flat field
-    for im in flats:
-        avg_flat = np.add(avg_flat, im)
-    avg_flat = (avg_flat / len(flats)).astype(np.uint8)     # Is rounding down here causing divide by zero errors on line 73?
-    # Subtract the averaged flat field from each image
-    ff_corrected_images = np.zeros(images.shape, dtype=np.uint8)
+    avg_flat = np.clip(np.mean(flats, axis=0), 1, None)   # Set 0 value pixels to 1 to avoid zero division error in ffc
     avg_flat_mean = avg_flat.mean()
+    # Subtract the averaged flat field from each image, increase contrast and convert to 8bit
+    ff_corrected_images = np.zeros(images.shape, dtype=np.uint8)
     for i, im in enumerate(images):
-        im_ff_corr = (im / avg_flat) * avg_flat_mean
-        ff_corrected_images[i, :, :] = np.round(np.clip(im_ff_corr, 0, 255))
+        im_ff_corr_norm = np.divide(im, avg_flat) * avg_flat_mean / 4096
+        lim_a = 0.25    # Calibrate these limits from un-stretched flat field corrected image histograms
+        lim_b = 0.7
+        # im_ff_corr = (im_ff_corr_norm - lim_a) / (lim_a - lim_b) * 255   # Stretch histogram to limits defined above to increase dynamic range
+        im_ff_corr_norm_stretch = (im_ff_corr_norm - lim_a) / (lim_b - lim_a)
+        ff_corrected_images[i, :, :] = np.round(np.clip(im_ff_corr_norm_stretch * 255, 0, 255)).astype(np.uint8)
+        # compare_histograms({'raw': im/4096,
+                            # 'avg_flat': avg_flat/4096,
+                            # 'ff_corr': im_ff_corr_norm,
+                            # 'ff_corr_stretched': im_ff_corr_norm_stretch
+                            # })
     return ff_corrected_images
 
 # def rotation_correction(image, angle):
@@ -85,34 +99,50 @@ def flat_field_correction(images, flats):
     # rotated_image = cv2.warpAffine(image, rot_mat, image.shape[::-1], flags=cv2.INTER_LINEAR)
     # return rotated_image
 
-data_root = wd_query()
-output_root = output_query(data_root)
-create_log(output_root)
+def compare_histograms(images, save_to_csv=False, generate_plots=True):
+    n_vals = 4096
+    histograms = pd.DataFrame()
+    histograms['value'] = [i for i in np.arange(0, 1, 1/n_vals)] # First column contains integers 0-255 for 8-bit greyscale values
+    for key in images:
+        hist, _ = np.histogram(images[key], bins = n_vals, range = [0, 1])
+        histograms[key] = hist
+    if save_to_csv == True:        
+        histograms.to_csv(Path(filepath, f'{input_dset_name}_histograms.csv'), index=False)    
+    if generate_plots == True:
+        fig, ax = plt.subplots(figsize = [9, 6])
+        x = histograms['value']
+        for col in histograms.columns:
+            if col != 'value':
+                ax.plot(x, histograms[col], label = col)
+        ax.set_xlabel('pixel value')
+        ax.set_ylabel('count')
+        ax.legend()
+        fig.set_tight_layout(True)
+        plt.show()
 
-for material_folder in glob.glob('%s\*\\' % data_root):     # Iterate through material folders (top level of folder structure in data root folder)
-    material_output_folder = duplicate_folder(material_folder, output_root)
-    print('\nWriting to %s' % material_output_folder)
-    logging.info('Writing to %s' % material_output_folder)
-            
-    for file in glob.glob('%s\*.hdf5' % material_folder):     # For each substrate, iterate through track folders
+def main():
+    data_path = get_filepath()
+    output_path = output_query(data_path)
+    create_log(output_path)
+    for file in glob.glob(f'{data_path}/*.hdf5'):     # For each substrate, iterate through track folders
         try:
             trackid = pathlib.PurePath(file).name
             logging.info(trackid)
-            output_file = pathlib.PurePath(material_output_folder, trackid)
+            output_file = pathlib.PurePath(output_path, trackid)
             if os.path.exists(output_file):
                 print(trackid + 'file already exists in output folder')
                 logging.info('File of the same name exists in output directory - skipping file')
                 raise FileExistsError()
             print('\nReading %s' % trackid)
-            with h5py.File(file, 'r') as f:
-                flats = np.array(f['xray_flats'])
-                images = np.array(f['xray_images'])
-                elem_size = f['xray_images'].attrs.get('element_size_um')   # Get element size to pass on to new file
+            with h5py.File(file, 'r') as fi:
+                flats = np.array(fi['flats'])
+                images = np.array(fi['raw'])
+                # elem_size = fi['xray_images'].attrs.get('element_size_um')   # Get element size to pass on to new file
             print('Processing data')
             ff_corrected_images = flat_field_correction(images, flats)
-            with h5py.File(output_file, 'x') as output_file:
-                output_file['ff_corrected'] = ff_corrected_images
-                output_file['ff_corrected'].attrs.create('element_size_um', elem_size)
+            with h5py.File(output_file, 'x') as fo:
+                fo['ff_corrected'] = ff_corrected_images
+                fo['ff_corrected'].attrs.create('element_size_um', 4.3)
             print('Output file saved')
             logging.info('Complete')
             # input('Done. Press any key to continue to next file.')
@@ -120,4 +150,5 @@ for material_folder in glob.glob('%s\*\\' % data_root):     # Iterate through ma
             print('Skipping file')
             logging.info(str(e))
 
-	
+if __name__ == "__main__":
+	main()	
