@@ -1,5 +1,6 @@
 import h5py, glob, os, cv2, time
 import numpy as np
+from skimage import morphology
 from pathlib import Path
 
 __author__ = 'Rubén Lambert-Garcia'
@@ -16,48 +17,69 @@ INTENDED CHANGES
     - Replace cv2.putText() with a method that supports unicode characters
     
 '''
-# Input informaton
+"""Controls"""
+
+input_dset_name = 'ff_corrected_crop'
+
+binary_dset_name = 'keyhole_binary_refined'
+binary_overlay_mode = 'outline'     # 'outline' or 'fill'
+
+output_name = f'{input_dset_name}_keyhole_overlay'
+
+capture_framerate = 40000 # fps
+output_framerate = 30 # fps
+text_colour = 'white'   # 'black' or 'white'
+
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
     
-input_dset_name = 'bg_sub_first_50_frames'
-binary_dset_name = 'bg_sub_first_30_frames_/bilateral_filt_r8_li-thresh'
-output_name = 'bg_sub_first_50_frame'
-capture_framerate = 40000
-output_framerate = 30
-text_colour = 'white'   # 'black' or 'white'
-
 def main():
     print(f'Creating videos from dataset: {input_dset_name}')
     for file in glob.glob(str(Path(filepath, '*.hdf5'))):
         with h5py.File(file, 'a') as f:
-            dset = f[input_dset_name]
-            # binary_dset = f[binary_dset_name]
-            trackid = Path(file).name[:-5]
-            fileext = '.mp4'
-            vid_filename = f'{trackid}_{output_name}{fileext}'
-            output_folder = 'videos'
-            create_video_from_dset(dset, vid_filename, output_folder)
+            dset = np.array(f[input_dset_name])
+            try:
+                binary_dset = np.array(f[binary_dset_name])   # Get binary dataset of same dimensions as input to use as coloured overlay in output video
+                if binary_overlay_mode == 'outline':
+                    binary_dset = get_perimeter(binary_dset, 1)
+                isRGB = True                        # If a binary dataset is enabled for a colour overlay, set to save vid in RGB
+                start_frame_offset = len(dset) - len(binary_dset)
+                dset = dset[start_frame_offset:]            # trim input dset to match length of ginary dset so frames match up
+            except TypeError:
+                binary_dset = None
+                isRGB = False                       # If no colour overlay, set to save vid in greyscale
+        trackid = Path(file).name[:-5]
+        fileext = '.mp4'
+        vid_filename = f'{trackid}_{output_name}{fileext}'
+        output_folder = 'videos'
+        create_video_from_dset(dset, vid_filename, output_folder, binary_dset, isRGB)
 
-def create_video_from_dset(dset, vid_filename, output_folder, binary_dset=None, con_comp_label=False, overlay=True):
+def get_perimeter(dset, weight):
+    perimeter_mask = np.zeros_like(dset)
+    for i, frame in enumerate(dset):
+        eroded = morphology.binary_erosion(frame, footprint=morphology.disk(weight))
+        dilated = morphology.binary_dilation(frame, footprint=morphology.disk(weight))
+        perimeter_i = np.not_equal(dilated, eroded)
+        perimeter_mask[i, :, :][perimeter_i] = 255
+    return perimeter_mask
+
+def create_video_from_dset(dset, vid_filename, output_folder, binary_dset=None, isRGB=False, overlay=True):
     n_frames = len(dset)
     output_path = Path(filepath, output_folder, output_name)
     if not os.path.exists(output_path):
         os.makedirs(output_path)
     frame_size = (dset.shape[-1], dset.shape[-2])
     output_filepath = Path(output_path, vid_filename)
-    isRGB = con_comp_label  # Sets mode video mode to RGB if saving con comp labels (in colour), else greyscale
     out = cv2.VideoWriter(str(output_filepath), cv2.VideoWriter_fourcc(*'mp4v'), output_framerate , frame_size, isRGB) # Add argument False to switch to greyscale
     for i, frame in enumerate(dset):
-        if con_comp_label == True:
+        if binary_dset is not None:
             binary_im = binary_dset[i, :, :]
-            con_comp_box_mask, _ = con_comp(binary_im, 4)
+            con_comp_box_mask = binary_im == 255
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-            if True in con_comp_box_mask:
-                frame[con_comp_bx_mask] = (0, 255, 0)           
+            frame[con_comp_box_mask] = (0, 255, 0)
         if overlay == True:
             frame = create_overlay(i, frame)
         out.write(frame)
@@ -70,12 +92,15 @@ def create_overlay(i, frame):
     elif text_colour == 'white':
         bgr_colour = (255, 255, 255)
     timestamp = str(format(i * 1/capture_framerate * 1000, '.3f')) + ' ms'        # in milliseconds
+    height, width, _ = frame.shape
+    bottom_left = (5, height-10)
+    bottom_right = (width-112, height-12)
     # Add timestamp to frame
     new_frame = cv2.putText(frame,                          # Original frame
                             timestamp,                      # Text to add
-                            (10, 32),                       # Text origin
+                            bottom_left,                       # Text origin
                             cv2.FONT_HERSHEY_DUPLEX,        # Font
-                            0.9,                            # Fontscale
+                            0.7,                            # Fontscale
                             bgr_colour,                     # Font colour (BGR)
                             1,                              # Line thickness
                             cv2.LINE_AA                     # Line type
@@ -84,18 +109,18 @@ def create_overlay(i, frame):
     scalebar_text = '500 um'
     new_frame = cv2.putText(new_frame,                      # Original frame
                             scalebar_text,                  # Text to add
-                            (890, 500),                     # Text origin
+                            bottom_right,                     # Text origin
                             cv2.FONT_HERSHEY_DUPLEX,        # Font
-                            0.9,                            # Fontscale
+                            0.7,                            # Fontscale
                             bgr_colour,                     # Font colour (BGR)
                             1,                              # Line thickness
                             cv2.LINE_AA                     # Line type
                             )
     # Add scalebar to frame
-    bar_originx = 889
-    bar_originy = 470
+    bar_originx = bottom_right[0] - 14
+    bar_originy = bottom_right[1] + 7
     bar_length = int(500/4.3)
-    bar_thickness = 4
+    bar_thickness = 3
     new_frame = cv2.rectangle(new_frame,                                            # Original frame
                               (bar_originx, bar_originy),                           # Top left corner
                               (bar_originx+bar_length, bar_originy-bar_thickness),  # Bottom right corner
@@ -104,6 +129,7 @@ def create_overlay(i, frame):
                               )
     return new_frame
 
+''' ***DEPRECATED***
 def con_comp(im, connectivity):
     
     # Get connected components with stats
@@ -145,8 +171,9 @@ def con_comp(im, connectivity):
             output_box_mask = output_im == 255
     
     return output_box_mask, con_comp_dict
+'''
     
-def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█', printEnd = "\r"):
+def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '|', printEnd = "\r"):
     """
     Call in a loop to create terminal progress bar
     @params:
