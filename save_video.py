@@ -2,26 +2,28 @@ import h5py, glob, os, cv2, time
 import numpy as np
 from skimage import morphology
 from pathlib import Path
+from my_funcs import *
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = 'v0.2'
+__version__ = 'v1.0'
 
 '''
 CHANGELOG
     v0.1 - Iterates through hdf5 files in specified path and saves the specified dataset
            from each to a .mp4 video file with a timestamp and scalebar on each frame
     v0.2 - Added pore tracking function using cv2 to run connected component analysis - needs optimisation
-           
+    v1.0 - Removed connected component analysis functionalty to a seperate script.
+           Generates videos with overlay and optional outlining of features defined by a second, corresponding binary input dataset
+
 INTENDED CHANGES
     - Process list of datasets instead of one at a time
     - Replace cv2.putText() with a method that supports unicode characters
-    
 '''
 """Controls"""
 
-input_dset_name = 'ff_corrected_crop'
+input_dset_name = 'ff_corrected'
 
-binary_dset_name = 'keyhole_binary_refined'
+binary_dset_name = 'keyhole_binary_yen_refined'
 binary_overlay_mode = 'outline'     # 'outline' or 'fill'
 
 output_name = f'{input_dset_name}_keyhole_overlay'
@@ -39,6 +41,8 @@ with open('data_path.txt', encoding='utf8') as f:
 def main():
     print(f'Creating videos from dataset: {input_dset_name}')
     for file in glob.glob(str(Path(filepath, '*.hdf5'))):
+        fname = Path(file).name
+        trackid = fname[:5] + '0' + fname[-6]
         with h5py.File(file, 'a') as f:
             dset = np.array(f[input_dset_name])
             try:
@@ -51,7 +55,6 @@ def main():
             except TypeError:
                 binary_dset = None
                 isRGB = False                       # If no colour overlay, set to save vid in greyscale
-        trackid = Path(file).name[:-5]
         fileext = '.mp4'
         vid_filename = f'{trackid}_{output_name}{fileext}'
         output_folder = 'videos'
@@ -128,71 +131,6 @@ def create_overlay(i, frame):
                               -1                                                    # Line thickness (-ve means fill shape inwards)
                               )
     return new_frame
-
-''' ***DEPRECATED***
-def con_comp(im, connectivity):
-    
-    # Get connected components with stats
-    (numLabels, labels, stats, centroids) = cv2.connectedComponentsWithStats(im, connectivity, cv2.CV_32S)
-    
-    con_comp_dict = {'numLabels': numLabels,
-                     'labels': labels,
-                     'stats': stats,
-                     'centroid': centroids
-                     }
-    
-    # Initialise mask to store component locations and RGB image to store bounding boxes
-    mask = np.zeros_like(im)
-    output_im = np.zeros_like(im)
-    output_box_mask = np.zeros_like(im)
-    
-    # Loop through all components
-    for i in range(1, numLabels):
-        # Get stats for component i
-        x = stats[i, cv2.CC_STAT_LEFT]
-        y = stats[i, cv2.CC_STAT_TOP]
-        w = stats[i, cv2.CC_STAT_WIDTH]
-        h = stats[i, cv2.CC_STAT_HEIGHT]
-        area = stats[i, cv2.CC_STAT_AREA]
-        (cX, cY) = centroids[i]
-        
-        # Set selection criteria for components
-        keepWidth = w > 2 and w < 50
-        keepHeight = h > 2 and h < 50
-        keepArea = area > 5 and area < 1000
-        keepY = y > 320 and y < 450
-        
-        # For components that satisfy conditions: print details, add to mask, and add bounding box to output image
-        if all((keepWidth, keepHeight, keepArea, keepY)):
-            # print(f'Keeping component {i+1}/{numLabels}\nx: {x}, y: {y}, w: {w}, h: {h}, area: {area}, centroid: {(cX, cY)}')
-            componentMask = (labels == i).astype("uint8") * 255
-            mask += componentMask
-            output_im = cv2.rectangle(output_im, (x, y), (x + w, y + h), 255, 1)
-            output_box_mask = output_im == 255
-    
-    return output_box_mask, con_comp_dict
-'''
-    
-def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '|', printEnd = "\r"):
-    """
-    Call in a loop to create terminal progress bar
-    @params:
-        iteration   - Required  : current iteration (Int)
-        total       - Required  : total iterations (Int)
-        prefix      - Optional  : prefix string (Str)
-        suffix      - Optional  : suffix string (Str)
-        decimals    - Optional  : positive number of decimals in percent complete (Int)
-        length      - Optional  : character length of bar (Int)
-        fill        - Optional  : bar fill character (Str)
-        printEnd    - Optional  : end character (e.g. "\r", "\r\n") (Str)
-    """
-    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
-    filledLength = int(length * iteration // total)
-    bar = fill * filledLength + '-' * (length - filledLength)
-    print(f'\r{prefix} |{bar}| {percent}% {suffix}', end = printEnd)
-    # Print New Line on Complete
-    if iteration == total: 
-        print()
 
 if __name__ == "__main__":
 	main()
