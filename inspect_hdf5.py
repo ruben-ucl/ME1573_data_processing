@@ -31,7 +31,7 @@ tab_rule = '-'*total_w
 
 # Iterate through files and datasets to perform filtering and thresholding
 def main():
-    for file in glob.glob(str(Path(filepath, '*.hdf5'))):
+    for file in glob.glob(str(Path(filepath, '*.hdf*'))):
         with h5py.File(file, 'a') as f:
             inspect_and_delete(f)
     print('\nFinished - no more files')
@@ -50,11 +50,13 @@ def inspect_and_delete(f):
                 try:
                     dset_props['    '+j] = [str(subset.shape), str(subset.dtype), str(round(subset.nbytes/(10**9), 6))]
                 except AttributeError:
-                    dset_props[j] = ['', '    Sub-group', '']
+                    dset_props[j] = ['', 'Sub-group', '']
                         for k in f[i][j].keys():
                         subsubset = f[i][j][k]
                         try:
-                            dset_props['        '+j] = [str(subsubset.shape), str(subsubset.dtype), str(round(subsubset.nbytes/(10**9), 6))]
+                            dset_props['        '+k] = [str(subsubset.shape), str(subsubset.dtype), str(round(subsubset.nbytes/(10**9), 6))]
+                        except AttributeError:
+                            print('Sub-sub-groups not implemented - file tree too deep')
     print(col_format.format('Name', 'Shape', 'Datatype', 'Gigabytes'))
     print(tab_rule)
     for k, v in dset_props.items():
