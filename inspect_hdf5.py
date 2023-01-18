@@ -51,6 +51,10 @@ def inspect_and_delete(f):
                     dset_props['    '+j] = [str(subset.shape), str(subset.dtype), str(round(subset.nbytes/(10**9), 6))]
                 except AttributeError:
                     dset_props[j] = ['', '    Sub-group', '']
+                        for k in f[i][j].keys():
+                        subsubset = f[i][j][k]
+                        try:
+                            dset_props['        '+j] = [str(subsubset.shape), str(subsubset.dtype), str(round(subsubset.nbytes/(10**9), 6))]
     print(col_format.format('Name', 'Shape', 'Datatype', 'Gigabytes'))
     print(tab_rule)
     for k, v in dset_props.items():
