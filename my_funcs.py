@@ -1,6 +1,12 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from skimage import filters, exposure
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+import time, functools
+
+print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
@@ -27,16 +33,18 @@ def get_logbook(logbook_path = Path('J:\Logbook_Al_ID19_combined_RLG.xlsx')):
         # logging.debug(str(e))
         raise
         
-def get_logbook_data(logbook, trackid):  # Get scan speed and framerate from logbook
+def get_logbook_data(logbook, trackid, layer_n=1):  # Get scan speed and framerate from logbook
     print('Reading scan speed and framerate from logbook')
     substrate_no = trackid[1:4]
     track_no = trackid[-1]
-    track_row = logbook.loc[(logbook['Substrate No.'] == substrate_no) & (logbook['Sample position'] == track_no)]
+    track_row = logbook.loc[(logbook['Substrate No.'] == substrate_no) & (logbook['Sample position'] == track_no) & (logbook['Layer'] == layer_n)]
+    # print(track_row)
     scan_speed = int(track_row['scan speed [mm/s]'])
     framerate = int(track_row['Frame rate (kHz)'] * 1000)
     laser_onset_frame = int(track_row['Laser onset frame #'])
     
     return framerate, scan_speed, laser_onset_frame
+    
     
 def get_start_end_frames(trackid, logbook, margin=50, start_frame_offset=0):
     framerate, scan_speed, start_frame = get_logbook_data(logbook, trackid)
@@ -60,6 +68,95 @@ def get_substrate_mask(shape, substrate_surface_measurements_fpath, trackid):   
         substrate_mask[surface_height:, x] = True
     
     return substrate_mask
+    
+def median_filt(dset, kernel):
+    if dset.dtype == np.uint8:
+        median_filter = filters.rank.median_filt # faster method for 8-bit integers
+    else:
+        median_filter = filters.median
+    
+    tic = time.perf_counter()
+    
+    # Method 1: frame by frame
+    output_dset = np.zeros_like(dset)
+    for i, frame in enumerate(dset):
+        print(f'Median filtering frame {i}', end='\r')
+        output_dset[i] = median_filter(frame, kernel)
+        
+    # Method 2: as single array
+    # if dset.ndim > 2:
+        # kernel_side_length = kernel.shape[0]
+        # zero_padding = np.zeros_like(kernel)
+        # for i in range(kernel_side_length // 2):
+            
+    # else:
+        # kernel_ndim = kernel
+    # output_dset = median_filter(dset, kernel)
+    
+    toc = time.perf_counter()
+    print(f'Median filter duration: {toc-tic:0.4f} seconds')
+    
+    return output_dset
+
+def view_histogram(a, title=None, show_std=False):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4), tight_layout=True)
+    if title != None:
+        fig.suptitle(title)
+    if a.ndim == 3:
+        # Create panel of 4 frames from stack to display
+        l = len(a)
+        r1 = np.concatenate((a[0], a[l//3]), axis=1)
+        r2 = np.concatenate((a[2*l//3], a[-1]), axis=1)
+        im = np.concatenate((r1, r2))
+    else:
+        im = a
+    ax1.imshow(im, cmap='gray')
+    im_aspect = im.shape[0] / im.shape[1]
+    ax2.set_box_aspect(im_aspect)
+    ax2.hist(a.ravel(), bins=255, density=True, zorder=0)
+    ax2.annotate(f'max: {np.max(a)}\nmin: {np.min(a)}\ndtype: {a.dtype}', xy=(0.01, 0.8), xycoords='axes fraction')
+    
+    if show_std:
+        a_mean = np.mean(a)
+        a_sigma = np.std(a)
+        a_std_intervals = [a_mean + i * a_sigma for i in range(-3, 4)]
+        marker_h = ax2.get_ylim()[1] / 30
+        ax2.scatter(a_std_intervals, [marker_h for i in range(7)], c='k', marker='v')
+        ax2.scatter((np.min(a), np.max(a)), (marker_h, marker_h), c='r', marker='v')
+        txt_h = ax2.get_ylim()[1] / 15
+        ax2.annotate('min', (np.min(a), txt_h), ha='center', color='r')
+        ax2.annotate('max', (np.max(a), txt_h), ha='center', color='r')
+        sigma_text = ['-3\u03C3', '-2\u03C3', '-\u03C3', '\u00B5', '\u03C3', '2\u03C3', '3\u03C3']
+        for i, x in enumerate(a_std_intervals):
+            ax2.annotate(sigma_text[i], (x, txt_h), ha='center')
+    
+    plt.show()
+    
+def compare_histograms(im_dict, fig_title=None):
+    fig, axs = plt.subplots(len(im_dict), 2, figsize=(8, len(im_dict)*2), tight_layout=True)
+    if fig_title != None:
+        fig.suptitle(fig_title)
+    for i, key in enumerate(im_dict):
+        im = im_dict[key]
+        axs[i, 0].imshow(im, cmap='gray')
+        axs[i, 0].title.set_text(key)
+        im_aspect = im.shape[0] / im.shape[1]
+        axs[i, 1].set_box_aspect(im_aspect)
+        axs[i, 1].hist(im.ravel(), bins=255, density=True)
+        axs[i, 1].annotate(f'max: {np.max(im)}\nmin: {np.min(im)}\ndtype: {im.dtype}', xy=(0.05, 0.65), xycoords='axes fraction')
+        
+    plt.show()    
+
+def hist_eq(dset):
+    tic = time.perf_counter()
+    # output_dset = np.zeros_like(dset, dtype=np.uint8)
+    # for i, im in enumerate(dset):
+        # output_dset[i] = (exposure.equalize_hist(im) * 255).astype(np.uint8)
+    output_dset = (exposure.equalize_hist(dset) * 255).astype(np.uint8)
+    toc = time.perf_counter()
+    print(f'Histogram equalisation duration: {toc-tic:0.4f} seconds')
+    
+    return output_dset
     
 def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '|', printEnd = "\r"):
     """
