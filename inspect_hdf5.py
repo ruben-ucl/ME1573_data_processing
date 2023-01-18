@@ -48,13 +48,13 @@ def inspect_and_delete(f):
             for j in f[i].keys():
                 subset = f[i][j]
                 try:
-                    dset_props['    '+j] = [str(subset.shape), str(subset.dtype), str(round(subset.nbytes/(10**9), 6))]
+                    dset_props[f'    {j}'] = [str(subset.shape), str(subset.dtype), str(round(subset.nbytes/(10**9), 6))]
                 except AttributeError:
                     dset_props[j] = ['', 'Sub-group', '']
                         for k in f[i][j].keys():
                         subsubset = f[i][j][k]
                         try:
-                            dset_props['        '+k] = [str(subsubset.shape), str(subsubset.dtype), str(round(subsubset.nbytes/(10**9), 6))]
+                            dset_props[f'        {k}'] = [str(subsubset.shape), str(subsubset.dtype), str(round(subsubset.nbytes/(10**9), 6))]
                         except AttributeError:
                             print('Sub-sub-groups not implemented - file tree too deep')
     print(col_format.format('Name', 'Shape', 'Datatype', 'Gigabytes'))
