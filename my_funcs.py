@@ -12,7 +12,7 @@ def get_logbook(logbook_path = Path('J:\Logbook_Al_ID19_combined_RLG.xlsx')):
     try:
         logbook = pd.read_excel(logbook_path,
                                 sheet_name='Logbook',
-                                usecols='C, D, Q, AK, AN',
+                                usecols='C, D, F, I, J, M, O, P, Q, R, S, T, U, AM, AP, AS',
                                 converters={'Substrate No.': str, 'Sample position': str}
                                 )
         # logging.info('Logbook data aquired from %s' % logbook_path)
