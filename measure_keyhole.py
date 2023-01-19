@@ -20,9 +20,9 @@ INTENDED CHANGES
 """
 
 """Controls"""
-input_dset_name = 'keyhole_binary_yen_refined'
-save_mode = 'save' # Set to 'preview' or 'save'
-plot_keyholes = False
+input_dset_name = 'bs-p5-s5_tri-thresh_refined'
+save_mode = 'preview' # Set to 'preview' or 'save'
+plot_keyholes = True
 
 um_per_pix = 4.3
 capture_framerate = 40000 # fps
@@ -33,11 +33,8 @@ with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading data from {filepath}')
 
-username = 'MSM35_Admin' # Set to PC username so that correct Dropbox directory can be located
-logbook_fpath = Path(f'C:/Users/{username}/Dropbox (UCL)/BeamtimeData/ME-1573 - ESRF ID19/LTP 2 June 2022', '20220622_ME1573_Logbook_Final.xlsx')
-
 def main():
-    logbook = get_logbook(logbook_fpath)
+    logbook = get_logbook()
     # Initialise dictionary for storing summary statistics
     keyhole_data_summary = {'trackid': [],
                             'area_mean': [],
@@ -67,11 +64,12 @@ def main():
                             'depth_at_max_width': [],
                             'apperture_width': []
                             }
-            f1, f2 = get_start_end_frames(trackid, logbook, margin=3, start_frame_offset=5)
-            frame_inds = range(f1, f2)
-            len_frame_inds = len(frame_inds)
-            for i in frame_inds:
-                im = dset[i, :, :]
+            # f1, f2 = get_start_end_frames(trackid, logbook, margin=3, start_frame_offset=5)
+            f1 = 0
+            # frame_inds = range(f1, f2)
+            # len_frame_inds = len(frame_inds)
+            len_frame_inds = len(dset)
+            for i, im in enumerate(dset):
                 # Get timestamp of frame
                 time = i * 1/capture_framerate * 1000 # ms
                 keyhole_data['time'].append(time)
@@ -96,7 +94,10 @@ def main():
                 
                 if plot_keyholes == False: 
                     printProgressBar(i-f1+1, len_frame_inds, prefix='Measuring keyholes', suffix='Complete', length=50)
-                
+        
+        for i in keyhole_data.keys():
+            print(f'{i}: {len(keyhole_data[i])}')
+            
         keyhole_data = pd.DataFrame(keyhole_data)   # Convert to pandas dataframe
         keyhole_data_summary = generate_summary_stats(keyhole_data, keyhole_data_summary, trackid)
         if save_mode == 'save':
@@ -125,6 +126,7 @@ def generate_summary_stats(keyhole_data, keyhole_data_summary, trackid):
     return keyhole_data_summary
             
 def get_keyhole_measurements(im, trackid, frame_n):
+    print('Measuring')
     # Initialise variables
     max_width_px = 0
     max_depth_px = 0
@@ -144,7 +146,7 @@ def get_keyhole_measurements(im, trackid, frame_n):
     for r in range(min_row, max_row):
         row = im[r]
         try:
-            width_px = pd.value_counts(row).at[255]   # Count white pixels in row to get keyhole width at that row
+            width_px = pd.value_counts(row).at[1]   # Count white pixels in row to get keyhole width at that row
             if plot_keyholes == True:
                 widths_px.append(width_px)
             if r == min_row:
@@ -182,6 +184,7 @@ def get_keyhole_measurements(im, trackid, frame_n):
     return output_px
     
 def keyhole_dimensions_plot(im, trackid, frame_n, widths, depths, min_col, max_col, min_row, max_row):
+    print('Plotting')
     # Get image of keyhole cropped to its bounding box
     keyhole_cropped = im[min_row:max_row, min_col:max_col]
     (y_lim, x_lim) = keyhole_cropped.shape
