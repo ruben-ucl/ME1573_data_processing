@@ -92,7 +92,7 @@ def main():
             logging.info(fname)
             output_file = Path(output_fpath, f'{trackid}.hdf5')
             if os.path.exists(output_file):
-                print(fname + 'file already exists in output folder')
+                print(f'{trackid}.hdf5 already exists in output folder')
                 logging.info('File of the same name exists in output directory - skipping file')
                 raise FileExistsError()
             print('\nReading %s' % fname)
