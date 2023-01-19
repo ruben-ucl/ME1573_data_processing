@@ -21,16 +21,16 @@ INTENDED CHANGES
 '''
 """Controls"""
 
-input_dset_name = 'ff_corrected'
+input_dset_name = 'bs-f40'
 
-binary_dset_name = 'keyhole_binary_yen_refined'
+binary_dset_name = None
 binary_overlay_mode = 'outline'     # 'outline' or 'fill'
 
-output_name = f'{input_dset_name}_keyhole_overlay'
+output_name = f'{input_dset_name}' # _keyhole_overlay_{binary_dset_name}'
 
 capture_framerate = 40000 # fps
 output_framerate = 30 # fps
-text_colour = 'white'   # 'black' or 'white'
+text_colour = 'black'   # 'black' or 'white'
 
 
 # Read data folder path from .txt file
@@ -95,7 +95,8 @@ def create_overlay(i, frame):
     elif text_colour == 'white':
         bgr_colour = (255, 255, 255)
     timestamp = str(format(i * 1/capture_framerate * 1000, '.3f')) + ' ms'        # in milliseconds
-    height, width, _ = frame.shape
+    height = frame.shape[0]
+    width = frame.shape[1]
     bottom_left = (5, height-10)
     bottom_right = (width-112, height-12)
     # Add timestamp to frame
