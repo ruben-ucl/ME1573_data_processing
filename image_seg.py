@@ -1,4 +1,4 @@
-import h5py, glob, cv2
+import h5py, glob, cv2, functools
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -8,7 +8,6 @@ from skimage.morphology import disk, ball
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v0.5'
-
 '''
 CHANGELOG
     v0.1 - Image segmentation tool based on thresholding and filtering
@@ -22,18 +21,20 @@ INTENDED CHANGES
     - Streamline changing between different filters and kernel dimensions
     
 '''
+print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
+
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
     
-input_dset_name = 'bg_sub_first_30_frames'
+input_dset_name = 'bg_sub_prev_5_frames_crop_rotate_denoised'
 
-mode = 'apply' # Set to 'preview' or 'apply' to either preview a single image or apply to the entire dataset
-
-filter_mode = 'bilateral'      # 'median', 'gauss' or 'bilateral'
-filter_radius = 8
-threshold_mode = 'li'       # 'triangle' or 'li'
+mode = 'apply'              # Set to 'preview' or 'apply' to either preview a single image or apply to the entire dataset
+thresh_mode = 'frame'       # 'frame' or 'global'
+filter_mode = None          # none, 'median', 'gauss' or 'bilateral'
+filter_radius = 3           # pixels
+threshold_mode = 'triangle' # 'triangle' or 'li'
 
 # Iterate through files and datasets to perform filtering and thresholding
 def main(mode, filt):
@@ -44,13 +45,16 @@ def main(mode, filt):
                 dset = file[input_dset_name]
                 print('Shape: %s, dtype: %s'% (dset.shape, dset.dtype))
                 if mode == 'preview':
-                    threshold_im(dset[262, :, :], filt)
+                    threshold_im(dset[200, :, :], filt)
                 elif mode == 'apply':
-                    output_dset_name = f'{input_dset_name}_/{filter_mode}_filt_r{filter_radius}_{threshold_mode}-thresh'
+                    if filter_mode != None:
+                        output_dset_name = f'{input_dset_name}_/{filter_mode}_filt_r{filter_radius}_{threshold_mode}-thresh'
+                    else:
+                        output_dset_name = f'{input_dset_name}_/{threshold_mode}-thresh'
                     print(f'Output dataset name: {output_dset_name}')
                     output_dset = file.require_dataset(output_dset_name, shape=dset.shape, dtype=np.uint8)
                     dset_filt_seg = threshold_timeseries(dset, filt)
-                    transfer_attr(dset, output_dset, 'element_size_um')
+                    # transfer_attr(dset, output_dset, 'element_size_um')
                     output_dset[:, :, :] = dset_filt_seg
                 print('Done\n')
         except OSError as e:
@@ -71,22 +75,33 @@ def threshold_timeseries(dset, filt):
             dset_filt[i, :, :] = im_filt
     else:
         print('No filter applied')
-        dset_filt = dset
-    print('Calculating threshold')
-    if threshold_mode == 'triangle':
-        thresh = filters.threshold_triangle(dset_filt)
-    elif threshold_mode == 'li':
-        thresh = filters.threshold_li(dset_filt, initial_guess=170)
-    print(f'Applying {threshold_mode} threshold: {thresh}')
-    mask = dset_filt > thresh
+        dset_filt = np.array(dset)
+    
     binary = np.zeros_like(dset)
-    binary[mask] = 255
+    if thresh_mode == 'global':
+        print('Calculating threshold')
+        if threshold_mode == 'triangle':
+            thresh = filters.threshold_triangle(dset_filt)
+        elif threshold_mode == 'li':
+            thresh = filters.threshold_li(dset_filt, initial_guess=170)
+        print(f'Applying {threshold_mode} threshold: {thresh}')
+        mask = dset_filt > thresh
+        binary[mask] = 255
+    else:
+        for i, im in enumerate(dset_filt):
+            if threshold_mode == 'triangle':
+                thresh = filters.threshold_triangle(im)
+            elif threshold_mode == 'li':
+                thresh = filters.threshold_li(im, initial_guess=170)
+            mask = im > thresh
+            binary[i][mask] = 255
+            
     print('Removing outliers from binary image')
     binary = remove_outliers(binary)
     return binary
     
 def threshold_im(im, filt):
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, sharex=True, sharey=True)    # Initialise figure with four subplots
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, sharex=True, sharey=True)    # Initialise figure with three subplots
     
     create_subplot(im,
                    ax1,
@@ -121,7 +136,7 @@ def threshold_im(im, filt):
                    scalebar=True
                    )
                    
-    # fig.dpi = 300
+    # fig.dpi = 600
     plt.show()
     
 def remove_outliers(image, radius=2, threshold=0.5):
