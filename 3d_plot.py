@@ -1,22 +1,24 @@
+import functools
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
+from my_funcs import get_logbook
 
-log_path = Path(r'C:\Users\rlamb\Documents\UCL\Experiments\ESRF LTP 2 logbook AlSi10Mg only.xlsx')
+print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-log = pd.read_excel(log_path)
+log = get_logbook()
 
 fig = plt.figure()
-projection = '2d'
+projection = '3d'
 ax = fig.add_subplot()
-# ax = fig.add_subplot(projection=projection)
+ax = fig.add_subplot(projection=projection)
 
 # filter only PWM welding cases
 welding = log['Powder material'] == 'None'
 
 # filter only CW powder cases
-cw = log['Point jump delay [μs]'] == 0
+cw = log['Point jump delay [us]'] == 0
 
 # filter only Layer 1 cases
 L1 = log['Layer'] == 1
@@ -24,9 +26,8 @@ L1 = log['Layer'] == 1
 # filter only Al10SiMg cases
 Al10SiMg = log['Substrate material'] == 'Al10SiMg'
 
-# log_red = log[welding]
-log_red = log[cw & Al10SiMg]
-# log_red = log[L1]
+log_red = log[Al10SiMg & L1]
+# print(log_red)
 
 regime_markers = [('unstable keyhole', 'o'),
                   ('keyhole flickering', 's'),
@@ -38,14 +39,16 @@ regime_markers = [('unstable keyhole', 'o'),
 for regime, m in regime_markers:
     reg_bool = log_red['Melting regime'] == regime
     log_red_reg = log_red[reg_bool]
-    reg_pwr = log_red_reg['Power [W]']
+    print(f'\n{regime}\n' + '-'*len(regime))
+    print(log_red_reg)
+    reg_pwr = log_red_reg['Avg. power [W]']
     
     if projection == '3d':
-        xs = log_red_reg['Exposure time [μs]']
-        ys = log_red_reg['Point distance [μm]']
-        zs = log_red_reg['Power [W]']
+        xs = log_red_reg['Exposure time [us]']
+        ys = log_red_reg['Point distance [um]']
+        zs = log_red_reg['Avg. power [W]']
     
-        ax.scatter(xs, ys, zs, marker=m, c=reg_pwr, cmap='jet')
+        ax.scatter(xs, ys, zs, marker=m, c=reg_pwr, cmap='jet', vmin=250, vmax=500)
     
         ax.set_xlabel('Exposure time [μs]')
         ax.set_ylabel('Point distance [μm]')
@@ -55,7 +58,7 @@ for regime, m in regime_markers:
         xs = log_red_reg['Scan speed [mm/s]']
         ys = log_red_reg['Power [W]']
         
-        ax.scatter(xs, ys, marker = m, c=reg_pwr, cmap='jet')
+        ax.scatter(xs, ys, marker = m, c=reg_pwr, cmap='jet', vmin=250, vmax=500)
         
         ax.set_xlabel('Scan speed [mm/s]')
         ax.set_ylabel('Power [W]')
