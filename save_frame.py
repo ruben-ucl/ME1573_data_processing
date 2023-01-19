@@ -1,7 +1,8 @@
-import h5py, glob, os, imageio, cv2
+import h5py, glob, os, imageio, cv2, functools
 import numpy as np
 from pathlib import Path
 from skimage import filters
+from my_funcs import printProgressBar
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v0.1'
@@ -15,14 +16,16 @@ INTENDED CHANGES
     - 
     
 '''
+# print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
+
 # Input informaton
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
     
-input_dset_name = 'bg_sub_first_30_frames'
-frame_no = 306
+input_dset_name = 'bs-f40'
+frame_no = 140
 folder_name = f'{input_dset_name}_frame_{frame_no}_stills'
 
 add_scalebar = True
@@ -65,12 +68,14 @@ def main():
     print(f'Saving frame no. {frame_no} from dataset: {input_dset_name}\n')
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
-    for file in glob.glob(str(Path(filepath, '*.hdf5'))):
+    files = glob.glob(str(Path(filepath, '*.hdf5')))
+    n_files = len(files)
+    for i, file in enumerate(files):
         with h5py.File(file, 'a') as f:
             dset = f[input_dset_name]
             im = dset[frame_no]
             trackid = Path(file).name[:-5]
-            print(f'Saving {trackid} frame {frame_no}')
+            # print(f'Saving {trackid} frame {frame_no}')
             output_filename = f'{trackid}_{input_dset_name}_frame_{frame_no}.png'
             
             if make_binary == True:
@@ -88,7 +93,8 @@ def main():
             
             output_filepath = Path(folder_path, output_filename)
             imageio.imwrite(output_filepath, im)
-        print('Done\n')
+            printProgressBar(i+1, n_files, prefix=f'Working on {trackid} | Total progress:', length=50)
+    print('Done                                                      \n')
 
 if __name__ == "__main__":
 	main()
