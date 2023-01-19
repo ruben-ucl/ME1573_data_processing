@@ -7,9 +7,9 @@ from my_funcs import *
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-input_dset_name = 'ffc_bg_sub_prev_10_frames_hist_eq_med_filt_r3'
+input_dset_name = 'bs-p5-s5'
 
-output_dset_name = 'bgs_prev_10/keyhole_binary_tri'
+output_dset_name = f'{input_dset_name}_tri+35'
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
@@ -20,24 +20,24 @@ substrate_surface_measurements_fpath = Path(filepath, 'substrate_surface_measure
 
 def threshold(dset, trackid):
     a = np.array(dset)
+    # view_histogram(a[-100], trackid)
     a_masked, vals = mask_substrate(dset, trackid)
     print('Calculating threshold')
-    thresh_offset = 0   # Defaults for moving window bg sub: 5 frames: Yen -5, 10 frames: Yen -25?
-    thresh = triangle(vals, thresh_offset)
-    # thresh = yen(vals, thresh_offset)
-    output_dset = np.zeros_like(dset)
-    mask = a_masked > thresh
-    output_dset[mask] = 255
+    thresh_offset = 35
+    thresh = triangle(a, thresh_offset)
+    # thresh = filters.threshold_otsu(a)
+    output_dset = (a_masked > thresh).astype(np.uint8)
     return output_dset
 
 def triangle(vals, offset):
-    thresh = filters.threshold_triangle(vals) + offset
+    thresh = filters.threshold_triangle(vals) + offset  
     print(f'Threshold calulated by Triangle method with offset of {offset}: {thresh}')
     return thresh
     
 def yen(vals, offset):
     thresh = filters.threshold_yen(vals) + offset
     print(f'Threshold calulated by Yen method with offset of {offset}: {thresh}')
+    return thresh
 
 def mask_substrate(dset, trackid):  # Function to mask the images so that only the substrate region is used for thresholding. Sets region above to zero.
     print('Masking ROI')
@@ -65,6 +65,7 @@ def main():
                 print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))
                 
                 output_dset = threshold(dset, trackid)
+                view_histogram(output_dset, trackid)
                 
                 file[output_dset_name] = output_dset
             print('Done\n')
