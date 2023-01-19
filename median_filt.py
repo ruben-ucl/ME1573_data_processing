@@ -7,7 +7,7 @@ from my_funcs import *
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-input_dset_name = 'ffc_bg_sub_prev_10_frames_hist_eq'
+input_dset_name = 'bs-p5_hist_eq'
 op_name = 'med_filt'
 filt_rad = 3
 
@@ -18,9 +18,7 @@ with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
 
-username = 'MSM35_Admin' # Set to PC username so that correct Dropbox directory can be located
-logbook_fpath = Path(f'C:/Users/{username}/Dropbox (UCL)/BeamtimeData/ME-1573 - ESRF ID19/LTP 2 June 2022', '20220622_ME1573_Logbook_Final.xlsx')
-logbook = get_logbook(logbook_fpath)
+logbook = get_logbook()
 
 def median_filt(dset, kernel, f1=0, f2=-1):
     output_dset = np.zeros_like(dset)
