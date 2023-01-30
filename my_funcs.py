@@ -33,17 +33,20 @@ def get_logbook(logbook_path = Path('J:\Logbook_Al_ID19_combined_RLG.xlsx')):
         # logging.debug(str(e))
         raise
         
-def get_logbook_data(logbook, trackid, layer_n=1):  # Get scan speed and framerate from logbook
-    print('Reading scan speed and framerate from logbook')
-    substrate_no = trackid[1:4]
-    track_no = trackid[-1]
-    track_row = logbook.loc[(logbook['Substrate No.'] == substrate_no) & (logbook['Sample position'] == track_no) & (logbook['Layer'] == layer_n)]
+def get_logbook_data(logbook, trackid, layer_n=1):  # Get scan speed and framerate from logbookprint('Reading scan speed and framerate from logbook')
+    substrate_n = trackid[1:4]
+    track_n = trackid[-1]
+    track_row = logbook.loc[(logbook['Substrate No.'] == substrate_n) &
+                            (logbook['Sample position'] == track_n) &
+                            (logbook['Layer'] == layer_n)
+                            ]
     # print(track_row)
-    scan_speed = int(track_row['scan speed [mm/s]'])
+    scan_speed = int(track_row['Scan speed [mm/s]'])
     framerate = int(track_row['Frame rate (kHz)'] * 1000)
     laser_onset_frame = int(track_row['Laser onset frame #'])
+    keyhole_regime = track_row['Melting regime'].values[0]
     
-    return framerate, scan_speed, laser_onset_frame
+    return framerate, scan_speed, laser_onset_frame, keyhole_regime
     
     
 def get_start_end_frames(trackid, logbook, margin=50, start_frame_offset=0):
@@ -68,6 +71,15 @@ def get_substrate_mask(shape, substrate_surface_measurements_fpath, trackid):   
         substrate_mask[surface_height:, x] = True
     
     return substrate_mask
+
+def get_substrate_surface_coords(shape, substrate_surface_measurements_fpath, trackid):
+    substrate_surface_df = pd.read_csv(substrate_surface_measurements_fpath, index_col='trackid')
+    m = substrate_surface_df.at[trackid, 'm']
+    c = substrate_surface_df.at[trackid, 'c']
+    xx = range(shape[2])
+    yy = [round(m * x + c) for x in xx]
+    
+    return xx, yy
     
 def median_filt(dset, kernel):
     if dset.dtype == np.uint8:
