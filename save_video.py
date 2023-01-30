@@ -21,16 +21,16 @@ INTENDED CHANGES
 '''
 """Controls"""
 
-input_dset_name = 'bs-f40'
+input_dset_name = 'bs-p5-s5_lagrangian_keyhole'
 
-binary_dset_name = None
+binary_dset_name = 'bs-p5-s5_tri+35_lagrangian_keyhole_refined'
 binary_overlay_mode = 'outline'     # 'outline' or 'fill'
 
-output_name = f'{input_dset_name}' # _keyhole_overlay_{binary_dset_name}'
+output_name = f'{input_dset_name}'#_keyhole_overlay_{binary_dset_name}'
 
 capture_framerate = 40000 # fps
 output_framerate = 30 # fps
-text_colour = 'black'   # 'black' or 'white'
+text_colour = 'white'   # 'black' or 'white'
 
 
 # Read data folder path from .txt file
@@ -89,7 +89,7 @@ def create_video_from_dset(dset, vid_filename, output_folder, binary_dset=None, 
         printProgressBar(i + 1, n_frames, prefix=vid_filename[:7], suffix='Complete', length=50)
     out.release()
 
-def create_overlay(i, frame):
+def create_overlay(i, frame, fontscale=0.5, scalebar_length=100, scale_txt_from_right=70):
     if text_colour == 'black':
         bgr_colour = (0, 0, 0)
     elif text_colour == 'white':
@@ -98,32 +98,33 @@ def create_overlay(i, frame):
     height = frame.shape[0]
     width = frame.shape[1]
     bottom_left = (5, height-10)
-    bottom_right = (width-112, height-12)
+    bottom_right = (width-scale_txt_from_right, height-10)
     # Add timestamp to frame
     new_frame = cv2.putText(frame,                          # Original frame
                             timestamp,                      # Text to add
                             bottom_left,                       # Text origin
                             cv2.FONT_HERSHEY_DUPLEX,        # Font
-                            0.7,                            # Fontscale
+                            fontscale,                            # Fontscale
                             bgr_colour,                     # Font colour (BGR)
                             1,                              # Line thickness
                             cv2.LINE_AA                     # Line type
                             )
     # Add scale bar text to frame
-    scalebar_text = '500 um'
+    scalebar_text = f'{str(scalebar_length)} um'
     new_frame = cv2.putText(new_frame,                      # Original frame
                             scalebar_text,                  # Text to add
-                            bottom_right,                     # Text origin
+                            bottom_right,                   # Text origin
                             cv2.FONT_HERSHEY_DUPLEX,        # Font
-                            0.7,                            # Fontscale
+                            fontscale,                      # Fontscale
                             bgr_colour,                     # Font colour (BGR)
                             1,                              # Line thickness
                             cv2.LINE_AA                     # Line type
                             )
     # Add scalebar to frame
-    bar_originx = bottom_right[0] - 14
+    bar_length = int(scalebar_length/4.3)
+    scale_bar_h_offset = int((scale_txt_from_right - bar_length) / 2 - 3)
+    bar_originx = bottom_right[0] + scale_bar_h_offset
     bar_originy = bottom_right[1] + 7
-    bar_length = int(500/4.3)
     bar_thickness = 3
     new_frame = cv2.rectangle(new_frame,                                            # Original frame
                               (bar_originx, bar_originy),                           # Top left corner
