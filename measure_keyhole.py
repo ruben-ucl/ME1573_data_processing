@@ -13,16 +13,19 @@ __version__ = 'v0.1'
 
 """
 CHANGELOG
-    v0.1 - 
+    v1.0 - Measures keyhole binary images to extract geometry metrics
+         - Outputs individual .csv files with full measurements for each track
+         - Outputs summary .csv file containing summary stats for all tracks
     
 INTENDED CHANGES
     - 
 """
 
 """Controls"""
-input_dset_name = 'bs-p5-s5_tri-thresh_refined'
-save_mode = 'preview' # Set to 'preview' or 'save'
-plot_keyholes = True
+input_dset_name = 'bs-p5-s5_tri+35_lagrangian_keyhole_refined'
+save_mode = 'save' # Set to 'preview' or 'save'
+frame_mode = 'cropped' # Set to 'full_frame' or 'cropped'
+plot_keyholes = False
 
 um_per_pix = 4.3
 capture_framerate = 40000 # fps
@@ -37,6 +40,7 @@ def main():
     logbook = get_logbook()
     # Initialise dictionary for storing summary statistics
     keyhole_data_summary = {'trackid': [],
+                            'n_frames': [],
                             'area_mean': [],
                             'area_sd': [],
                             'max_depth_mean': [],
@@ -94,25 +98,23 @@ def main():
                 
                 if plot_keyholes == False: 
                     printProgressBar(i-f1+1, len_frame_inds, prefix='Measuring keyholes', suffix='Complete', length=50)
-        
-        for i in keyhole_data.keys():
-            print(f'{i}: {len(keyhole_data[i])}')
             
         keyhole_data = pd.DataFrame(keyhole_data)   # Convert to pandas dataframe
         keyhole_data_summary = generate_summary_stats(keyhole_data, keyhole_data_summary, trackid)
         if save_mode == 'save':
-            output_folder = Path(filepath, 'keyhole_measurements')
+            output_folder = Path(filepath, 'keyhole_measurements_lagrangian')
             if not os.path.exists(output_folder):
                 os.makedirs(output_folder)
-            keyhole_data.to_csv(Path(output_folder, f'{trackid}_keyhole_measurements_v3.csv'))
-            pass
+            keyhole_data.to_csv(Path(output_folder, f'{trackid}_keyhole_measurements.csv'))
         else:
             print(keyhole_data[100:110])
-    pd.DataFrame(keyhole_data_summary).to_csv(Path(output_folder, f'{trackid}_keyhole_measurements_summary_v3.csv'))
+    if save_mode == 'save':
+        pd.DataFrame(keyhole_data_summary).to_csv(Path(output_folder, 'keyhole_measurements_summary_v2.csv'))
 
 def generate_summary_stats(keyhole_data, keyhole_data_summary, trackid):
     print('Calculating summary stats')
     keyhole_data_summary['trackid'].append(trackid)
+    keyhole_data_summary['n_frames'].append(len(keyhole_data))
     for col_name in ['area', 'max_depth', 'max_width', 'depth_at_max_width', 'apperture_width']:
         data = keyhole_data[col_name].to_numpy()
         if col_name == 'depth_at_max_width':
@@ -120,13 +122,12 @@ def generate_summary_stats(keyhole_data, keyhole_data_summary, trackid):
         else:
             data_nonzero = data[np.nonzero(data)]
         mean = data_nonzero.mean()
-        sd = data_nonzero.std()
         keyhole_data_summary[f'{col_name}_mean'].append(mean)
+        sd = data_nonzero.std()
         keyhole_data_summary[f'{col_name}_sd'].append(sd)
     return keyhole_data_summary
             
 def get_keyhole_measurements(im, trackid, frame_n):
-    print('Measuring')
     # Initialise variables
     max_width_px = 0
     max_depth_px = 0
@@ -135,27 +136,31 @@ def get_keyhole_measurements(im, trackid, frame_n):
     widths_px = []
     depths_px = []
     im_height, im_width = im.shape
+    _, min_col, max_row, max_col = measure.regionprops(im)[0]['bbox']
     
-    min_row, min_col, max_row, max_col = measure.regionprops(im)[0]['bbox']
-    substrate_surface_measurements_fpath = Path(filepath, 'substrate_surface_measurements', 'substrate_surface_locations.csv')
-    substrate_surface_df = pd.read_csv(substrate_surface_measurements_fpath, index_col='trackid')
-    slope = substrate_surface_df.at[trackid, 'm']
-    intercept = substrate_surface_df.at[trackid, 'c']
+    if frame_mode == 'full_frame':
+        substrate_surface_measurements_fpath = Path(filepath, 'substrate_surface_measurements', 'substrate_surface_locations.csv')
+        substrate_surface_df = pd.read_csv(substrate_surface_measurements_fpath, index_col='trackid')
+        slope = substrate_surface_df.at[trackid, 'm']
+        intercept = substrate_surface_df.at[trackid, 'c']
+        substrate_height = round(slope * min_col + intercept).astype(np.uint16)
+        min_row = substrate_height
+    else:
+        min_row = 0
     
     # Iterate through image rows to find max_width, depth_at_max_width and apperture_width 
     for r in range(min_row, max_row):
         row = im[r]
         try:
-            width_px = pd.value_counts(row).at[1]   # Count white pixels in row to get keyhole width at that row
+            width_px = pd.value_counts(row).at[255]   # Count white pixels in row to get keyhole width at that row
             if plot_keyholes == True:
                 widths_px.append(width_px)
             if r == min_row:
                 apperture_width_px = width_px
             if width_px >= max_width_px:
                 max_width_px = width_px
-                substrate_height = round(slope * min_col + intercept)
-                depth_at_max_width_px = r - substrate_height
-        except ValueError:
+                depth_at_max_width_px = r - min_row
+        except KeyError:
             if plot_keyholes == True:
                 widths_px.append(0)
             
@@ -163,13 +168,12 @@ def get_keyhole_measurements(im, trackid, frame_n):
     for c in range(min_col, max_col):
         col = im.T[c]
         try:
-            substrate_height = round(slope * c + intercept)
-            depth_px = np.where(col == 255)[0][-1] - substrate_height   # Find distance between substrate top of last (lowest) occurance of 255 in column
+            depth_px = np.where(col == 255)[0][-1] - min_row   # Find distance between substrate top of last (lowest) occurance of 255 in column
             if plot_keyholes == True:
                 depths_px.append(depth_px)
             if depth_px > max_depth_px:
                 max_depth_px = depth_px
-        except ValueError:
+        except KeyError:
             if plot_keyholes == True:
                 depths_px.append(0)
     
