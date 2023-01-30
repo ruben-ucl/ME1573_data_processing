@@ -25,7 +25,6 @@ def threshold(dset, trackid):
     print('Calculating threshold')
     thresh_offset = 35
     thresh = triangle(a, thresh_offset)
-    # thresh = filters.threshold_otsu(a)
     output_dset = (a_masked > thresh).astype(np.uint8)
     return output_dset
 
@@ -59,19 +58,18 @@ def main():
         fname = Path(f).name
         print('Reading %s' % fname)
         trackid = fname[:5] + '0' + fname[-6]
-        try:
-            with h5py.File(f, 'a') as file:
-                dset = file[input_dset_name]
+        with h5py.File(f, 'r+') as file:
+            dset = file[input_dset_name]
+            if output_dset_name not in file:
                 print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))
-                
+            
                 output_dset = threshold(dset, trackid)
                 view_histogram(output_dset, trackid)
-                
+            
                 file[output_dset_name] = output_dset
-            print('Done\n')
-        except OSError as e:
-            # print('Error: output dataset with the same name already exists - skipping file\n')
-            print(e, '\n')
+                print('Done\n')
+            else:
+                print(f'Dataset \'{output_dset_name}\' already exists - skipping file\n')
             
 if __name__ == "__main__":
 	main()
