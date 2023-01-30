@@ -23,13 +23,15 @@ with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
     
-input_dset_name = 'bg_sub_first_30_frames'
+input_dset_name = 'bs-p5-s5_lagrangian_meltpool'
 
 frame_reduction_factor = 1                               # Set to 1 to use all frames
-filter_radius = 3
+filter_radius = None
 mode = 'save'                                            # Set to 'view' or 'save'
+proj_mode = 'median'                                     # 'median' or 'max'
 
-folder_name = f'{input_dset_name}_z_projection_images_stack_reduction_x{frame_reduction_factor}_t'
+reduction_txt = f'_x{frame_reduction_factor}_stack_reduction' if frame_reduction_factor != 1 else ''
+folder_name = f'{input_dset_name}_z_projection_{proj_mode}{reduction_txt}'
 folder_path = Path(filepath, 'z-project_images', folder_name)
 
 def main():
@@ -38,7 +40,7 @@ def main():
             dset = f[input_dset_name]
             trackid = Path(file).name[:-5]
             if mode == 'save':
-                output_filename = f'{trackid}_{input_dset_name}_z_projection_max.png'
+                output_filename = f'{trackid}_{input_dset_name}_z_projection_{proj_mode}.png'
                 output_filepath = Path(folder_path, output_filename)
                 if os.path.exists(output_filepath):
                     print(f'Output file {output_filename} already exists, skipping file.')
@@ -50,16 +52,21 @@ def main():
             dset_reduced = dset[::frame_reduction_factor, :, :]
             
             # Apply 2D median filter to each frame
-            print(f'Applying median filter with radius {filter_radius}')
-            dset_filt = np.zeros_like(dset_reduced)
-            for i, frame in enumerate(dset_reduced):
-                dset_filt[i, :, :] = filters.median(frame, footprint=disk(filter_radius))
-                
+            if filter_radius != None:
+                print(f'Applying median filter with radius {filter_radius}')
+                dset_filt = np.zeros_like(dset_reduced)
+                for i, frame in enumerate(dset_reduced):
+                    dset_filt[i, :, :] = filters.median(frame, footprint=disk(filter_radius))
+            else:
+                dset_filt = dset_reduced
+            
             # Create z projection of max pixel values
-            print('Creating z-projection max image')
-            output_im = np.amax(dset_filt, axis=0)
-            # output_im = exposure.adjust_gamma(output_im, 3)
-            output_im = exposure.equalize_hist(output_im)
+            print('Creating z-projection')
+            if proj_mode == 'max':
+                output_im = np.amax(dset_filt, axis=0)
+                output_im = exposure.equalize_hist(output_im)
+            if proj_mode == 'median':
+                output_im = np.median(dset_filt, axis=0)
             
             if mode == 'save':
                 if not os.path.exists(folder_path):
