@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-input_dset_name = 'bs-p5'
+input_dset_name = 'bs-p5-s5_lagrangian_keyhole'
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
@@ -25,7 +25,7 @@ def main():
             dset = file[input_dset_name]
             print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))
             
-            means = get_means(dset)
+            means = get_means(dset[20:-50])
             t = [i/40 for i in range(len(means))]
 
             means_fft = abs(np.fft.fft(means))
@@ -34,15 +34,14 @@ def main():
             fig, (ax1, ax2) = plt.subplots(1, 2,
                                            tight_layout=True,
                                            figsize=(8, 3))
-            ax1.plot(range(len(means)), means)
-            ax1.set_xlim(100, 130)
-            ax1.set_xlabel('Frame [-]')
-            ax1.set_ylabel('Mean grey value [-]')
+            ax1.plot(t, means)
+            ax1.set_xlabel('Time [ms]')
+            ax1.set_ylabel('Mean grey value [0, 255]')
             
-            ax2.plot(freq / 40000, means_fft.real)
-            ax2.set_ylim(0, 1500)
+            ax2.scatter(freq / 1000, means_fft.real, s=0.5)
+            ax2.set_ylim(0, 300)
             ax2.set_xlim(0, None)
-            ax2.set_xlabel('Frequency [1/frame]')
+            ax2.set_xlabel('Frequency [kHz]')
             ax2.set_ylabel('Amplitude [-]')
             plt.show()
             
