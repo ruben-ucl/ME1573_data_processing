@@ -10,8 +10,9 @@ from my_funcs import *
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-input_dset_name = 'bs-p5-s5_tri+35'
-output_dset_name = f'{input_dset_name}_opening-r1'
+input_dset_name = 'bs-p5-s5_tri+35_lagrangian_keyhole'
+output_dset_name = f'{input_dset_name}_refined'
+mode = 'cropped'    # Set to 'cropped' or 'full_frame'
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
@@ -22,19 +23,20 @@ substrate_surface_measurements_fpath = Path(filepath, 'substrate_surface_measure
 
 def morpho_ops(dset, trackid, f1=0, f2=-1):
     output_dset = np.zeros_like(dset)
-    substrate_mask = get_substrate_mask(dset[0].shape, substrate_surface_measurements_fpath, trackid)
-    background_mask = np.invert(substrate_mask)
+    if mode == 'full_frame':
+        substrate_mask = get_substrate_mask(dset[0].shape, substrate_surface_measurements_fpath, trackid)
+        background_mask = np.invert(substrate_mask)
     frame_inds = range(len(dset))[f1:f2]
     print('Executing morphological operations')
     for i in frame_inds:
         print(f'Working on frame {i}', end='\r')
         frame = dset[i, :, :]
-        # frame[background_mask] = 255
+        # if mode == 'full_frame': frame[background_mask] = 255
         frame = morphology.binary_opening(frame, footprint=morphology.disk(1))
-        # frame = morphology.binary_dilation(frame, footprint=morphology.disk(3))
-        # frame = morphology.remove_small_holes(frame, area_threshold=100, connectivity=2)
-        # frame = morphology.binary_erosion(frame, footprint=morphology.disk(3))    
-        frame[background_mask] = 0
+        frame = morphology.binary_dilation(frame, footprint=morphology.disk(3))
+        frame = morphology.remove_small_holes(frame, area_threshold=100, connectivity=2)
+        frame = morphology.binary_erosion(frame, footprint=morphology.disk(3))    
+        if mode == 'full_frame': frame[background_mask] = 0
         
         output_dset[i, :, :] = frame
     return output_dset
@@ -93,30 +95,26 @@ def plot_result(file, dset, trackid, f1=0, f2=-1):
     plt.show()
 
 def main():
-    logbook = get_logbook()
-    for f in glob.glob(str(Path(filepath, '*.hdf5'))):
+    files = glob.glob(str(Path(filepath, '*.hdf5')))
+    for f in files:
         fname = Path(f).name
         print('\nReading %s: %s' % (fname, input_dset_name)) 
         trackid = fname[:5] + '0' + fname[-6]
-        try:
-            with h5py.File(f, 'a') as file:
+        with h5py.File(f, 'a') as file:
+            if output_dset_name not in file:
                 dset = file[input_dset_name]
                 print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))
-                
-                # f1, f2 = get_start_end_frames(trackid, logbook, start_frame_offset=10)
-                # dset_masked_frames = mask_frames(dset, f1, f2)
                 
                 keyhole_isolated = get_largest_cc(dset)
                 keyhole_refined = morpho_ops(keyhole_isolated, trackid)
                 keyhole_final = get_largest_cc(keyhole_refined)
                 
-                plot_result(file, keyhole_final, trackid)
+                # plot_result(file, keyhole_final, trackid)
                 
-                file[output_dset_name] = keyhole_final * 255
-            print('Done\n')
-        except OSError as e:
-            print('Error: output dataset with the same name already exists - skipping file')
-            print(e)
-            
+                file[output_dset_name] = keyhole_final
+                print('Done\n')
+            else:
+                print(f'Dataset \'{output_dset_name}\' already exists - skipping file\n')
+                
 if __name__ == "__main__":
 	main()
