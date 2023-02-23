@@ -1,10 +1,12 @@
-import h5py, glob, cv2, os
+import h5py, glob, cv2, os, functools
 from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib_scalebar.scalebar import ScaleBar
 from skimage import measure
 from skimage import morphology
+from my_funcs import get_substrate_mask
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v0.1'
@@ -21,17 +23,21 @@ INTENDED CHANGES
     - 
 """
 
+print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
+
 save_mode = 'preview' # Set to 'preview' or 'save'
-um_per_pix = 4.7
+um_per_pix = 4.3
 
 with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
-    
-dset_name = 'bg_sub_first_30_frames_/bilateral_filt_r8_li-thresh'
-output_im_dset_name = 'bg_sub_first_30_frames'
 
-def con_comp(im, connectivity):
+substrate_surface_measurements_fpath = Path(filepath, 'substrate_surface_measurements', 'substrate_surface_locations.csv')
+    
+dset_name = 'bs-f40_tri+35'
+output_im_dset_name = 'bs-f40'
+
+def con_comp(im, min_area=1, max_area=np.inf, connectivity=2):
     # Get labels and region properties using skimage connected component analysis functions
     label_im, num_labels = measure.label(im, return_num = True, connectivity=connectivity)
     print(f'num_labels: {num_labels}')
@@ -44,10 +50,10 @@ def con_comp(im, connectivity):
         area = props[i].area
         x_cent = props[i].centroid[1]
         y_cent = props[i].centroid[0]
-        conditions = [area > 2,
-                      # area < 1000,
-                      y_cent > 322 - x_cent * 0.01955,
-                      y_cent < 450
+        conditions = [area >= min_area,
+                      area <= max_area,
+                      # y_cent >= 322 - x_cent * 0.01955,
+                      # y_cent <= 450
                       ]
         
         if all(conditions):
@@ -57,12 +63,12 @@ def con_comp(im, connectivity):
 
             contour = measure.find_contours(label_im == label_i)[0]
             y, x = contour.T
-    print(f'After filtering: {len(labels)}')
+    print(f'After filtering: {len(labels)}\n')
     
     return compMask, props, labels
 
 def dilate_erode(binary_im):
-    output_im = morphology.binary_dilation(binary_im, footprint=morphology.disk(3))
+    output_im = morphology.binary_dilation(binary_im, footprint=morphology.disk(2))
     output_im = morphology.remove_small_holes(output_im, area_threshold=100, connectivity=2)
     output_im = morphology.binary_erosion(output_im, footprint=morphology.disk(1))
     return output_im
@@ -75,8 +81,13 @@ def main():
         with h5py.File(file, 'a') as f:
             
             im = f[dset_name][-1, :, :]
+            substrate_mask = get_substrate_mask(trackid, im.shape, substrate_surface_measurements_fpath)
+            im, _, _ = con_comp(im, min_area=10)
+            plt.imshow(im)
+            plt.show()
+            im[np.invert(substrate_mask)] = 1
             im = dilate_erode(im)
-            compMask, props, labels = con_comp(im, 2)
+            im, props, labels = con_comp(im, max_area=100000)
             
             for i in labels:
                 stats_i = pd.DataFrame()
@@ -95,37 +106,19 @@ def main():
                 
                 stats_df = pd.concat([stats_df, stats_i])
             
-            output_im = f[output_im_dset_name][-1, :, :]
-            overlay = np.ones_like(output_im)
-            overlay = np.ma.masked_where(np.invert(compMask), overlay)
-            alphas = np.ones_like(output_im) * 0.6 
-            
-            scalebar_text = '500 um'
-            output_im = cv2.putText(output_im,                             # Original frame
-                                    scalebar_text,                  # Text to add
-                                    (890, 500),                     # Text origin
-                                    cv2.FONT_HERSHEY_DUPLEX,        # Font
-                                    0.9,                            # Fontscale
-                                    (255, 255, 255),                # Font colour (BGR)
-                                    1,                              # Line thickness
-                                    cv2.LINE_AA                     # Line type
-                                    )
-            # Add scalebar to frame
-            bar_originx = 889
-            bar_originy = 470
-            bar_length = int(500/4.3)
-            bar_thickness = 4
-            output_im = cv2.rectangle(output_im,                                            # Original frame
-                                      (bar_originx, bar_originy),                           # Top left corner
-                                      (bar_originx+bar_length, bar_originy-bar_thickness),  # Bottom right corner
-                                      (255, 255, 255),                                      # Colour (BGR)
-                                      -1                                                    # Line thickness (-ve means fill shape inwards)
-                                      )
-                                      
             fig, ax = plt.subplots()
+            output_im = f[output_im_dset_name][-1, :, :]
             ax.imshow(output_im, cmap='gray')
-            ax.imshow(overlay, cmap='plasma', vmin=0, vmax=1, alpha=alphas)
             ax.axis('off')
+            
+            scalebar = ScaleBar(dx=4.3, units='um', location='lower left', width_fraction=0.01)
+            plt.gca().add_artist(scalebar)
+            
+            overlay = np.ones_like(output_im)
+            overlay = np.ma.masked_where(np.invert(im), overlay)
+            alphas = np.ones_like(output_im) * 0.5 
+            ax.imshow(overlay, cmap='plasma', vmin=0, vmax=1, alpha=alphas)
+            
             if save_mode == 'save':
                 # Save measurments to csv file
                 stats_df.to_csv(Path(filepath, 'pore_measurements.csv'))
