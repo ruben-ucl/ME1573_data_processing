@@ -45,12 +45,12 @@ def main():
                             'area_sd': [],
                             'max_depth_mean': [],
                             'max_depth_sd': [],
-                            'max_width_mean': [],
-                            'max_width_sd': [],
-                            'depth_at_max_width_mean': [],
-                            'depth_at_max_width_sd': [],
-                            'apperture_width_mean': [],
-                            'apperture_width_sd': [],
+                            'max_length_mean': [],
+                            'max_length_sd': [],
+                            'depth_at_max_length_mean': [],
+                            'depth_at_max_length_sd': [],
+                            'apperture_length_mean': [],
+                            'apperture_length_sd': [],
                             }
     # Iterate through files measuring keyholes frame by frame
     for file in glob.glob(str(Path(filepath, '*.hdf5'))):
@@ -64,9 +64,9 @@ def main():
                             'centroid': [],
                             'area': [],
                             'max_depth': [],
-                            'max_width': [],
-                            'depth_at_max_width': [],
-                            'apperture_width': []
+                            'max_length': [],
+                            'depth_at_max_length': [],
+                            'apperture_length': []
                             }
             # f1, f2 = get_start_end_frames(trackid, logbook, margin=3, start_frame_offset=5)
             f1 = 0
@@ -83,18 +83,18 @@ def main():
                     props = measure.regionprops(im)
                     keyhole_data['centroid'].append(props[0].centroid)  # Assume keyhole is at index 1, 0 is background
                     keyhole_data['area'].append(props[0].area)
-                    max_depth, max_width, depth_at_max_width, apperture_width = get_keyhole_measurements(im, trackid, i+1)
+                    max_depth, max_length, depth_at_max_length, apperture_length = get_keyhole_measurements(im, trackid, i+1)
                     keyhole_data['max_depth'].append(max_depth)
-                    keyhole_data['max_width'].append(max_width)
-                    keyhole_data['depth_at_max_width'].append(depth_at_max_width)
-                    keyhole_data['apperture_width'].append(apperture_width)
+                    keyhole_data['max_length'].append(max_length)
+                    keyhole_data['depth_at_max_length'].append(depth_at_max_length)
+                    keyhole_data['apperture_length'].append(apperture_length)
                 except IndexError:
                     keyhole_data['centroid'].append(None)
                     keyhole_data['area'].append(0)
                     keyhole_data['max_depth'].append(0)
-                    keyhole_data['max_width'].append(0)
-                    keyhole_data['depth_at_max_width'].append(0)
-                    keyhole_data['apperture_width'].append(0)
+                    keyhole_data['max_length'].append(0)
+                    keyhole_data['depth_at_max_length'].append(0)
+                    keyhole_data['apperture_length'].append(0)
                 
                 if plot_keyholes == False: 
                     printProgressBar(i-f1+1, len_frame_inds, prefix='Measuring keyholes', suffix='Complete', length=50)
@@ -115,9 +115,9 @@ def generate_summary_stats(keyhole_data, keyhole_data_summary, trackid):
     print('Calculating summary stats')
     keyhole_data_summary['trackid'].append(trackid)
     keyhole_data_summary['n_frames'].append(len(keyhole_data))
-    for col_name in ['area', 'max_depth', 'max_width', 'depth_at_max_width', 'apperture_width']:
+    for col_name in ['area', 'max_depth', 'max_length', 'depth_at_max_length', 'apperture_length']:
         data = keyhole_data[col_name].to_numpy()
-        if col_name == 'depth_at_max_width':
+        if col_name == 'depth_at_max_length':
             data_nonzero = data
         else:
             data_nonzero = data[np.nonzero(data)]
@@ -129,13 +129,13 @@ def generate_summary_stats(keyhole_data, keyhole_data_summary, trackid):
             
 def get_keyhole_measurements(im, trackid, frame_n):
     # Initialise variables
-    max_width_px = 0
+    max_length_px = 0
     max_depth_px = 0
-    apperture_width_px = 0
-    depth_at_max_width_px = 0
-    widths_px = []
+    apperture_length_px = 0
+    depth_at_max_length_px = 0
+    lengths_px = []
     depths_px = []
-    im_height, im_width = im.shape
+    im_height, im_length = im.shape
     _, min_col, max_row, max_col = measure.regionprops(im)[0]['bbox']
     
     if frame_mode == 'full_frame':
@@ -148,21 +148,21 @@ def get_keyhole_measurements(im, trackid, frame_n):
     else:
         min_row = 0
     
-    # Iterate through image rows to find max_width, depth_at_max_width and apperture_width 
+    # Iterate through image rows to find max_length, depth_at_max_length and apperture_length 
     for r in range(min_row, max_row):
         row = im[r]
         try:
-            width_px = pd.value_counts(row).at[255]   # Count white pixels in row to get keyhole width at that row
+            length_px = pd.value_counts(row).at[255]   # Count white pixels in row to get keyhole length at that row
             if plot_keyholes == True:
-                widths_px.append(width_px)
+                lengths_px.append(length_px)
             if r == min_row:
-                apperture_width_px = width_px
-            if width_px >= max_width_px:
-                max_width_px = width_px
-                depth_at_max_width_px = r - min_row
+                apperture_length_px = length_px
+            if length_px >= max_length_px:
+                max_length_px = length_px
+                depth_at_max_length_px = r - min_row
         except KeyError:
             if plot_keyholes == True:
-                widths_px.append(0)
+                lengths_px.append(0)
             
     # Iterate through columns to find max_depth
     for c in range(min_col, max_col):
@@ -178,16 +178,16 @@ def get_keyhole_measurements(im, trackid, frame_n):
                 depths_px.append(0)
     
     # Convert from pixels to micrometers
-    # output_um = (x * um_per_pix for x in [max_depth_px, max_width_px, depth_at_max_width_px, apperture_width_px])
-    output_px = (max_depth_px, max_width_px, depth_at_max_width_px, apperture_width_px)
+    # output_um = (x * um_per_pix for x in [max_depth_px, max_length_px, depth_at_max_length_px, apperture_length_px])
+    output_px = (max_depth_px, max_length_px, depth_at_max_length_px, apperture_length_px)
     
     if plot_keyholes == True:
-        print(f'max_depth = {max_depth_px}\nmax_width = {max_width_px}\ndepth_at_max_width = {depth_at_max_width_px}\napperture_width = {apperture_width_px}')
-        keyhole_dimensions_plot(im, trackid, frame_n, widths_px, depths_px, min_col, max_col, min_row, max_row)
+        print(f'max_depth = {max_depth_px}\nmax_length = {max_length_px}\ndepth_at_max_length = {depth_at_max_length_px}\napperture_length = {apperture_length_px}')
+        keyhole_dimensions_plot(im, trackid, frame_n, lengths_px, depths_px, min_col, max_col, min_row, max_row)
     
     return output_px
     
-def keyhole_dimensions_plot(im, trackid, frame_n, widths, depths, min_col, max_col, min_row, max_row):
+def keyhole_dimensions_plot(im, trackid, frame_n, lengths, depths, min_col, max_col, min_row, max_row):
     print('Plotting')
     # Get image of keyhole cropped to its bounding box
     keyhole_cropped = im[min_row:max_row, min_col:max_col]
@@ -204,7 +204,7 @@ def keyhole_dimensions_plot(im, trackid, frame_n, widths, depths, min_col, max_c
     # create new axes on the right and on the bottom of the current axes
     divider = make_axes_locatable(ax)
     ax_depth = divider.append_axes("bottom", size='100%', pad='3%', sharex=ax)
-    ax_width = divider.append_axes("right", size='100%', pad='3%', sharey=ax)
+    ax_length = divider.append_axes("right", size='100%', pad='3%', sharey=ax)
     
     # Turn off axis ticks and labels for image
     ax.yaxis.set_tick_params(labelleft=False, size=0)
@@ -217,14 +217,14 @@ def keyhole_dimensions_plot(im, trackid, frame_n, widths, depths, min_col, max_c
     ax_depth.set_ylabel('Depth (px)')
     ax_depth.set_xlabel('X-pos. (px)')
     
-    # Plot keyhole width on axes beside image
-    ax_width.yaxis.set_tick_params(labelright=True)
-    ax_width.set_box_aspect(aspect)
-    ax_width.plot(widths[:y_lim], range(y_lim))
-    ax_width.yaxis.set_label_position("right")
-    ax_width.yaxis.tick_right()
-    ax_width.set_xlabel('Width (px)')
-    ax_width.set_ylabel('Y-pos. (px)')
+    # Plot keyhole length on axes beside image
+    ax_length.yaxis.set_tick_params(labelright=True)
+    ax_length.set_box_aspect(aspect)
+    ax_length.plot(lengths[:y_lim], range(y_lim))
+    ax_length.yaxis.set_label_position("right")
+    ax_length.yaxis.tick_right()
+    ax_length.set_xlabel('Length (px)')
+    ax_length.set_ylabel('Y-pos. (px)')
 
     plt.show()
     
