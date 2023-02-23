@@ -1,6 +1,7 @@
 import functools, glob, math
 import numpy as np
 import pandas as pd
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
 from my_funcs import *
@@ -17,73 +18,85 @@ with open('data_path.txt', encoding='utf8') as f:
 data_path = Path(filepath, 'keyhole_measurements_lagrangian')
 logbook = get_logbook()
 
-data_comp = {}
+colour_key = {'unstable keyhole': '#fde725',
+              'quasi-stable keyhole': '#5ec962',
+              'keyhole flickering': '#3b528b',
+              'quasi-stable vapour depression': '#21918c',
+              'conduction': '#440154'
+              }
 
+keyhole_data_comp = {}
 files = glob.glob(str(Path(data_path, '*_keyhole_measurements.csv')))
 for csv_file in files:
     trackid = Path(csv_file).name[:7]       # Get trackid from file name
     print(f'Reading {trackid}')
-    data = pd.read_csv(csv_file)            # Read track data from csv
-    data_comp[trackid] = data               # Add data table to dictionary
-    col_names = data.keys()                 # Save collumn names to list
+    keyhole_data = pd.read_csv(csv_file)            # Read track data from csv
+    keyhole_data_comp[trackid] = keyhole_data               # Add data table to dictionary
+    col_names = keyhole_data.keys()                 # Save collumn names to list
 
-trackids = sorted(data_comp)
+trackids = keyhole_data_comp.keys()
 keyhole_regimes = []
+LEDs = []
 for trackid in trackids:
-    _, _, _, regime = get_logbook_data(logbook, trackid)
-    keyhole_regimes.append(regime)
-    
+    track_data = get_logbook_data(logbook, trackid)
+    keyhole_regimes.append(track_data['keyhole_regime'])
+    LEDs.append(track_data['LED'])
+track_df = pd.DataFrame({'trackid': trackids,
+                         'keyhole_regime': keyhole_regimes,
+                         'LED': LEDs,
+                         }).sort_values('LED').reset_index(drop=True)
+print(track_df)
+
 print('Data imported\n\nCreating figures')
 
 for col_name in col_names[3:]:      # Iterate through collumn names except 0, 1 and 2 (index, time and centroid)
-    fig, ax = plt.subplots(figsize=(9, 6))
-    fig_data = []
+    plt.rcParams.update({'font.size': 8})
+    fig, ax = plt.subplots(figsize=(4, 4), dpi=300, tight_layout=True)
     
-    for trackid in trackids:
-        col_data = data_comp[trackid][col_name][:-45]
-        fig_data.append(col_data)
+    for i, row in track_df.iterrows():
+        trackid = row['trackid']
+        regime = row['keyhole_regime']
+        LED = row['LED']
+        col_data = keyhole_data_comp[trackid][col_name][:-45]
+        violin = ax.violinplot(col_data,
+                               positions = [i+1],
+                               widths = 0.6,
+                               showextrema = False,
+                               showmedians = False
+                               )
+        ax.scatter(i+1,
+                   np.median(col_data),
+                   marker='+',
+                   c='k',
+                   linewidths = mpl.rcParams['axes.linewidth']
+                   )
+        body = violin['bodies'][0]
+        try:
+            body.set_facecolor(colour_key[regime])
+            body.set_edgecolor('black')
+            body.set_linewidth(mpl.rcParams['axes.linewidth'])
+            body.set_label(regime)
+            body.set_alpha(1)
+        except KeyError:
+            print(f'{trackid} keyhole regime definition invalid')
+        # ax.boxplot(col_data,
+                   # positions = [i],
+                   # showfliers = False,
+                   # medianprops = {'color': 'k'}
+                   # )
         
-    violins = ax.violinplot(fig_data,
-                            showextrema = False,
-                            showmedians = False,
-                            )
-    for i, pc in enumerate(violins['bodies']):
-        if keyhole_regimes[i] == 'unstable keyhole':
-            pc.set_facecolor('#fde725')
-            pc.set_label('unstable keyhole')
-        elif keyhole_regimes[i] == 'quasi-stable keyhole':
-            pc.set_facecolor('#5ec962')
-            pc.set_label('quasi-stable keyhole')
-        elif keyhole_regimes[i] == 'keyhole flickering':
-            pc.set_facecolor('#21918c')
-            pc.set_label('keyhole flickering')
-        elif keyhole_regimes[i] == 'quasi-stable vapour depression':
-            pc.set_facecolor('#3b528b')
-            pc.set_label('quasi-stable vapour depression')
-        elif keyhole_regimes[i] == 'conduction':
-            pc.set_facecolor('#440154')
-            pc.set_label('conduction')
-        else:
-            print(f'{trackids[i]} keyhole regime definition invalid')
-        pc.set_alpha(0.65)
-        
-    ax.boxplot(fig_data,
-               showfliers = False    ,
-               medianprops = {'color': 'k'}
-               )
-    
     x_inds = np.arange(1, len(trackids)+1)
     ax.set_xticks(x_inds)
-    ax.set_xticklabels(trackids)
+    ax.set_xticklabels(track_df['trackid'], rotation=45, ha='right')
     ax.set_xlabel('Track ID')
     ax.set_ylabel('Area (μ$\mathregular{m^3}$)' if col_name == 'area' else 'Distance (μm)')
     handles, labels = plt.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
-    plt.legend(by_label.values(), by_label.keys())
-    fig.suptitle(col_name)
+    # plt.legend(by_label.values(), by_label.keys())
+    fig.suptitle(col_name, ha='center', position=(0.57, 0.88))
     
     if mode == 'save':
-        output_filename = f'keyhole_{col_name}_stats.png'
+        output_filename = f'keyhole_{col_name}_stats_4x4.png'
         output_filepath = Path(data_path, output_filename) 
         plt.savefig(output_filepath)
         print(f'{col_name} figure saved to {output_filepath}')
