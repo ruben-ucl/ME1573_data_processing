@@ -18,7 +18,7 @@ def get_logbook(logbook_path = Path('J:\Logbook_Al_ID19_combined_RLG.xlsx')):
     try:
         logbook = pd.read_excel(logbook_path,
                                 sheet_name='Logbook',
-                                usecols='C, D, F, I, J, M, O, P, Q, R, S, T, U, AM, AP, AS',
+                                usecols='C, D, E, F, I, J, M, O, P, Q, R, S, T, U, AM, AP, AS, AT, AU',
                                 converters={'Substrate No.': str, 'Sample position': str}
                                 )
         # logging.info('Logbook data aquired from %s' % logbook_path)
@@ -41,12 +41,19 @@ def get_logbook_data(logbook, trackid, layer_n=1):  # Get scan speed and framera
                             (logbook['Layer'] == layer_n)
                             ]
     # print(track_row)
-    scan_speed = int(track_row['Scan speed [mm/s]'])
-    framerate = int(track_row['Frame rate (kHz)'] * 1000)
-    laser_onset_frame = int(track_row['Laser onset frame #'])
-    keyhole_regime = track_row['Melting regime'].values[0]
+    track_data = {}
+    track_data['peak_power'] = int(track_row['Power [W]'])
+    track_data['avg_power'] = int(track_row['Avg. power [W]'])
+    track_data['pt_dist'] = int(track_row['Point distance [um]'])
+    track_data['exp_time'] = int(track_row['Exposure time [us]'])
+    track_data['pt_jump_delay'] = int(track_row['Point jump delay [us]'])
+    track_data['scan_speed'] = int(track_row['Scan speed [mm/s]'])
+    track_data['LED'] = int(track_row['LED [J/m]'])
+    track_data['framerate'] = int(track_row['Frame rate (kHz)'] * 1000)
+    track_data['laser_onset_frame'] = int(track_row['Laser onset frame #'])
+    track_data['keyhole_regime'] = track_row['Melting regime'].values[0]
     
-    return framerate, scan_speed, laser_onset_frame, keyhole_regime
+    return track_data
     
     
 def get_start_end_frames(trackid, logbook, margin=50, start_frame_offset=0):
@@ -58,7 +65,7 @@ def get_start_end_frames(trackid, logbook, margin=50, start_frame_offset=0):
     
     return f1, f2
     
-def get_substrate_mask(shape, substrate_surface_measurements_fpath, trackid):   # Generates a 2d mask of the substrate
+def get_substrate_mask(trackid, shape, substrate_surface_measurements_fpath):   # Generates a 2d mask of the substrate
     substrate_mask = np.zeros(shape, dtype=bool)
     substrate_surface_df = pd.read_csv(substrate_surface_measurements_fpath, index_col='trackid')
     m = substrate_surface_df.at[trackid, 'm']
@@ -145,18 +152,23 @@ def view_histogram(a, title=None, show_std=False):
     plt.show()
     
 def compare_histograms(im_dict, fig_title=None):
-    fig, axs = plt.subplots(len(im_dict), 2, figsize=(8, len(im_dict)*2), tight_layout=True)
+    plt.rcParams.update({'font.size': 6})
+    fig, axs = plt.subplots(len(im_dict), 2, figsize=(5, len(im_dict)*2), dpi=300, tight_layout=True, sharex='col')
+    # fig, axs = plt.subplots(len(im_dict), 2, figsize=(4, 4), dpi=300, tight_layout=True, sharex='col')
     if fig_title != None:
         fig.suptitle(fig_title)
     for i, key in enumerate(im_dict):
         im = im_dict[key]
         axs[i, 0].imshow(im, cmap='gray')
         axs[i, 0].title.set_text(key)
+        axs[i, 0].axis('off')
         im_aspect = im.shape[0] / im.shape[1]
         axs[i, 1].set_box_aspect(im_aspect)
+        axs[i, 1].set_xlim(0, 255)
         axs[i, 1].hist(im.ravel(), bins=255, density=True)
-        axs[i, 1].annotate(f'max: {np.max(im)}\nmin: {np.min(im)}\ndtype: {im.dtype}', xy=(0.05, 0.65), xycoords='axes fraction')
-        
+        axs[i, 1].annotate(f'max: {np.max(im)}\nmin: {np.min(im)}\ndtype: {im.dtype}', xy=(0.05, 0.6), xycoords='axes fraction')
+    axs[len(im_dict)-1, 1].set_xlabel('greyscale value [0, 255]')
+    
     plt.show()    
 
 def hist_eq(dset):
