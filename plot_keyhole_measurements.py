@@ -59,12 +59,15 @@ for col_name in col_names[3:]:      # Iterate through collumn names except 0, 1 
         LED = row['LED']
         col_data = keyhole_data_comp[trackid][col_name][:-45]
         violin = ax.violinplot(col_data,
-                               positions = [i+1],
-                               widths = 0.6,
+                               # positions = [i+1],
+                               positions = [LED],
+                               # widths = 0.6,
+                               widths = 40,
                                showextrema = False,
                                showmedians = False
                                )
-        ax.scatter(i+1,
+        ax.scatter(LED,
+                   # i+1,
                    np.median(col_data),
                    marker='+',
                    c='k',
@@ -85,10 +88,15 @@ for col_name in col_names[3:]:      # Iterate through collumn names except 0, 1 
                    # medianprops = {'color': 'k'}
                    # )
         
-    x_inds = np.arange(1, len(trackids)+1)
-    ax.set_xticks(x_inds)
-    ax.set_xticklabels(track_df['trackid'], rotation=45, ha='right')
-    ax.set_xlabel('Track ID')
+    # x_inds = np.arange(1, len(trackids)+1)
+    # ax.set_xticks(x_inds)
+    # ax.set_xticklabels(track_df['trackid'], rotation=45, ha='right')
+    # ax.set_xlabel('Track ID')
+    
+    # ax.set_xticks(track_df['LED'])
+    # ax.set_xticklabels(track_df['LED'], rotation=45, ha='right')
+    ax.set_xlabel('LED (J/m)')
+    
     ax.set_ylabel('Area (μ$\mathregular{m^3}$)' if col_name == 'area' else 'Distance (μm)')
     handles, labels = plt.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
