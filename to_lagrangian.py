@@ -13,7 +13,7 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 
 mode = 'save'
 input_dset_name = 'bs-p5-s5'
-output_dset_name = f'{input_dset_name}_lagrangian_meltpool'  # Set fov_w = 220 for keyhole, fov_w = 350 for meltpool
+output_dset_name = f'{input_dset_name}_lagrangian_meltpool'  # Set fov_h = 220 for keyhole, fov_h = 350 for meltpool
 logbook = get_logbook()
 
 # Read data folder path from .txt file
@@ -50,21 +50,24 @@ def main():
             print(e)
             
 def to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords,
-                  px_size=4.3, start_frame=48, track_l = 4, fov_w=350, fov_h=130, shift_h=30, laser_start_pos=90, v_correction=0.97
+                  px_size=4.3, start_frame=48, track_l = 4, fov_h=350, fov_v=130, shift_v=0, shift_h=30, laser_start_pos=90, v_correction=0.97
                   ):
-    output_shape = (len(dset) - start_frame, fov_h, fov_w)
+    # Create zero-filled output dataset to store the lagrangian keyhole video
+    output_shape = (len(dset) - start_frame, fov_v, fov_h)
     output_dset = np.zeros(output_shape, dtype=np.uint8)
+    
+    # Iterate through frames, cropping each so that the keyhole is in the same position relative to the new frame edges
     for i, frame in enumerate(dset[start_frame:]):
         laser_end_pos = laser_start_pos + track_l * 1000 / px_size
         scan_speed_px = 1000 * scan_speed / (px_size * framerate)
         laser_pos = int(np.clip(laser_start_pos + i * scan_speed_px * v_correction, None, laser_end_pos))
         # print(f'laser_pos: {laser_pos}')
-        row_min = int(substrate_surface_coords[laser_pos])
-        row_max = row_min + fov_h
+        row_min = int(substrate_surface_coords[laser_pos]) - shift_v
+        row_max = row_min + fov_v
         col_max = laser_pos + shift_h
-        col_min = col_max - fov_w
+        col_min = col_max - fov_h
         # print(f'rows: {row_min} - {row_max}\ncols: {col_min} - {col_max}')
-        pad = fov_w - laser_start_pos - shift_h
+        pad = fov_h - laser_start_pos - shift_h
         frame_padded = np.pad(frame, pad, mode='constant')
         frame_cropped = frame_padded[row_min+pad:row_max+pad, col_min+pad:col_max+pad]
         
