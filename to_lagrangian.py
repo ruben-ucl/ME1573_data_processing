@@ -34,7 +34,10 @@ def main():
                 dset = file[input_dset_name]
                 print('Input: shape: %s, dtype: %s'% (dset.shape, dset.dtype))
                 
-                framerate, scan_speed, _, _ = get_logbook_data(logbook, trackid)
+                track_data = get_logbook_data(logbook, trackid)
+                framerate = track_data['framerate']
+                scan_speed = track_data['scan_speed']
+                
                 _, substrate_surface_coords = get_substrate_surface_coords(dset.shape, substrate_surface_measurements_fpath, trackid)
                 dset_lagrangian = to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords)
                 
