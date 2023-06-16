@@ -11,7 +11,7 @@ __version__ = 'v0.1'
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-mode = 'save'
+mode = 'save'   # Preview or save
 input_dset_name = 'bs-p5-s5'
 output_dset_name = f'{input_dset_name}_lagrangian_meltpool'  # Set fov_h = 220 for keyhole, fov_h = 350 for meltpool
 logbook = get_logbook()
@@ -31,6 +31,8 @@ def main():
         print('\nReading %s: %s' % (fname, input_dset_name)) 
         try:
             with h5py.File(f, 'r+') as file:
+                if output_dset_name in file.keys():    # Check if dataset with output name exists already, and skip file if so
+                    raise OSError
                 dset = file[input_dset_name]
                 print('Input: shape: %s, dtype: %s'% (dset.shape, dset.dtype))
                 
@@ -39,18 +41,20 @@ def main():
                 scan_speed = track_data['scan_speed']
                 
                 _, substrate_surface_coords = get_substrate_surface_coords(dset.shape, substrate_surface_measurements_fpath, trackid)
-                dset_lagrangian = to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords)
+                # dset_lagrangian = to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords)    # Default for keyhole
+                dset_lagrangian = to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords, fov_h=350)    # For meltpool
+                # dset_lagrangian = to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords, fov_v=250, shift_v=250, shift_h=100) # For spatter
                 
                 print('Output: shape: %s, dtype: %s'% (dset_lagrangian.shape, dset_lagrangian.dtype))
                 if mode == 'save':
                     file[output_dset_name] = dset_lagrangian
-            print('Done\n')
+            print('Done')
         except OSError as e:
             print('Error: output dataset with the same name already exists - skipping file')
             print(e)
             
 def to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords,
-                  px_size=4.3, start_frame=48, track_l = 4, fov_h=350, fov_v=130, shift_v=0, shift_h=30, laser_start_pos=90, v_correction=0.97
+                  px_size=4.3, start_frame=48, track_l = 4, fov_h=220, fov_v=130, shift_v=0, shift_h=30, laser_start_pos=90, v_correction=0.97
                   ):
     # Create zero-filled output dataset to store the lagrangian keyhole video
     output_shape = (len(dset) - start_frame, fov_v, fov_h)
@@ -67,20 +71,34 @@ def to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords,
         col_max = laser_pos + shift_h
         col_min = col_max - fov_h
         # print(f'rows: {row_min} - {row_max}\ncols: {col_min} - {col_max}')
-        pad = fov_h - laser_start_pos - shift_h
+        # pad_start = fov_h - laser_start_pos - shift_h
+        pad = fov_h
         frame_padded = np.pad(frame, pad, mode='constant')
         frame_cropped = frame_padded[row_min+pad:row_max+pad, col_min+pad:col_max+pad]
         
         preview_int = 50
         if (mode == 'preview') & (i in [n * preview_int for n in range(len(dset)//preview_int)]):
             fig, (ax1, ax2) = plt.subplots(1, 2)
-            ax1.imshow(frame_padded, cmap='gray')
-            ax1.plot([i + pad for i in [col_min, col_max, col_max, col_min, col_min]],
-                     [i + pad for i in [row_min, row_min, row_max, row_max, row_min]],
+            # Plot with frame padding
+            # ax1.imshow(frame_padded, cmap='gray')
+            # ax1.plot([i + pad for i in [col_min, col_max, col_max, col_min, col_min]],
+                     # [i + pad for i in [row_min, row_min, row_max, row_max, row_min]],
+                     # color = 'b',
+                     # lw = 1
+                     # )
+            # Plot without frame padding
+            ax1.imshow(frame, cmap='gray')
+            ax1.plot([col_min, col_max, col_max, col_min, col_min],
+                     [row_min, row_min, row_max, row_max, row_min],
                      color = 'b',
                      lw = 1
                      )
             ax2.imshow(frame_cropped, cmap='gray')
+            for spine in ax2.spines.values():
+                spine.set_edgecolor('b')
+            for ax in [ax1, ax2]:
+                ax.axes.xaxis.set_visible(False)
+                ax.axes.yaxis.set_visible(False)
             plt.show()
 
         elif mode == 'save':
