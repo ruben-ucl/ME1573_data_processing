@@ -21,12 +21,13 @@ INTENDED CHANGES
 '''
 """Controls"""
 
-input_dset_name = 'bs-p5-s5_lagrangian_keyhole'
+input_dset_name = 'bs-f200'
 
-binary_dset_name = 'bs-p5-s5_tri+35_lagrangian_keyhole_refined'
+binary_dset_name = None
 binary_overlay_mode = 'outline'     # 'outline' or 'fill'
+overlay_suffix = f'_keyhole_overlay_{binary_dset_name}' if binary_dset_name != None else ''
 
-output_name = f'{input_dset_name}'#_keyhole_overlay_{binary_dset_name}'
+output_name = f'{input_dset_name}{overlay_suffix}'
 
 capture_framerate = 40000 # fps
 output_framerate = 30 # fps
@@ -89,7 +90,22 @@ def create_video_from_dset(dset, vid_filename, output_folder, binary_dset=None, 
         printProgressBar(i + 1, n_frames, prefix=vid_filename[:7], suffix='Complete', length=50)
     out.release()
 
-def create_overlay(i, frame, fontscale=0.5, scalebar_length=100, scale_txt_from_right=70):
+def create_overlay(i, frame, fontscale=1, scalebar_length=200, scale_txt_from_right=160, bottom_margin=20, left_margin=20):
+    '''
+    For full frame video:
+    fontscale = 1
+    scalebar_length = 200
+    scale_txt_from_right = 160
+    bottom_margin = 20
+    left_margin = 20
+    
+    For Lagrangian cropped video:
+    fontscale = 0.5
+    scalebar_length = 100
+    scale_txt_from_right = 70
+    bottom_margin = 10
+    left_margin = 5
+    '''
     if text_colour == 'black':
         bgr_colour = (0, 0, 0)
     elif text_colour == 'white':
@@ -97,8 +113,8 @@ def create_overlay(i, frame, fontscale=0.5, scalebar_length=100, scale_txt_from_
     timestamp = str(format(i * 1/capture_framerate * 1000, '.3f')) + ' ms'        # in milliseconds
     height = frame.shape[0]
     width = frame.shape[1]
-    bottom_left = (5, height-10)
-    bottom_right = (width-scale_txt_from_right, height-10)
+    bottom_left = (left_margin, height-bottom_margin)
+    bottom_right = (width-scale_txt_from_right, height-bottom_margin)
     # Add timestamp to frame
     new_frame = cv2.putText(frame,                          # Original frame
                             timestamp,                      # Text to add
@@ -122,9 +138,9 @@ def create_overlay(i, frame, fontscale=0.5, scalebar_length=100, scale_txt_from_
                             )
     # Add scalebar to frame
     bar_length = int(scalebar_length/4.3)
-    scale_bar_h_offset = int((scale_txt_from_right - bar_length) / 2 - 3)
+    scale_bar_h_offset = int((scale_txt_from_right - bar_length) / 2 - left_margin // 2)
     bar_originx = bottom_right[0] + scale_bar_h_offset
-    bar_originy = bottom_right[1] + 7
+    bar_originy = bottom_right[1] + 10
     bar_thickness = 3
     new_frame = cv2.rectangle(new_frame,                                            # Original frame
                               (bar_originx, bar_originy),                           # Top left corner
