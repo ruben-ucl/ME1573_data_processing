@@ -19,10 +19,10 @@ INTENDED CHANGES
 # Input data informaton
 with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+    print(f'\nReading from {filepath}')
     
 repeat_for_all = False
-dset_to_delete_all = 'ffcorr'
+dset_to_delete_all = 'bs-p5-s5'
 
 col_w = [50, 25, 15, 10]
 total_w = np.sum(col_w) + 3
@@ -33,10 +33,19 @@ tab_rule = '-'*total_w
 def main():
     for file in glob.glob(str(Path(filepath, '*.hdf*'))):
         with h5py.File(file, 'a') as f:
-            inspect_and_delete(f)
-    print('\nFinished - no more files')
+            status = 0           # 0 = stay on current file, 1 = continue to next file, 2 = exit
+            while status == 0:
+                status = inspect_and_delete(f)
+            if status == 2:
+                break
+            else:
+                pass
+            
+                
+    print('\nDone')
         
 def inspect_and_delete(f):
+    print()
     print(f, f' Datasets:\n{tab_rule}')
     dset_props = {}
     for i in f.keys():
@@ -64,19 +73,27 @@ def inspect_and_delete(f):
         print(col_format.format(set_name, shape, dtype, nbytes))
     try:
         if repeat_for_all != True:
-            dset_to_delete = input('\nEnter name of dataset you would like to delete or \'c\' to continue\n')
+            dset_to_delete = input('\nEnter name of dataset you would like to delete, \'c\' to continue or \'x\' to exit.\n')
             if dset_to_delete == 'c':
-                cont = 'y'
+                return 1
+            elif dset_to_delete =='x':
+                return 2
             else:
                 del f[dset_to_delete]
                 cont = input('Move on to next file? (y/n)\n')
             if cont == 'n':
-                inspect_and_delete(f)
+                return 0
             else:
-                pass
+                return 1
         else:
-            del f[dset_to_delete_all]
+            confirm_del = input(f'Are you sure you want to delete all datasets \'{dset_to_delete_all}\'? (y/n)\n)
+            if confirm_del == 'y':
+                del f[dset_to_delete_all]
+            else:
+                return 2
+            print(f'Dataset \'{dset_to_delete_all}\' deleted from all files in directory.')
     except KeyError:
-        pass
+        print('\nInput not recognised, try again.')
+        return 0
         
 main()
