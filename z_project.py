@@ -31,10 +31,10 @@ input_dset_name = 'bs-f40_lagrangian_meltpool'
 
 frame_reduction_factor = 1                              # Set to 1 to use all frames
 filter_radius = None                                    # Median filter radius, set to None for no filter
-mode = 'save'                                        # Set to 'view' or 'save'
+mode = 'save'                                           # Set to 'view' or 'save'
 proj_mode = 'mean'                                       # 'median', 'mean' or 'max'
-skip_frames_end = 45                                    # For Lagrangian videos use 45, set to 0 to use all frames
-skip_start_frames = 40
+skip_frames_end = 80                                    # For Lagrangian videos use 45, set to 0 to use all frames
+skip_start_frames = 50
 
 reduction_txt = f'_x{frame_reduction_factor}_stack_reduction' if frame_reduction_factor != 1 else ''
 folder_name = f'{input_dset_name}_z_projection_{proj_mode}{reduction_txt}'
@@ -71,6 +71,8 @@ def main():
             if proj_mode == 'max':
                 output_im = np.amax(dset_filt, axis=0)
                 # output_im = exposure.equalize_hist(output_im)
+            elif proj_mode == 'min':
+                output_im = np.amin(dset_filt, axis=0)
             elif proj_mode == 'median':
                 output_im = np.median(dset_filt, axis=0)
             elif proj_mode == 'mean':
@@ -79,8 +81,8 @@ def main():
             # Plot figure
             plt.rcParams.update({'font.size': 8})
             fig, ax = plt.subplots(figsize=(4, 2), dpi=600, tight_layout=True)
-            im = ax.imshow(output_im, cmap='viridis', vmin=110, vmax=140)
-            scalebar = ScaleBar(dx=4.3, units='um', location='lower left', width_fraction=0.02)
+            im = ax.imshow(output_im, cmap='viridis', vmin=110, vmax=200) # Keyhole default colour bar 110:140
+            scalebar = ScaleBar(dx=4.3, units='um', location='lower left', width_fraction=0.02, box_alpha=0)
             plt.gca().add_artist(scalebar)
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="3%", pad=0.05)
