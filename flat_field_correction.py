@@ -38,6 +38,8 @@ np.seterr(divide='warn')    # Log zero division errors
 
 show_histograms = False
 flip_images = False
+trim = False # Trim video to laser scan accoding to start_frame number in logbook
+margin = 50 # Number of frames kept before and after laser scan
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
@@ -97,7 +99,11 @@ def main():
                 raise FileExistsError()
             print('\nReading %s' % fname)
             with h5py.File(file, 'r') as fi:
-                start_frame, end_frame = get_start_end_frames(trackid, logbook, margin=50) # Define end frame as 50 frames after laser off
+                if trim == True:
+                    start_frame, end_frame = get_start_end_frames(trackid, logbook, margin=100) # Define end frame as 50 frames after laser off
+                else:
+                    start_frame = 0
+                    end_frame = -1
                 flats = np.array(fi['flats'])[:200]   # Take first 200 flat field images
                 images = np.array(fi['raw'])[start_frame:end_frame]  # Discard frames after end_frame
                 # elem_size = fi['xray_images'].attrs.get('element_size_um')   # Get element size to pass on to new file
