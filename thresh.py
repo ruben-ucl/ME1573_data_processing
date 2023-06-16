@@ -8,8 +8,12 @@ from my_funcs import *
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
 input_dset_name = 'bs-p5-s5'
-
-output_dset_name = f'{input_dset_name}_tri+35'
+thresh_algo = 'tri'
+thresh_offset = 35
+output_dset_name = f'{input_dset_name}_{thresh_algo}+{str(thresh_offset)}'
+view_hists = True
+apply_substrate_mask = True
+save_output = False
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
@@ -21,18 +25,24 @@ substrate_surface_measurements_fpath = Path(filepath, 'substrate_surface_measure
 def threshold(dset, trackid):
     a = np.array(dset)
     # view_histogram(a[-100], trackid)
-    a_masked, vals = mask_substrate(dset, trackid)
+    if apply_substrate_mask == True:
+        a_masked, vals = mask_substrate(dset, trackid)
+    else:
+        a_masked = dset
+        vals = np.array(dset)
     print('Calculating threshold')
-    thresh_offset = 35
-    thresh = triangle(a, thresh_offset)
-    output_dset = (a_masked > thresh).astype(np.uint8)
+    if thresh_algo == 'tri':
+        thresh = triangle(vals, thresh_offset)
+    if thresh_algo == 'yen':
+        thresh = yen(vals, thresh_offset)
+    output_dset = (a_masked > thresh).astype(np.uint8) * 255
     return output_dset
 
 def triangle(vals, offset):
     thresh = filters.threshold_triangle(vals) + offset  
     print(f'Threshold calulated by Triangle method with offset of {offset}: {thresh}')
     return thresh
-    
+
 def yen(vals, offset):
     thresh = filters.threshold_yen(vals) + offset
     print(f'Threshold calulated by Yen method with offset of {offset}: {thresh}')
@@ -41,7 +51,6 @@ def yen(vals, offset):
 def mask_substrate(dset, trackid):  # Function to mask the images so that only the substrate region is used for thresholding. Sets region above to zero.
     print('Masking ROI')
     substrate_mask = get_substrate_mask(dset[0].shape, substrate_surface_measurements_fpath, trackid)
-    
     print('Creating 3d mask from 2d slice')
     substrate_mask_3d = np.stack([substrate_mask for i in range(len(dset))])
     print('Setting pixel values above substrate surface to zero')
@@ -54,7 +63,7 @@ def mask_substrate(dset, trackid):  # Function to mask the images so that only t
     return stack_masked, vals
 
 def main():
-    for f in glob.glob(str(Path(filepath, '*.hdf5'))):
+    for f in sorted(glob.glob(str(Path(filepath, '*.hdf5')))):
         fname = Path(f).name
         print('Reading %s' % fname)
         trackid = fname[:5] + '0' + fname[-6]
@@ -62,11 +71,13 @@ def main():
             dset = file[input_dset_name]
             if output_dset_name not in file:
                 print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))
-            
                 output_dset = threshold(dset, trackid)
-                view_histogram(output_dset, trackid)
-            
-                file[output_dset_name] = output_dset
+                
+                if view_hists == True:
+                    view_histogram(output_dset, trackid)
+                if save_output == True:
+                    file[output_dset_name] = output_dset
+                
                 print('Done\n')
             else:
                 print(f'Dataset \'{output_dset_name}\' already exists - skipping file\n')
