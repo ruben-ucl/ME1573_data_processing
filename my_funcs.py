@@ -13,12 +13,13 @@ with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     # print(f'Reading data from {filepath}\n')
 
-def get_logbook(logbook_path = Path('J:\Logbook_Al_ID19_combined_RLG.xlsx')):
+# def get_logbook(logbook_path = Path('J:\Logbook_Al_ID19_combined_RLG.xlsx')):
+def get_logbook(logbook_path = Path('E:\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\Logbook_Al_ID19_combined_RLG.xlsx')):
     print(f'Trying to read logbook: {logbook_path.name}')
     try:
         logbook = pd.read_excel(logbook_path,
                                 sheet_name='Logbook',
-                                usecols='C, D, E, F, I, J, M, O, P, Q, R, S, T, U, AM, AP, AS, AT, AU',
+                                usecols='C, D, E, F, I, J, M, O, P, Q, R, S, T, U, AM, AP, AS, AT, AU, AV, AW, AX, AY, AZ, BA',
                                 converters={'Substrate No.': str, 'Sample position': str}
                                 )
         # logging.info('Logbook data aquired from %s' % logbook_path)
@@ -57,7 +58,10 @@ def get_logbook_data(logbook, trackid, layer_n=1):  # Get scan speed and framera
     
     
 def get_start_end_frames(trackid, logbook, margin=50, start_frame_offset=0):
-    framerate, scan_speed, start_frame = get_logbook_data(logbook, trackid)
+    track_data = get_logbook_data(logbook, trackid)
+    framerate = track_data['framerate']
+    scan_speed = track_data['scan_speed']
+    start_frame = track_data['laser_onset_frame']
     
     n_frames = round(framerate * 4 / scan_speed) # based on track length of 4 mm
     f1 = start_frame - margin - start_frame_offset
@@ -95,27 +99,23 @@ def median_filt(dset, kernel):
         median_filter = filters.median
     
     tic = time.perf_counter()
-    
-    # Method 1: frame by frame
-    output_dset = np.zeros_like(dset)
-    for i, frame in enumerate(dset):
-        print(f'Median filtering frame {i}', end='\r')
-        output_dset[i] = median_filter(frame, kernel)
+    try:
+        if dset.ndim == 3:
+            output_dset = np.zeros_like(dset)
+            for i, frame in enumerate(dset):
+                print(f'Median filtering frame {i}', end='\r')
+                output_dset[i] = median_filter(frame, kernel)
+        elif dset.ndim == 2:
+            output_dset = median_filter(dset, kernel)
+        else:
+            raise UnexpectedShape
         
-    # Method 2: as single array
-    # if dset.ndim > 2:
-        # kernel_side_length = kernel.shape[0]
-        # zero_padding = np.zeros_like(kernel)
-        # for i in range(kernel_side_length // 2):
-            
-    # else:
-        # kernel_ndim = kernel
-    # output_dset = median_filter(dset, kernel)
-    
-    toc = time.perf_counter()
-    print(f'Median filter duration: {toc-tic:0.4f} seconds')
-    
-    return output_dset
+        toc = time.perf_counter()
+        print(f'Median filter duration: {toc-tic:0.4f} seconds')
+        
+        return output_dset
+    except UnexpectedShape:
+        print(f'Expected dataset of 2 or 3 dimensions, but received dataset with {dset.ndim} dimension(s)')
 
 def view_histogram(a, title=None, show_std=False):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4), tight_layout=True)
@@ -202,3 +202,7 @@ def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, 
     # Print New Line on Complete
     if iteration == total: 
         print()
+        
+class UnexpectedShape(Exception):
+    "Raised when input data is not the expected shape"
+    pass
