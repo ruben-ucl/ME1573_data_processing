@@ -8,7 +8,7 @@ from my_funcs import *
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-mode = 'preview'
+mode = 'save'
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
@@ -50,7 +50,7 @@ print(track_df)
 print('Data imported\n\nCreating figures')
 
 for col_name in col_names[3:]:      # Iterate through collumn names except 0, 1 and 2 (index, time and centroid)
-    plt.rcParams.update({'font.size': 8})
+    plt.rcParams.update({'font.size': 10})
     fig, ax = plt.subplots(figsize=(4, 4), dpi=300, tight_layout=True)
     
     for i, row in track_df.iterrows():
@@ -58,6 +58,10 @@ for col_name in col_names[3:]:      # Iterate through collumn names except 0, 1 
         regime = row['keyhole_regime']
         LED = row['LED']
         col_data = keyhole_data_comp[trackid][col_name][:-45]
+        if col_name != 'area':
+            col_data = [x * 4.3 for x in col_data]  # convert distances from pixels to um
+        else:
+            col_data = [math.sqrt(x) * 4.3 for x in col_data]    # convert area from pixels to um^2
         violin = ax.violinplot(col_data,
                                # positions = [i+1],
                                positions = [LED],
@@ -97,11 +101,11 @@ for col_name in col_names[3:]:      # Iterate through collumn names except 0, 1 
     # ax.set_xticklabels(track_df['LED'], rotation=45, ha='right')
     ax.set_xlabel('LED (J/m)')
     
-    ax.set_ylabel('Area (μ$\mathregular{m^3}$)' if col_name == 'area' else 'Distance (μm)')
+    ax.set_ylabel('Area (μ$\mathregular{m^2}$)' if col_name == 'area' else 'Distance (μm)')
     handles, labels = plt.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
     # plt.legend(by_label.values(), by_label.keys())
-    fig.suptitle(col_name, ha='center', position=(0.57, 0.88))
+    fig.suptitle(col_name.replace('_', ' ').replace('max', 'max.'), ha='center', position=(0.57, 0.85))
     
     if mode == 'save':
         output_filename = f'keyhole_{col_name}_stats_4x4.png'
