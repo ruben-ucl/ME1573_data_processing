@@ -11,8 +11,8 @@ __version__ = 'v0.1'
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-mode = 'save'   # Preview or save
-input_dset_name = 'bs-p5-s5'
+mode = 'preview'   # Preview or save
+input_dset_name = 'bs-f40'
 output_dset_name = f'{input_dset_name}_lagrangian_meltpool'  # Set fov_h = 220 for keyhole, fov_h = 350 for meltpool
 logbook = get_logbook()
 
@@ -24,15 +24,15 @@ with open('data_path.txt', encoding='utf8') as f:
 substrate_surface_measurements_fpath = Path(filepath, 'substrate_surface_measurements', 'substrate_surface_locations.csv')
 
 def main():
-    files = glob.glob(str(Path(filepath, '*.hdf5')))
+    files = glob.glob(str(Path(filepath, '*.h*5')))
     for f in files:
         fname = Path(f).name
-        trackid = fname[:-5]
+        trackid = fname[:7]
         print('\nReading %s: %s' % (fname, input_dset_name)) 
         try:
             with h5py.File(f, 'r+') as file:
-                if output_dset_name in file.keys():    # Check if dataset with output name exists already, and skip file if so
-                    raise OSError
+                # if output_dset_name in file.keys():    # Check if dataset with output name exists already, and skip file if so
+                    # raise OSError
                 dset = file[input_dset_name]
                 print('Input: shape: %s, dtype: %s'% (dset.shape, dset.dtype))
                 
@@ -42,7 +42,14 @@ def main():
                 
                 _, substrate_surface_coords = get_substrate_surface_coords(dset.shape, substrate_surface_measurements_fpath, trackid)
                 # dset_lagrangian = to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords)    # Default for keyhole
-                dset_lagrangian = to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords, fov_h=350)    # For meltpool
+                dset_lagrangian = to_lagrangian(dset,
+                                                scan_speed,
+                                                framerate,
+                                                substrate_surface_coords,
+                                                fov_h=350,
+                                                # start_frame=118,
+                                                # laser_start_pos=30
+                                                )    # For meltpool  
                 # dset_lagrangian = to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords, fov_v=250, shift_v=250, shift_h=100) # For spatter
                 
                 print('Output: shape: %s, dtype: %s'% (dset_lagrangian.shape, dset_lagrangian.dtype))
