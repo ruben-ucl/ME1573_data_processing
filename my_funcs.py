@@ -14,12 +14,12 @@ with open('data_path.txt', encoding='utf8') as f:
     # print(f'Reading data from {filepath}\n')
 
 # def get_logbook(logbook_path = Path('J:\Logbook_Al_ID19_combined_RLG.xlsx')):
-def get_logbook(logbook_path = Path('E:\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\Logbook_Al_ID19_combined_RLG.xlsx')):
+def get_logbook(logbook_path = Path(r'C:\Users\lbn38569\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\Logbook_Al_ID19_combined_RLG.xlsx')):
     print(f'Trying to read logbook: {logbook_path.name}')
     try:
         logbook = pd.read_excel(logbook_path,
                                 sheet_name='Logbook',
-                                usecols='C, D, E, F, I, J, M, O, P, Q, R, S, T, U, AM, AP, AS, AT, AU, AV, AW, AX, AY, AZ, BA',
+                                # usecols='C, D, E, F, I, J, M, O, P, Q, R, S, T, U, W, AM, AP, AS, AT, AU, AV, AW, AX, AY, AZ, BA, BG, BN, BP, BV, BW, BX, BY, BZ, CA, CB, CC, CD, CE, CF, CG, CH, CI, CJ, CK, CL',
                                 converters={'Substrate No.': str, 'Sample position': str}
                                 )
         # logging.info('Logbook data aquired from %s' % logbook_path)
@@ -37,6 +37,7 @@ def get_logbook(logbook_path = Path('E:\Dropbox (UCL)\PhD students\Rubén Lamber
 def get_logbook_data(logbook, trackid, layer_n=1):  # Get scan speed and framerate from logbookprint('Reading scan speed and framerate from logbook')
     substrate_n = trackid[1:4]
     track_n = trackid[-1]
+    # print(trackid)
     track_row = logbook.loc[(logbook['Substrate No.'] == substrate_n) &
                             (logbook['Sample position'] == track_n) &
                             (logbook['Layer'] == layer_n)
@@ -126,14 +127,23 @@ def view_histogram(a, title=None, show_std=False):
         l = len(a)
         r1 = np.concatenate((a[0], a[l//3]), axis=1)
         r2 = np.concatenate((a[2*l//3], a[-1]), axis=1)
-        im = np.concatenate((r1, r2))
+        im = np.concatenate((r1, r2), axis=0)
+        im[im.shape[0]//2-1:im.shape[0]//2+1, :] = 255
+        im[:, im.shape[1]//2-1:im.shape[1]//2+1] = 255
     else:
         im = a
     ax1.imshow(im, cmap='gray')
+    frame_labels = {1: (0.01, 0.52),
+                    l//3+1: (0.51, 0.52),
+                    2*l//3+1: (0.01, 0.02),
+                    l+1: (0.51, 0.02)
+                   }
+    for i in frame_labels:
+        ax1.annotate(f'frame {i}', xy=frame_labels[i], xycoords='axes fraction', color='w')
     im_aspect = im.shape[0] / im.shape[1]
     ax2.set_box_aspect(im_aspect)
     ax2.hist(a.ravel(), bins=255, density=True, zorder=0)
-    ax2.annotate(f'max: {np.max(a)}\nmin: {np.min(a)}\ndtype: {a.dtype}', xy=(0.01, 0.8), xycoords='axes fraction')
+    ax2.annotate(f'max: {np.max(a)}\nmin: {np.min(a)}\ndtype: {a.dtype}', xy=(0.01, 0.75), xycoords='axes fraction')
     
     if show_std:
         a_mean = np.mean(a)
