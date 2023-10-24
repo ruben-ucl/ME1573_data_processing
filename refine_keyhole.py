@@ -2,17 +2,18 @@ import h5py, glob, functools
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from skimage import morphology
-from skimage import measure
-from skimage import segmentation
+from skimage import morphology, measure, segmentation
 import matplotlib.pyplot as plt
 from my_funcs import *
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-input_dset_name = 'bs-p5-s5_tri+35_lagrangian_keyhole'
-output_dset_name = f'{input_dset_name}_refined'
+input_dset_name = 'bs-p5-s5_lagrangian_meltpool_bin'
+output_dset_name = 'keyhole_bin'
 mode = 'cropped'    # Set to 'cropped' or 'full_frame'
+save_output = True
+preview = False
+mask_top_n_rows = 4
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
@@ -34,25 +35,31 @@ def morpho_ops(dset, trackid, f1=0, f2=-1):
         # if mode == 'full_frame': frame[background_mask] = 255
         frame = morphology.binary_opening(frame, footprint=morphology.disk(1))
         frame = morphology.binary_dilation(frame, footprint=morphology.disk(3))
-        frame = morphology.remove_small_holes(frame, area_threshold=100, connectivity=2)
+        frame = morphology.remove_small_holes(frame, area_threshold=500, connectivity=2)
         frame = morphology.binary_erosion(frame, footprint=morphology.disk(3))    
         if mode == 'full_frame': frame[background_mask] = 0
         
         output_dset[i, :, :] = frame
     return output_dset
     
-def get_largest_cc(dset, f1=0, f2=-1):
+def get_largest_cc(dset, f1=0, f2=-1, filter_by_pos=False, mask_top_rows=None):
     print('Extracting largest connected component')
     keyhole_mask = np.zeros_like(dset).astype(bool)
     frame_inds = range(len(dset))[f1:f2]
+    if mask_top_rows != None:
+        dset[:, 0:mask_top_rows, :] = 0
     for i in frame_inds:
         print(f'Working on frame {i}', end='\r')
         frame = dset[i, :, :]
         labels = measure.label(frame, connectivity=2)
-        props_df = pd.DataFrame(measure.regionprops_table(labels, properties=('label', 'area')))
+        props_df = pd.DataFrame(measure.regionprops_table(labels, properties=('label', 'area', 'centroid')))
+        if filter_by_pos == True:
+            h_cent = props_df['centroid-1']
+            v_cent = props_df['centroid-0']
+            props_df = props_df.loc[np.logical_and(np.logical_and(h_cent > 228, h_cent < 281) , v_cent < 27)]
         try:
             props_df.sort_values('area', ascending=False, inplace=True, ignore_index=True)        # Sort by area so that df row at index 0 contains largest cc
-            if props_df.at[0, 'area'] > 35:                                     # Filter out small cc's pre- and post- laser onset
+            if props_df.at[0, 'area'] > 20:                                     # Filter out small cc's pre- and post- laser onset
                 largest_cc_label = props_df.at[0, 'label']
                 keyhole_isolated = labels == largest_cc_label
                 keyhole_mask[i, :, :] = keyhole_isolated
@@ -95,7 +102,7 @@ def plot_result(file, dset, trackid, f1=0, f2=-1):
     plt.show()
 
 def main():
-    files = glob.glob(str(Path(filepath, '*.hdf5')))
+    files = sorted(glob.glob(str(Path(filepath, '*.hdf5'))))
     for f in files:
         fname = Path(f).name
         print('\nReading %s: %s' % (fname, input_dset_name)) 
@@ -105,14 +112,17 @@ def main():
                 dset = file[input_dset_name]
                 print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))
                 
-                keyhole_isolated = get_largest_cc(dset)
+                keyhole_isolated = get_largest_cc(dset, filter_by_pos=True, mask_top_rows=mask_top_n_rows)
                 keyhole_refined = morpho_ops(keyhole_isolated, trackid)
                 keyhole_final = get_largest_cc(keyhole_refined)
                 
-                # plot_result(file, keyhole_final, trackid)
+                if preview == True:
+                    # plot_result(file, keyhole_final, trackid)
+                    view_histogram(keyhole_final)
+                if save_output == True:
+                    file[output_dset_name] = keyhole_final
                 
-                file[output_dset_name] = keyhole_final
-                print('Done\n')
+                print('\nDone\n')
             else:
                 print(f'Dataset \'{output_dset_name}\' already exists - skipping file\n')
                 
