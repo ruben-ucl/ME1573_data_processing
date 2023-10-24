@@ -27,7 +27,7 @@ with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
     
-input_dset_name = 'bs-f40_lagrangian_meltpool'
+input_dset_name = 'bs-p5-s5_lagrangian_meltpool'
 
 frame_reduction_factor = 1                              # Set to 1 to use all frames
 filter_radius = None                                    # Median filter radius, set to None for no filter
@@ -41,7 +41,7 @@ folder_name = f'{input_dset_name}_z_projection_{proj_mode}{reduction_txt}'
 folder_path = Path(filepath, 'z-project_images', folder_name)
 
 def main():
-    for file in glob.glob(str(Path(filepath, '*.hdf5'))):
+    for file in glob.glob(str(Path(filepath, '*.h*5'))):
         with h5py.File(file, 'a') as f:
             dset = f[input_dset_name][skip_start_frames:-skip_frames_end]
             trackid = Path(file).name[:-5]
