@@ -21,18 +21,17 @@ INTENDED CHANGES
 '''
 """Controls"""
 
-input_dset_name = 'bs-f200'
+input_dset_name = 'bs-p5-s5_lagrangian_meltpool'
 
 binary_dset_name = None
 binary_overlay_mode = 'outline'     # 'outline' or 'fill'
-overlay_suffix = f'_keyhole_overlay_{binary_dset_name}' if binary_dset_name != None else ''
+overlay_suffix = '_KH-overlay' if binary_dset_name != None else ''
 
 output_name = f'{input_dset_name}{overlay_suffix}'
 
 capture_framerate = 40000 # fps
 output_framerate = 30 # fps
 text_colour = 'white'   # 'black' or 'white'
-
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
@@ -41,7 +40,7 @@ with open('data_path.txt', encoding='utf8') as f:
     
 def main():
     print(f'Creating videos from dataset: {input_dset_name}')
-    for file in glob.glob(str(Path(filepath, '*.hdf5'))):
+    for file in sorted(glob.glob(str(Path(filepath, '*.hdf5')))):
         fname = Path(file).name
         trackid = fname[:5] + '0' + fname[-6]
         with h5py.File(file, 'a') as f:
