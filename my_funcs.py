@@ -14,7 +14,7 @@ with open('data_path.txt', encoding='utf8') as f:
     # print(f'Reading data from {filepath}\n')
 
 # def get_logbook(logbook_path = Path('J:\Logbook_Al_ID19_combined_RLG.xlsx')):
-def get_logbook(logbook_path = Path(r'C:\Users\lbn38569\Dropbox (UCL)\PhD students\Rubén Lambert-Garcia\Logbook_Al_ID19_combined_RLG.xlsx')):
+def get_logbook(logbook_path = Path(r'C:\Users\lbn38569\UCL Dropbox\PhD students\Rubén Lambert-Garcia\Logbook_Al_ID19_combined_RLG.xlsx')):
     print(f'Trying to read logbook: {logbook_path.name}')
     try:
         logbook = pd.read_excel(logbook_path,
@@ -56,7 +56,135 @@ def get_logbook_data(logbook, trackid, layer_n=1):  # Get scan speed and framera
     track_data['keyhole_regime'] = track_row['Melting regime'].values[0]
     
     return track_data
-    
+
+def define_collumn_labels():
+    # Dict item structure:
+    # label: [logbook header, axis label]
+    col_dict = {'power':                    ['Avg. power [W]',
+                                             'Power [W]'
+                                             ],
+                'pt_dist':                  ['Point distance [um]',
+                                             'Point distance [μm]'
+                                             ],
+                'exp_t':                    ['Exposure time [us]',
+                                             'Exposure time [μs]'
+                                             ],
+                'scan_speed':               ['Scan speed [mm/s]',
+                                             'Scan speed [mm/s]'
+                                             ],
+                'LED':                      ['LED [J/m]',
+                                             'LED [J/m]'
+                                             ],
+                'n_pores':                  ['n_pores',
+                                             'Keyhole pore count'
+                                             ],
+                'pore_vol':                 ['pore_vol_mean [um^3]',
+                                             'Mean pore volume [μm\u00b3]'
+                                             ],
+                'pore_angle':               ['pore_angle_mean [°]',
+                                             'Mean pore angle [$\degree$]'
+                                             ],
+                'pore_roundness':           ['pore_roundness_mean',
+                                             'Mean pore roundness'
+                                             ],
+                'eot_depression':           ['end_of_track_depression',
+                                             'End of track\ndepression'
+                                             ],
+                'eot_depression_depth':     ['end_of_track_depression_depth',
+                                             'End of track\ndepression depth [μm]'
+                                             ],
+                'h_pores':                  ['hydrogen_pores',
+                                             'Hydrogen porosity'
+                                             ],
+                'MP_depth':                 ['melt_pool_depth [um]',
+                                             'Melt pool depth [μm]'
+                                             ],
+                'MP_length':                ['melt_pool_length [um]',
+                                             'Melt pool length [μm]'
+                                             ],
+                'MP_width':                 ['track_width_mean [um]',
+                                             'Melt pool width [μm]'
+                                             ],
+                'MP_vol':                   ['melt_pool_volume [mm^3]',
+                                             'Melt pool volume [mm\u00b3]'
+                                             ],
+                'MP_vol_err':               ['melt_pool_volume_error [mm^3]',
+                                             'Melt pool volume error [mm\u00b3]'
+                                             ],
+                'MP_rear_wall_angle':       ['rear_melt_pool_wall_angle [deg]',
+                                             'Melt pool rear wall angle [$\degree$]'
+                                             ],
+                'melting_efficiency_s':     ['melting_efficiency',
+                                             'Melting efficiency, η'
+                                             ],
+                'melting_efficiency_sp':    ['melting_efficiency_with_powder',
+                                             'Melting efficiency, η'
+                                             ],
+                'R':                        ['R [mm/s]',
+                                             'Solidification rate, R [mm/s]'
+                                             ],
+                'G1':                       ['G1 [K/mm]',
+                                             'Temperature gradient @ D1 [K/mm]'
+                                             ],
+                'G2':                       ['G2 [K/mm]',
+                                             'Temperature gradient @ D2 [K/mm]'
+                                             ],
+                'G3':                       ['G3 [K/mm]',
+                                             'Temperature gradient @ D3 [K/mm]'
+                                             ],
+                'G_rear':                   ['G_rear [K/mm]',
+                                             'Temperature gradient @ rear tip [K/mm]'
+                                             ],
+                'dT/dt1':                   ['dT/dt1 [K/s]',
+                                             'Cooling rate @ D1 [K/s]'
+                                             ],
+                'dT/dt2':                   ['dT/dt2 [K/s]',
+                                             'Cooling rate @ D2 [K/s]'
+                                             ],                             
+                'dT/dt3':                   ['dT/dt3 [K/s]',
+                                             'Cooling rate @ D3 [K/s]'
+                                             ],   
+                'dT/dt_rear':               ['dT/dt_rear [K/s]',
+                                             'Cooling rate @ rear tip [K/s]'
+                                             ],
+                'KH_depth':                 ['keyhole_max_depth_mean [um]',
+                                             'Keyhole depth [μm]'
+                                             ],
+                'KH_depth_sd':              ['keyhole_max_depth_sd [um]',
+                                             'Keyhole depth std. dev. [μm]'
+                                             ],
+                'KH_length':                ['keyhole_max_length_mean [um]',
+                                             'Keyhole length [μm]'
+                                             ],
+                'KH_depth_at_max_length':   ['keyhole_depth_at_max_length_mean [um]',
+                                             'Keyhole depth at max. length [μm]'
+                                             ],
+                'layer_thickness':          ['substrate_avg_layer_thickness [um]',
+                                             'Powder layer thickness [μm]'
+                                             ],
+                'KH_depth_w_powder':        ['KH_depth_w_powder',
+                                             'Normalised keyhole (from powder) [μm]'
+                                             ],
+                'fkw_angle':                ['fkw_angle_mean [deg]',
+                                             r'FKW angle, $\theta_{FKW}$ [$\degree$]'
+                                             ],
+                'tan_fkw_angle':            ['tan_fkw_angle',
+                                             'FKW angle tangent'
+                                             ],
+                'fkw_angle_sd':             ['fkw_angle_sd [deg]',
+                                             'FKW angle standard deviation [$\degree$]'
+                                             ],
+                'fkw_angle_n_samples':      ['fkw_angle_n_samples',
+                                             'FKW angle sample count'
+                                             ],
+                'norm_H_prod':              ['Normalised enthalpy product',
+                                             r'Normalised enthalpy product, $\Delta H/h_m \dot L_{th}^*$'
+                                             ],
+                'KH_aspect':                ['keyhole_aspect_ratio',
+                                             'Keyhole aspect ratio'
+                                             ],
+                }
+    return col_dict
     
 def get_start_end_frames(trackid, logbook, margin=50, start_frame_offset=0):
     track_data = get_logbook_data(logbook, trackid)

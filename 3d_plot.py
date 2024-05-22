@@ -5,6 +5,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
 from my_funcs import get_logbook
+from my_funcs import define_collumn_labels
 import scipy.optimize as optimize
 from scipy.interpolate import Rbf
 from sklearn.metrics import r2_score
@@ -18,88 +19,116 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 
 ### Figure settings ###
 #----------------------
-font_size = 10
-figsize = (4, 4)
+font_size = 8
+# figsize = (3.15, 2.5) # page width = 6.3
+figsize = (3.15, 2.5)
 dpi = 300
 projection = '2d'
 plot_bg = 'w'
 
-pop_nans = True
-regime_point_colours = True
-regime_point_shapes = True
-label_points = False
-point_stems_3d = False
-include_hline = None
-include_error_bars = False
-include_legend = False
+pop_nans = True                     # bool
+regime_point_colours = True         # bool
+regime_point_shapes = True          # bool
+colour_points_by_z = False          # bool
+label_points = False                # bool
+point_stems_3d = False              # bool
+include_hline = None                # float
+include_error_bars = None    # string or None
+include_legend = False              # bool
 
-include_curve_fit = True
-include_surface_fit = False
+include_curve_fit = False           # bool
+include_surface_fit = False         # bool
 
-LED_contours = False
-include_contours = False
-include_cbar = True
-contour_levels = 16
-contour_extend = None
-contour_line = 82
-contour_label = r'$\theta_{FKW}$'
-contour_unit = '$\degree$'
-contour_text_loc = [1100, 465]
-contour_line_color = 'k'
+LED_contours = False                # bool
+include_contours = False            # bool
+contour_cmap = 'Blues'              # string
+contour_levels = 10                 # int
+contour_alpha = 0.7                 # float
+include_cbar = True                 # bool
+contour_extend = None               # 
+contour_line = None                 # float
+contour_label = r'$AR_{KH}$'        # string
+# contour_label = r'$\theta_{FKW}$'
+contour_unit = '°'                  # string
+contour_text_loc = (1150, 470)      # tuple
+contour_line_color = 'k'            # string
 
 ### X-axis settings ###
 #----------------------
-plotx = 'MP_width'
-xlim = [100, 450]
-# xlim = [150, 1300]
-# xlim = [300, 2100]
-# xticks = [400, 800, 1200, 1600, 2000]
-# xticks = [40, 50, 60, 70, 80, 90]
-# xticks = [10, 20, 30, 40]
-xticks = None
+if True:
+    plotx = 'MP_depth'
+    # xlim = [150, 1300]
+    # xlim = [0, 0.4]
+    # xlim = [300, 2100]                      # scan speed
+    # xticks = [400, 800, 1200, 1600, 2000]   # scan speed
+    # xticks = [40, 50, 60, 70, 80, 90]
+    # xticks = [10, 20, 30, 40]
+    xlim = None
+    xticks = None
 
 ### Y-axis settings ###
 #----------------------
-ploty = 'MP_depth'
-ylim = [100, 500]
-# ylim = [240, 510]
-# ylim = [30, 95]
-# ylim= [-0.1, 1.1]
-# yticks = [250, 300, 350, 400, 450, 500]
-# yticks = [30, 45, 60, 75, 90]
-yticks = None
+if True:
+    ploty = 'MP_vol'
+    # ylim = [150, 1400]
+    # ylim = [1200, 6200]
+    # ylim = [-6, 86]
+    # ylim= [-0.1, 1.1]
+    # ylim = [230, 520]                           # power
+    # yticks = [250, 300, 350, 400, 450, 500]     # power
+    # yticks = [30, 45, 60, 75, 90]
+    # yticks = [0, 40, 80]
+    ylim = None
+    yticks = None
 
 ### Z-axis settings ###
 #----------------------
-plotz = 'fkw_angle'
-zlim = [40, 90]
-zticks = [40, 50, 60, 70, 80, 90]
+if True:
+    plotz = 'pore_vol'
+    # zlim = [0, 2]
+    # zticks = [0, 1, 2, 3]
+    zlim = None
+    zticks = None
+    # zlim = [0, 18000]                                                       # G
+    # zticks = [0, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 18000] # G
+    # zticks = [140, 180, 220, 260, 300, 340, 380]  # R
+    # zlim = [0, 5500000] # dT/dt
+    # zticks = [0, 500000, 1000000, 1500000, 2000000, 2500000, 3000000, 3500000, 4000000, 4500000, 5000000, 5500000] # dT/dt
+    bins_per_tick = 1
+    if bins_per_tick != None and zticks != None: contour_levels = (len(zticks) - 1) * bins_per_tick + 1
 
 def filter_logbook():
     log = get_logbook()
+    
+    if True:
+        # filters for welding or powder melting
+        welding = log['Powder material'] == 'None'
+        powder = np.invert(welding)
 
-    # filters for welding or powder melting
-    welding = log['Powder material'] == 'None'
-    powder = np.invert(welding)
+        # filters for CW or PWM laser mode
+        cw = log['Point jump delay [us]'] == 0
+        pwm = np.invert(cw)
 
-    # filters for CW or PWM laser mode
-    cw = log['Point jump delay [us]'] == 0
-    pwm = np.invert(cw)
+        # filter for Layer 1 tracks only
+        L1 = log['Layer'] == 1
+        
+        # filter for presence of KH pores
+        pores = log['n_pores'] > 2
+        
+        # filter by scan speed
+        speed = log['Scan speed [mm/s]'] == 400
 
-    # filter for Layer 1 tracks only
-    L1 = log['Layer'] == 1
-
-    # filter by material
-    AlSi10Mg = log['Substrate material'] == 'AlSi10Mg'
-    Al7A77 = log['Substrate material'] == 'Al7A77'
-    Al = log['Substrate material'] == 'Al'
-    Ti64 = log['Substrate material'] == 'Ti64'
-    lit = np.logical_or(Ti64, Al7A77)
+        # filter by material
+        AlSi10Mg = log['Substrate material'] == 'AlSi10Mg'
+        Al7A77 = log['Substrate material'] == 'Al7A77'
+        Al = log['Substrate material'] == 'Al'
+        Ti64 = log['Substrate material'] == 'Ti64'
+        lit = np.logical_or(Ti64, Al7A77)
 
     # Apply combination of above filters to select parameter subset to plot
-    log_red = log[np.logical_or(AlSi10Mg, lit) & L1 & cw & powder]
-    # log_red = log[AlSi10Mg & L1 & cw & powder]
-    print(log_red)
+    # log_red = log[np.logical_or(AlSi10Mg, lit) & L1 & cw & powder]
+    log_red = log[AlSi10Mg & L1 & cw & powder]
+    # print(log_red)
     return log_red
 
 def set_up_figure(col_dict):
@@ -113,20 +142,25 @@ def set_up_figure(col_dict):
     if plot_bg != None: ax.set_facecolor(plot_bg)
     
     ax.set_xlabel(col_dict[plotx][1])
-    ax.set_xlim(xlim[0], xlim[1])
+    if xlim != None: ax.set_xlim(xlim[0], xlim[1])
     if xticks != None: ax.set_xticks(xticks)
     
     ax.set_ylabel(col_dict[ploty][1])
-    ax.set_ylim(ylim[0], ylim[1])
+    if ylim != None: ax.set_ylim(ylim[0], ylim[1])
     if yticks != None: ax.set_yticks(yticks)
+    # ax.set_yticklabels(['N', 'S', 'A'])
     
+    ax.ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+    
+    # Draw LED contours in P-V map background
     if projection == '2d' and LED_contours == True:
         S, P = np.mgrid[xlim[0]:xlim[1]+1, ylim[0]:ylim[1]+1]
         Z = np.clip(1000 * P / S, None, 1450)
-        cs = ax.contourf(S, P, Z, 28, cmap='hot', alpha=0.7)
+        cs = ax.contourf(S, P, Z, 13, cmap='hot', alpha=0.7)
         if include_cbar == True:
             cbar = fig.colorbar(cs)
             cbar.ax.set_ylabel('LED [J/m]')
+            cbar.set_ticks([100, 300, 500, 700, 900, 1100, 1300, 1500])
             
     elif projection == '3d':      
         ax.set_zlabel(col_dict[plotz][1])
@@ -149,7 +183,7 @@ def define_point_formats():
                    
     if regime_point_colours == False:
         for k in marker_dict:
-            marker_dict[k]['c'] = 'w'
+            marker_dict[k]['c'] = 'k'
             
     if regime_point_shapes == False:
         for k in marker_dict:
@@ -157,88 +191,7 @@ def define_point_formats():
             
     return marker_dict
 
-def define_collumn_labels():
-    # Dict item structure:
-    # label: [logbook header, axis label]
-    col_dict = {'power':                    ['Avg. power [W]',
-                                             'Power [W]'
-                                             ],
-                'pt_dist':                  ['Point distance [um]',
-                                             'Point distance [μm]'
-                                             ],
-                'exp_t':                    ['Exposure time [us]',
-                                             'Exposure time [μs]'
-                                             ],
-                'scan_speed':               ['Scan speed [mm/s]',
-                                             'Scan speed [mm/s]'
-                                             ],
-                'LED':                      ['LED [J/m]',
-                                             'LED [J/m]'
-                                             ],
-                'n_pores':                  ['n_pores',
-                                             'Keyhole pore count'
-                                             ],
-                'eot_depression':           ['end_of_track_depression',
-                                             'End of track\ndepression'
-                                             ],
-                'h_pores':                  ['hydrogen_pores',
-                                             'Hydrogen\nporosity'
-                                             ],
-                'MP_depth':                 ['melt_pool_depth [um]',
-                                             'Melt pool depth [μm]'
-                                             ],
-                'MP_length':                ['melt_pool_length [um]',
-                                             'Melt pool length [μm]'
-                                             ],
-                'MP_width':                 ['track_width_mean [um]',
-                                             'Melt pool width [μm]'
-                                             ],
-                'MP_vol':                   ['melt_pool_volume [mm^3]',
-                                             'Melt pool volume [mm\u00b3]'
-                                             ],
-                'melting_efficiency_s':     ['melting_efficiency',
-                                             'Melting efficiency, η'
-                                             ],
-                'melting_efficiency_sp':    ['melting_efficiency_with_powder',
-                                             'Melting efficiency, η'
-                                             ],
-                'KH_depth':                 ['keyhole_max_depth_mean [um]',
-                                             'Keyhole depth [μm]'
-                                             ],
-                'KH_depth_sd':              ['keyhole_max_depth_sd [um]',
-                                             'Keyhole depth std. dev. [μm]'
-                                             ],
-                'KH_length':                ['keyhole_max_length_mean [um]',
-                                             'Keyhole length [μm]'
-                                             ],
-                'KH_depth_at_max_length':   ['keyhole_depth_at_max_length_mean [um]',
-                                             'Keyhole depth at max. length [μm]'
-                                             ],
-                'layer_thickness':          ['substrate_avg_layer_thickness [um]',
-                                             'Powder layer thickness [μm]'
-                                             ],
-                'fkw_angle':                ['fkw_angle_mean [deg]',
-                                             r'FKW angle, $\theta_{FKW}$ [$\degree$]'
-                                             ],
-                'tan_fkw_angle':            ['tan_fkw_angle',
-                                             'FKW angle tangent'
-                                             ],
-                'fkw_angle_sd':             ['fkw_angle_sd [deg]',
-                                             'FKW angle standard deviation [$\degree$]'
-                                             ],
-                'fkw_angle_n_samples':      ['fkw_angle_n_samples',
-                                             'FKW angle sample count'
-                                             ],
-                'norm_H_prod':              ['Normalised enthalpy product',
-                                             r'Normalised enthalpy product, $\Delta H/h_m \dot L_{th}^*$'
-                                             ],
-                'KH_aspect':                ['keyhole_aspect_ratio',
-                                             'Keyhole aspect ratio'
-                                             ],
-                }
-    return col_dict
-
-def plot_data(ax, log_red, marker_dict, col_dict):
+def plot_data(fig, ax, log_red, marker_dict, col_dict):
     print('plot_data()')
     # Initialise lists for storing point coordinates
     xx = []
@@ -262,29 +215,28 @@ def plot_data(ax, log_red, marker_dict, col_dict):
         zz.append(z)
         
         if projection == '2d':
-            ax.scatter(x, y,
-                       label = regime,
-                       c = marker_dict[regime]['c'],
-                       # c = z,
-                       marker = marker_dict[regime]['m'],
-                       edgecolors = 'k',
-                       linewidths = 0.5,
-                       s = 30,
-                       # cmap = 'hot',
-                       # vmin = 1,
-                       # vmax = 5
-                       )
+            scatter = ax.scatter(x, y,
+                                 label = regime,
+                                 c = z if colour_points_by_z == True else marker_dict[regime]['c'],
+                                 marker = marker_dict[regime]['m'],
+                                 edgecolors = 'k',
+                                 linewidths = 0.5,
+                                 s = 30,      # 30
+                                 cmap = 'Reds',
+                                 vmin = 70,
+                                 vmax = 120
+                                 )
                        
             if label_points == True:
-                ax.text(x, y-15,
+                ax.text(x, y,
                         trackid,
-                        va = 'center',
-                        ha = 'center',
+                        va = 'top',
+                        ha = 'left',
                         fontsize = 'xx-small',
                         )
-            if include_error_bars == True:
-                err = row[col_dict['fkw_angle_sd'][0]]/np.sqrt(row[col_dict['fkw_angle_n_samples'][0]])
-                ax.errorbar(x, y, xerr=err, yerr=16, ecolor='k', elinewidth=0.6, capsize=3.2, capthick=0.6, zorder=0)
+            if include_error_bars != None:
+                err = row[col_dict[include_error_bars][0]]
+                ax.errorbar(x, y, xerr=None, yerr=err, ecolor='k', elinewidth=0.6, capsize=3.2, capthick=0.6, zorder=0)
             
         elif projection == '3d':            
             if point_stems_3d == True:
@@ -304,30 +256,33 @@ def plot_data(ax, log_red, marker_dict, col_dict):
                        edgecolors = 'k',
                        linewidths = 0.5
                        )
+    # Add colourmap for point colours                   
+    if colour_points_by_z == True:
+        cbar = fig.colorbar(scatter, location='top', ticks=zticks, label=col_dict[plotz][1], pad=0.1, aspect=25)
+        if zticks != None: cbar.set_ticks(zticks)
     
     return xx, yy, zz
 
 def remove_nan_values(data):
     # Get indices of NaN values in all lists
     nan_indices = []
-    for list in data:
-        for i, e in enumerate(list):
+    for dset in data:
+        for i, e in enumerate(dset):
             if math.isnan(e) and i not in nan_indices:
                 nan_indices.append(i)
     # Remove values at NaN indices from all lists
     output_data = data
-    for list in output_data:
+    for dset in output_data:
         for i in sorted(nan_indices, reverse=True):
-            del list[i]
+            del dset[i]
     print(f'Removed {len(nan_indices)} datapoints that contained NaN values')        
     return output_data
 
-def draw_contours(fig, ax, col_dict, xx, yy, zz):
+def draw_contours(fig, ax, col_dict, xx, yy, zz, zlim, contour_levels, zticks, label_var, contour_extend=None, cmap='Greys', alpha=1):
     levels = np.linspace(zlim[0], zlim[1], contour_levels) if zlim != None else np.linspace(min(zz), max(zz), contour_levels)
-    contours = ax.tricontourf(xx, yy, zz, levels=levels, cmap='bone', zorder=0, extend=contour_extend)
+    contours = ax.tricontourf(xx, yy, zz, levels=levels, cmap=cmap, zorder=0, extend=contour_extend, alpha=alpha)
     if include_cbar == True:
-        cbar = fig.colorbar(contours, location='right', ticks=zticks)
-        cbar.ax.set_ylabel(col_dict[plotz][1])
+        cbar = fig.colorbar(contours, location='right', ticks=zticks, label=col_dict[label_var][1], shrink=1)
         if zticks != None: cbar.set_ticks(zticks)
     
     if contour_line != None:
@@ -352,9 +307,10 @@ def surf_function(data, a, b, c, d, e, f, g, h, i, j):
 def curve_function(x, a, b, c, d):
     # return a*x**3 + b*x**2 + c*x + d
     # return a*x**2 + b*x + c
-    # return a*x + b
-    return a**(x + b) + c
+    return a*x + b
+    # return a**(x + b) + c
     # return np.arctan(a*(x+b))*(180/np.pi)
+    # return a*x**b
     pass
 
 def draw_curve_fit(ax, xx, yy):
@@ -378,7 +334,7 @@ def draw_curve_fit(ax, xx, yy):
             # r'$\theta_{FKW} = tan^{-1}\left[a \dot \left(\frac{\Delta H}{h_m} \dot L_{th}^*+b\right)\right]$'+f'\na = {a}, b = {b}\nR\u00b2 = {round(r2, 3)}', 
             # fontsize = 'small'
             # )
-    ax.text((max(xx)+min(xx))*0.5, max(yy)*0.8, f'R\u00b2 = {round(r2, 2)}')
+    ax.text(0.5, 0.75, f'R\u00b2 = {round(r2, 2):1.2f}', transform=ax.transAxes)
     ax.plot(X, Y, 'k--', lw=0.75, zorder=0)
 
 def draw_surface_fit(fig, ax, xx, yy, zz):
@@ -458,14 +414,14 @@ def main():
     marker_dict = define_point_formats()
     col_dict = define_collumn_labels()
     fig, ax = set_up_figure(col_dict)
-    xx, yy, zz = plot_data(ax, log_red, marker_dict, col_dict)
+    xx, yy, zz = plot_data(fig, ax, log_red, marker_dict, col_dict)
     
     if pop_nans == True:
         data = (xx, yy, zz)
         (xx, yy, zz) = remove_nan_values(data)
         
     if include_contours == True and projection == '2d':
-        draw_contours(fig, ax, col_dict, xx, yy, zz)
+        draw_contours(fig, ax, col_dict, xx, yy, zz, zlim, contour_levels, zticks, label_var=plotz, contour_extend=contour_extend, cmap=contour_cmap, alpha=contour_alpha)
     
     if include_hline != None and projection == '2d':
         draw_hline(ax, include_hline)
