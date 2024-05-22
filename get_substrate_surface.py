@@ -81,11 +81,11 @@ def main():
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     
-    files = glob.glob(str(Path(filepath, '*.hdf5')))
+    files = glob.glob(str(Path(filepath, '*.h*5')))
     for f in sorted(files):
         fname = Path(f).name
         print(f'\nReading {fname}')
-        trackid = fname[:5] + '0' + fname[-6]
+        trackid = fname[:-3]
         
         with h5py.File(f, 'a') as file:
             im = np.array(file['bs-f40'][-1]) # Take last frame of background subtracted dataset as a 2d array
