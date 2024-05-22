@@ -27,12 +27,12 @@ with open('data_path.txt', encoding='utf8') as f:
     filepath = fr'{f.read()}'
     print(f'Reading from {filepath}\n')
     
-input_dset_name = 'bs-p5-s5_lagrangian_meltpool'
+input_dset_name = 'bs-p5-s5_lagrangian'
 
 frame_reduction_factor = 1                              # Set to 1 to use all frames
 filter_radius = None                                    # Median filter radius, set to None for no filter
 mode = 'save'                                           # Set to 'view' or 'save'
-proj_mode = 'mean'                                       # 'median', 'mean' or 'max'
+proj_mode = 'mean'                                      # 'median', 'mean', 'min' or 'max'
 skip_frames_end = 80                                    # For Lagrangian videos use 45, set to 0 to use all frames
 skip_start_frames = 50
 
@@ -41,7 +41,7 @@ folder_name = f'{input_dset_name}_z_projection_{proj_mode}{reduction_txt}'
 folder_path = Path(filepath, 'z-project_images', folder_name)
 
 def main():
-    for file in glob.glob(str(Path(filepath, '*.h*5'))):
+    for file in sorted(glob.glob(str(Path(filepath, '*.h*5')))):
         with h5py.File(file, 'a') as f:
             dset = f[input_dset_name][skip_start_frames:-skip_frames_end]
             trackid = Path(file).name[:-5]
@@ -81,12 +81,12 @@ def main():
             # Plot figure
             plt.rcParams.update({'font.size': 8})
             fig, ax = plt.subplots(figsize=(4, 2), dpi=600, tight_layout=True)
-            im = ax.imshow(output_im, cmap='viridis', vmin=110, vmax=200) # Keyhole default colour bar 110:140
+            im = ax.imshow(output_im, cmap='viridis', vmin=0, vmax=255) # Keyhole default colour bar 110:140
             scalebar = ScaleBar(dx=4.3, units='um', location='lower left', width_fraction=0.02, box_alpha=0)
             plt.gca().add_artist(scalebar)
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="3%", pad=0.05)
-            plt.colorbar(im, cax=cax)
+            plt.colorbar(im, cax=cax, ticks=[0, 255])
             cax.set_ylabel('Mean intensity')
             ax.get_xaxis().set_visible(False)
             ax.get_yaxis().set_visible(False)
@@ -98,6 +98,7 @@ def main():
                     os.makedirs(folder_path)
                 plt.savefig(output_filepath)
                 print(f'Image saved to {output_filepath}')
+                plt.close()
             else:
                 plt.show()
             
