@@ -21,15 +21,15 @@ INTENDED CHANGES
 '''
 """Controls"""
 
-input_dset_name = 'bs-p5-s5_lagrangian_meltpool'
+input_dset_name = 'bs-p10-s37_lagrangian'
 
-binary_dset_name = None
+binary_dset_name = 'bs-p10-s37_lagrangian_bin'
 binary_overlay_mode = 'outline'     # 'outline' or 'fill'
 overlay_suffix = '_KH-overlay' if binary_dset_name != None else ''
 
 output_name = f'{input_dset_name}{overlay_suffix}'
 
-capture_framerate = 40000 # fps
+capture_framerate = 504000 # fps
 output_framerate = 30 # fps
 text_colour = 'white'   # 'black' or 'white'
 
@@ -58,7 +58,7 @@ def main():
         fileext = '.mp4'
         vid_filename = f'{trackid}_{output_name}{fileext}'
         output_folder = 'videos'
-        create_video_from_dset(dset, vid_filename, output_folder, binary_dset, isRGB)
+        create_video_from_dset(dset, vid_filename, output_folder, binary_dset, isRGB, overlay=False)
 
 def get_perimeter(dset, weight):
     perimeter_mask = np.zeros_like(dset)

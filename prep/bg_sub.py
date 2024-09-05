@@ -32,12 +32,12 @@ input_dset_name = 'ff_corrected'
 
 # Output information
 mode = 'prev_n_frames_skip_m' # Set to 'first_n_frames', 'prev_n_frames' or 'prev_n_frames_skip_m'
-n = 5
-m = 5
+n = 10
+m = 37
 
 def main(mode, n):
     logbook = get_logbook()
-    for f in glob.glob(str(Path(filepath, '05*.hdf5'))):
+    for f in glob.glob(str(Path(filepath, '*.hdf5'))):
         fname = Path(f).name
         trackid = fname[:5] + '0' + fname[-6]
         print('Reading %s' % fname)
@@ -98,8 +98,8 @@ def rescale_to_8bit(dset):
     print('Stretching stack histogram and rescaling values to 8-bit')
     bg_sub_mean = np.mean(dset)
     bg_sub_std = np.std(dset)
-    a = np.clip(bg_sub_mean - 3 * bg_sub_std, 0, None)
-    b = bg_sub_mean + 3 * bg_sub_std                
+    a = np.clip(bg_sub_mean - 6 * bg_sub_std, 0, None)
+    b = bg_sub_mean + 6 * bg_sub_std                
     output_dset_norm = np.clip((dset - a) / (b - a), 0, 1)
     # view_histogram(output_dset_norm, show_std=True, title='Normalised')
     

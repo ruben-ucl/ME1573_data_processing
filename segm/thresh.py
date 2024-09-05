@@ -7,11 +7,11 @@ from my_funcs import *
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-input_dset_name = 'bs-p5-s5_lagrangian_meltpool'
-calculate_thresh_from = 'bs-f40'
-apply_substrate_mask = True
+input_dset_name = 'bs-p10-s37_lagrangian'
+calculate_thresh_from = 'bs-p10-s37'
+apply_substrate_mask = False
 thresh_algo = 'tri'
-thresh_offset = 15  # Default 35
+thresh_offset = 85  # Default 35
 output_dset_name = f'{input_dset_name}_bin'
 view_hists = False
 save_output = True

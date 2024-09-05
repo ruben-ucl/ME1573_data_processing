@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-input_dset_name = 'bs-p5-s5_lagrangian_keyhole'
+input_dset_name = 'bs-p10-s37'
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
@@ -34,12 +34,13 @@ def main():
             fig, (ax1, ax2) = plt.subplots(1, 2,
                                            tight_layout=True,
                                            figsize=(8, 3))
-            ax1.plot(t, means)
+            ax1.plot([i*504 for i in t], means)
             ax1.set_xlabel('Time [ms]')
             ax1.set_ylabel('Mean grey value [0, 255]')
+            ax1.set_xlim(0, 200)
             
-            ax2.scatter(freq / 1000, means_fft.real, s=0.5)
-            ax2.set_ylim(0, 300)
+            ax2.stem(freq / 1000, means_fft.real, markerfmt=' ', basefmt=' ')
+            ax2.set_ylim(0, 7000)
             ax2.set_xlim(0, None)
             ax2.set_xlabel('Frequency [kHz]')
             ax2.set_ylabel('Amplitude [-]')

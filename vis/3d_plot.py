@@ -20,8 +20,8 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 ### Figure settings ###
 #----------------------
 font_size = 8
-# figsize = (3.15, 2.5) # page width = 6.3
-figsize = (3.15, 2.5)
+figsize = (3.15, 2.5) # page width = 6.3
+# figsize = (4, 4)
 dpi = 300
 projection = '2d'
 plot_bg = 'w'
@@ -34,29 +34,30 @@ label_points = False                # bool
 point_stems_3d = False              # bool
 include_hline = None                # float
 include_error_bars = None    # string or None
-include_legend = False              # bool
+include_legend = True              # bool
 
-include_curve_fit = False           # bool
+include_curve_fit = True           # bool
 include_surface_fit = False         # bool
 
+axis_sci_not = 'x'                 # None, 'x', 'y' or 'both'
 LED_contours = False                # bool
 include_contours = False            # bool
-contour_cmap = 'Blues'              # string
-contour_levels = 10                 # int
+contour_cmap = 'Reds'              # string
+contour_levels = 11                 # int
 contour_alpha = 0.7                 # float
 include_cbar = True                 # bool
-contour_extend = None               # 
-contour_line = None                 # float
-contour_label = r'$AR_{KH}$'        # string
+contour_extend = 'max'               # 'neither', 'min', 'max' or 'both'
+contour_line = 0.2                 # float
+contour_label = r'$\eta$'        # string
 # contour_label = r'$\theta_{FKW}$'
-contour_unit = '°'                  # string
+contour_unit = ''                  # string
 contour_text_loc = (1150, 470)      # tuple
 contour_line_color = 'k'            # string
 
 ### X-axis settings ###
 #----------------------
 if True:
-    plotx = 'MP_depth'
+    plotx = 'MP_vol'
     # xlim = [150, 1300]
     # xlim = [0, 0.4]
     # xlim = [300, 2100]                      # scan speed
@@ -69,12 +70,12 @@ if True:
 ### Y-axis settings ###
 #----------------------
 if True:
-    ploty = 'MP_vol'
+    ploty = 'melting_efficiency'
     # ylim = [150, 1400]
     # ylim = [1200, 6200]
     # ylim = [-6, 86]
     # ylim= [-0.1, 1.1]
-    # ylim = [230, 520]                           # power
+    # ylim = [235, 515]                           # power
     # yticks = [250, 300, 350, 400, 450, 500]     # power
     # yticks = [30, 45, 60, 75, 90]
     # yticks = [0, 40, 80]
@@ -84,10 +85,10 @@ if True:
 ### Z-axis settings ###
 #----------------------
 if True:
-    plotz = 'pore_vol'
-    # zlim = [0, 2]
+    plotz = 'melting_efficiency'
+    zlim = [0.05, 0.3]
     # zticks = [0, 1, 2, 3]
-    zlim = None
+    # zlim = None
     zticks = None
     # zlim = [0, 18000]                                                       # G
     # zticks = [0, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 18000] # G
@@ -150,7 +151,8 @@ def set_up_figure(col_dict):
     if yticks != None: ax.set_yticks(yticks)
     # ax.set_yticklabels(['N', 'S', 'A'])
     
-    ax.ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+    if axis_sci_not != None:
+        ax.ticklabel_format(axis=axis_sci_not, style='sci', scilimits=(0,0))
     
     # Draw LED contours in P-V map background
     if projection == '2d' and LED_contours == True:
@@ -164,7 +166,7 @@ def set_up_figure(col_dict):
             
     elif projection == '3d':      
         ax.set_zlabel(col_dict[plotz][1])
-        ax.set_zlim(zlim[0], zlim[1])
+        if zlim != None: ax.set_zlim(zlim[0], zlim[1])
         if zticks != None: ax.set_zticks(zticks)
         
     return fig, ax
@@ -183,7 +185,7 @@ def define_point_formats():
                    
     if regime_point_colours == False:
         for k in marker_dict:
-            marker_dict[k]['c'] = 'k'
+            marker_dict[k]['c'] = 'w'
             
     if regime_point_shapes == False:
         for k in marker_dict:
@@ -221,7 +223,7 @@ def plot_data(fig, ax, log_red, marker_dict, col_dict):
                                  marker = marker_dict[regime]['m'],
                                  edgecolors = 'k',
                                  linewidths = 0.5,
-                                 s = 30,      # 30
+                                 s = 30,      # 30 for half page width figure
                                  cmap = 'Reds',
                                  vmin = 70,
                                  vmax = 120
@@ -305,13 +307,9 @@ def surf_function(data, a, b, c, d, e, f, g, h, i, j):
     return a + b*x + c*y + d*x**2 + e*y**2 + f*x*y + g*x**2*y + h*x*y**2 + i*x**3 + j*y**3
     
 def curve_function(x, a, b, c, d):
-    # return a*x**3 + b*x**2 + c*x + d
-    # return a*x**2 + b*x + c
-    return a*x + b
-    # return a**(x + b) + c
-    # return np.arctan(a*(x+b))*(180/np.pi)
-    # return a*x**b
-    pass
+    # return a*x + b
+    # return a*b**x
+    return a+b*np.log(x)
 
 def draw_curve_fit(ax, xx, yy):
     # Remove value pairs that include NaN entries
@@ -334,7 +332,8 @@ def draw_curve_fit(ax, xx, yy):
             # r'$\theta_{FKW} = tan^{-1}\left[a \dot \left(\frac{\Delta H}{h_m} \dot L_{th}^*+b\right)\right]$'+f'\na = {a}, b = {b}\nR\u00b2 = {round(r2, 3)}', 
             # fontsize = 'small'
             # )
-    ax.text(0.5, 0.75, f'R\u00b2 = {round(r2, 2):1.2f}', transform=ax.transAxes)
+    ax.text(0.5, 0.65, f'R\u00b2 = {round(r2, 2):1.2f}', fontsize='small', transform=ax.transAxes)
+    # ax.text(0.3, 0.5, f'y={a}+{b}log(x), R\u00b2 = {round(r2, 2):1.2f}', fontsize='small', transform=ax.transAxes)
     ax.plot(X, Y, 'k--', lw=0.75, zorder=0)
 
 def draw_surface_fit(fig, ax, xx, yy, zz):

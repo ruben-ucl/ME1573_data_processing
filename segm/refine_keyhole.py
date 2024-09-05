@@ -8,12 +8,12 @@ from my_funcs import *
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-input_dset_name = 'bs-p5-s5_lagrangian_meltpool_bin'
-output_dset_name = 'keyhole_bin'
+input_dset_name = 'bs-p10-s37_lagrangian_bin'
+output_dset_name = 'keyhole_bin_nofilt'
 mode = 'cropped'    # Set to 'cropped' or 'full_frame'
 save_output = True
 preview = False
-mask_top_n_rows = 4
+mask_top_n_rows = 2 # 4
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
@@ -56,7 +56,8 @@ def get_largest_cc(dset, f1=0, f2=-1, filter_by_pos=False, mask_top_rows=None):
         if filter_by_pos == True:
             h_cent = props_df['centroid-1']
             v_cent = props_df['centroid-0']
-            props_df = props_df.loc[np.logical_and(np.logical_and(h_cent > 228, h_cent < 281) , v_cent < 27)]
+            # props_df = props_df.loc[np.logical_and(np.logical_and(h_cent > 228, h_cent < 281) , v_cent < 27)] # lagrangian_meltpool
+            props_df = props_df.loc[np.logical_and(np.logical_and(h_cent > 35, h_cent < 50), np.logical_and(v_cent < 35, v_cent > 4))] # 504 kHz
         try:
             props_df.sort_values('area', ascending=False, inplace=True, ignore_index=True)        # Sort by area so that df row at index 0 contains largest cc
             if props_df.at[0, 'area'] > 20:                                     # Filter out small cc's pre- and post- laser onset
@@ -112,7 +113,7 @@ def main():
                 dset = file[input_dset_name]
                 print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))
                 
-                keyhole_isolated = get_largest_cc(dset, filter_by_pos=True, mask_top_rows=mask_top_n_rows)
+                keyhole_isolated = get_largest_cc(dset, filter_by_pos=False, mask_top_rows=mask_top_n_rows)
                 keyhole_refined = morpho_ops(keyhole_isolated, trackid)
                 keyhole_final = get_largest_cc(keyhole_refined)
                 

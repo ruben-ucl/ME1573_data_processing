@@ -38,7 +38,7 @@ np.seterr(divide='warn')    # Log zero division errors
 
 show_histograms = False
 flip_images = False
-trim = False # Trim video to laser scan accoding to start_frame number in logbook
+trim = True # Trim video to laser scan accoding to start_frame number in logbook
 margin = 50 # Number of frames kept before and after laser scan
 
 # Read data folder path from .txt file
@@ -100,7 +100,9 @@ def main():
             print('\nReading %s' % fname)
             with h5py.File(file, 'r') as fi:
                 if trim == True:
-                    start_frame, end_frame = get_start_end_frames(trackid, logbook, margin=100) # Define end frame as 50 frames after laser off
+                    start_frame, end_frame = get_start_end_frames(trackid, logbook, margin=margin) # Define end frame as 50 frames after laser off
+                    end_frame = start_frame + 870 # For 500 kHz, 800 mm/s scan
+                    print(f'Trimming to frames {start_frame}-{end_frame}')
                 else:
                     start_frame = 0
                     end_frame = -1

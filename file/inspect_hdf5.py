@@ -25,8 +25,9 @@ with open('data_path.txt', encoding='utf8') as f:
     print(f'\nReading from {filepath}')
     
 repeat_for_all = True
-# dset_to_delete_all = 'bs-f40_lagrangian_meltpool_bin'
 dset_to_delete_all = 'keyhole_bin'
+# dset_to_delete_all = 'bs-p10-s37_lagrangian_bin'
+# dset_to_delete_all = 'bs-p10-s37'
 
 col_w = [50, 25, 15, 10]
 total_w = np.sum(col_w) + 3

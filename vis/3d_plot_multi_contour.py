@@ -5,6 +5,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
 from my_funcs import get_logbook
+from my_funcs import define_collumn_labels
 import scipy.optimize as optimize
 from scipy.interpolate import Rbf
 from sklearn.metrics import r2_score
@@ -19,14 +20,14 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 ### Figure settings ###
 #----------------------
 font_size = 9       # point
-figsize = (4, 4)    # inch
+figsize = (6.3, 3.15)    # inch
 dpi = 300
 projection = '2d'
 plot_bg = 'w'
 n_subplots = 1
 
 pop_nans = True
-regime_point_colours = True
+regime_point_colours = False
 regime_point_shapes = True
 label_points = False
 point_stems_3d = False
@@ -77,7 +78,7 @@ if True:
 ### Z-axis settings ###
 #----------------------
 if True:
-    plotz = 'pore_vol'
+    plotz = 'pore_density'
     # zlim = [0, 2]
     # zticks = [0, 1, 2, 3]
     zlim = None
@@ -90,6 +91,8 @@ if True:
     bins_per_tick = None
     if bins_per_tick != None and zticks != None: contour_levels = (len(zticks) - 1) * bins_per_tick + 1
 
+    plotz2 = 'eot_depression_depth'
+
 ### Additional axes settings ###
 #-------------------------------
 if True:
@@ -97,7 +100,7 @@ if True:
     ploty2 = 'eot_depression_depth'
     y2lim = [-10, 150]
     y2ticks = [0, 70, 140]
-    plotz2 = None
+    
     
     plotx3 = 'LED'
     ploty3 = 'h_pores'
@@ -202,201 +205,75 @@ def define_point_formats():
             
     return marker_dict
 
-def define_collumn_labels():
-    # Dict item structure:
-    # label: [logbook header, axis label]
-    col_dict = {'power':                    ['Avg. power [W]',
-                                             'Power [W]'
-                                             ],
-                'pt_dist':                  ['Point distance [um]',
-                                             'Point distance [μm]'
-                                             ],
-                'exp_t':                    ['Exposure time [us]',
-                                             'Exposure time [μs]'
-                                             ],
-                'scan_speed':               ['Scan speed [mm/s]',
-                                             'Scan speed [mm/s]'
-                                             ],
-                'LED':                      ['LED [J/m]',
-                                             'LED [J/m]'
-                                             ],
-                'n_pores':                  ['n_pores',
-                                             'Keyhole pore count'
-                                             ],
-                'pore_vol':                 ['pore_vol_mean [um^3]',
-                                             'Mean pore volume [μm\u00b3]'
-                                             ],
-                'pore_angle':               ['pore_angle_mean',
-                                             'Mean pore angle [$\degree$]'
-                                             ],
-                'pore_roundness':           ['pore_roundness_mean',
-                                             'Mean pore roundness'
-                                             ],
-                'eot_depression':           ['end_of_track_depression',
-                                             'End of track\ndepression'
-                                             ],
-                'eot_depression_depth':     ['end_of_track_depression_depth',
-                                             'End of track\ndepression depth [μm]'
-                                             ],
-                'h_pores':                  ['hydrogen_pores',
-                                             'Hydrogen porosity'
-                                             ],
-                'MP_depth':                 ['melt_pool_depth [um]',
-                                             'Melt pool depth [μm]'
-                                             ],
-                'MP_length':                ['melt_pool_length [um]',
-                                             'Melt pool length [μm]'
-                                             ],
-                'MP_width':                 ['track_width_mean [um]',
-                                             'Melt pool width [μm]'
-                                             ],
-                'MP_vol':                   ['melt_pool_volume [mm^3]',
-                                             'Melt pool volume [mm\u00b3]'
-                                             ],
-                'melting_efficiency_s':     ['melting_efficiency',
-                                             'Melting efficiency, η'
-                                             ],
-                'melting_efficiency_sp':    ['melting_efficiency_with_powder',
-                                             'Melting efficiency, η'
-                                             ],
-                'R':                        ['R [mm/s]',
-                                             'Solidification rate, R [mm/s]'
-                                             ],
-                'G1':                       ['G1 [K/mm]',
-                                             'Temperature gradient @ D1 [K/mm]'
-                                             ],
-                'G2':                       ['G2 [K/mm]',
-                                             'Temperature gradient @ D2 [K/mm]'
-                                             ],
-                'G3':                       ['G3 [K/mm]',
-                                             'Temperature gradient @ D3 [K/mm]'
-                                             ],
-                'G_rear':                   ['G_rear [K/mm]',
-                                             'Temperature gradient @ rear tip [K/mm]'
-                                             ],
-                'dT/dt1':                   ['dT/dt1 [K/s]',
-                                             'Cooling rate @ D1 [K/s]'
-                                             ],
-                'dT/dt2':                   ['dT/dt2 [K/s]',
-                                             'Cooling rate @ D2 [K/s]'
-                                             ],                             
-                'dT/dt3':                   ['dT/dt3 [K/s]',
-                                             'Cooling rate @ D3 [K/s]'
-                                             ],   
-                'dT/dt_rear':               ['dT/dt_rear [K/s]',
-                                             'Cooling rate @ rear tip [K/s]'
-                                             ],
-                'KH_depth':                 ['keyhole_max_depth_mean [um]',
-                                             'Keyhole depth [μm]'
-                                             ],
-                'KH_depth_sd':              ['keyhole_max_depth_sd [um]',
-                                             'Keyhole depth std. dev. [μm]'
-                                             ],
-                'KH_length':                ['keyhole_max_length_mean [um]',
-                                             'Keyhole length [μm]'
-                                             ],
-                'KH_depth_at_max_length':   ['keyhole_depth_at_max_length_mean [um]',
-                                             'Keyhole depth at max. length [μm]'
-                                             ],
-                'layer_thickness':          ['substrate_avg_layer_thickness [um]',
-                                             'Powder layer thickness [μm]'
-                                             ],
-                'fkw_angle':                ['fkw_angle_mean [deg]',
-                                             r'FKW angle, $\theta_{FKW}$ [$\degree$]'
-                                             ],
-                'tan_fkw_angle':            ['tan_fkw_angle',
-                                             'FKW angle tangent'
-                                             ],
-                'fkw_angle_sd':             ['fkw_angle_sd [deg]',
-                                             'FKW angle standard deviation [$\degree$]'
-                                             ],
-                'fkw_angle_n_samples':      ['fkw_angle_n_samples',
-                                             'FKW angle sample count'
-                                             ],
-                'norm_H_prod':              ['Normalised enthalpy product',
-                                             r'Normalised enthalpy product, $\Delta H/h_m \dot L_{th}^*$'
-                                             ],
-                'KH_aspect':                ['keyhole_aspect_ratio',
-                                             'Keyhole aspect ratio'
-                                             ],
-                }
-    return col_dict
-
-def plot_data(axs, log_red, marker_dict, col_dict):
-    print('plot_data()')
+def plot_data(ax, log_red, marker_dict, col_dict):
     # Initialise lists for storing point coordinates    
-    x = np.zeros((len(log_red), n_subplots))
+    x = np.zeros((len(log_red)))
     y = np.zeros_like(x)
     z = np.zeros_like(x)
-    
-    print(z.shape)
+    z2 = np.zeros_like(x)
     
     # Add points to plot by iterating through the logbook row by row
     for i, row in log_red.iterrows():
         trackid = row['trackid']
         regime = row['Melting regime']
-        print(regime)
         
         # Do not plot point if regime not categorised
-        # if regime not in marker_dict:
-            # for arr in [x, y, z]:
-                # np.delete(arr, obj=i, axis=0)
-            # continue
-        
-        for j in range(n_subplots):
-            print(i, j)
+        if regime not in marker_dict:
+            for arr in [x, y, z]:
+                np.delete(arr, obj=i, axis=0)
+            continue
             
-            # Set variables to plot
-            x[i][j] = row[col_dict[plotx][0]]
-            y[i][j] = row[col_dict[ploty][0]]
-            z[i][j] = row[col_dict[plotz][0]]#+row[col_dict['layer_thickness'][0]]
+        # Set variables to plot
+        x[i] = row[col_dict[plotx][0]]
+        y[i] = row[col_dict[ploty][0]]
+        z[i] = row[col_dict[plotz][0]]
+        z2[i] = row[col_dict[plotz2][0]]
 
-            for i in range(n_subplots):
-                if projection == '2d':
-                    axs[j].scatter(x[i][j], y[i][j],
-                                   label = regime,
-                                   c = marker_dict[regime]['c'],
-                                   # c = z,
-                                   marker = marker_dict[regime]['m'],
-                                   edgecolors = 'k',
-                                   linewidths = 0.5,
-                                   s = 25,
-                                   # cmap = 'hot',
-                                   # vmin = 1,
-                                   # vmax = 5
-                                   )
-                               
-                    if label_points == True:
-                        axs[j].text(x[i][j], y[i][j]-15,
-                                    trackid,
-                                    va = 'center',
-                                    ha = 'center',
-                                    fontsize = 'xx-small',
-                                    )
-                    if include_error_bars == True:
-                        err = row[col_dict['fkw_angle_sd'][0]]/np.sqrt(row[col_dict['fkw_angle_n_samples'][0]])
-                        axs[j].errorbar(x[i][j], y[i][j], xerr=err, yerr=16, ecolor='k', elinewidth=0.6, capsize=3.2, capthick=0.6, zorder=0)
-                    
-                elif projection == '3d':            
-                    if point_stems_3d == True:
-                        markerline, stemlines, baseline = axs[j].stem([x[i][j]], [y[i][j]], [z[i][j]],
-                                                                      bottom = 0,
-                                                                      linefmt = '--',
-                                                                      basefmt = 'none',
-                                                                      markerfmt = 'none'
-                                                                      )
-                        stemlines.set(linewidth = 0.7,
-                                      color = 'grey'
-                                      )
-                    axs[j].scatter(x[i][j], y[i][j], z[i][j],
-                                   label = regime,
-                                   c = marker_dict[regime]['c'],
-                                   marker = marker_dict[regime]['m'],
-                                   edgecolors = 'k',
-                                   linewidths = 0.5
-                                   )
+        if projection == '2d':
+            ax.scatter(x[i], y[i],
+                       label = regime,
+                       c = marker_dict[regime]['c'],
+                       # c = z,
+                       marker = marker_dict[regime]['m'],
+                       edgecolors = 'k',
+                       linewidths = 0.5,
+                       s = 25,
+                       # cmap = 'hot',
+                       # vmin = 1,
+                       # vmax = 5
+                       )
+                       
+            if label_points == True:
+                ax.text(x[i], y[i]-15,
+                        trackid,
+                        va = 'center',
+                        ha = 'center',
+                        fontsize = 'xx-small',
+                        )
+            if include_error_bars == True:
+                err = row[col_dict['fkw_angle_sd'][0]]/np.sqrt(row[col_dict['fkw_angle_n_samples'][0]])
+                ax.errorbar(x[i], y[i], xerr=err, yerr=16, ecolor='k', elinewidth=0.6, capsize=3.2, capthick=0.6, zorder=0)
+            
+        elif projection == '3d':            
+            if point_stems_3d == True:
+                markerline, stemlines, baseline = ax.stem([x[i]], [y[i]], [z[i]],
+                                                              bottom = 0,
+                                                              linefmt = '--',
+                                                              basefmt = 'none',
+                                                              markerfmt = 'none'
+                                                              )
+                stemlines.set(linewidth = 0.7,
+                              color = 'grey'
+                              )
+            ax.scatter(x[i], y[i], z[i],
+                           label = regime,
+                           c = marker_dict[regime]['c'],
+                           marker = marker_dict[regime]['m'],
+                           edgecolors = 'k',
+                           linewidths = 0.5
+                           )
     
-    return x.T, y.T, z.T
+    return x, y, z, z2
 
 def remove_nan_values(data):
     # Get indices of NaN values in all lists
@@ -531,7 +408,7 @@ def create_legend(ax):
                        )
     legend.get_frame().set_linewidth(mpl.rcParams['axes.linewidth'])
 
-def print_data_summary(x, y, z):
+def print_data_summary(x, y, z, z2):
     col_w = [10, 10, 10, 10]
     total_w = np.sum(col_w) + 3
     col_format = '{:<'+str(col_w[0])+'} {:<'+str(col_w[1])+'} {:<'+str(col_w[2])+'} {:<'+str(col_w[3])+'}'
@@ -540,21 +417,21 @@ def print_data_summary(x, y, z):
     print(col_format.format('Axis', 'Min', 'Mean', 'Max'))
     print(tab_rule)
     for i in range(n_subplots):
-        print(col_format.format(f'x{i}', round(min(xx), 2), round(np.mean(xx), 2), round(max(xx), 2)))
-        print(col_format.format(f'y{i}', round(min(yy), 2), round(np.mean(yy), 2), round(max(yy), 2)))
-        print(col_format.format(f'z{i}', round(min(zz), 2), round(np.mean(zz), 2), round(max(zz), 2)))
+        print(col_format.format('x', round(min(x), 2), round(np.mean(x), 2), round(max(x), 2)))
+        print(col_format.format('y', round(min(y), 2), round(np.mean(y), 2), round(max(y), 2)))
+        print(col_format.format('z', round(min(z), 2), round(np.mean(z), 2), round(max(z), 2)))
+        print(col_format.format('z2', round(min(z2), 2), round(np.mean(z2), 2), round(max(z2), 2)))
 
 def main():
     log_red = filter_logbook()
     marker_dict = define_point_formats()
     col_dict = define_collumn_labels()
     fig, axs = set_up_figure(col_dict)
-    x, y, z = plot_data(axs, log_red, marker_dict, col_dict)
+    x, y, z, z2 = plot_data(axs[0], log_red, marker_dict, col_dict)
     
     if pop_nans == True:
-        x = remove_nan_values(x)
-        y = remove_nan_values(y)
-        z = remove_nan_values(z)
+        data = (x, y, z)
+        (x, y, z) = remove_nan_values(data)
         
     if include_contours == True and projection == '2d':
         cmap = plt.cm.get_cmap('Blues').copy()
@@ -562,14 +439,18 @@ def main():
         zlim = [0, 150]
         contour_levels = 7
         zticks = [0, 50, 100, 150]
-        draw_contours(fig, axs[0], col_dict, x[0], y[0], z[2], zlim, contour_levels, zticks, label_var=plotz3, contour_extend=None, cmap=cmap, alpha=0.7)
+        z_mod = z2
+        z_mod[z2 == 0] = -1
+        draw_contours(fig, axs[0], col_dict, x, y, z_mod, zlim, contour_levels, zticks, label_var=plotz2, contour_extend=None, cmap=cmap, alpha=0.7)
         
         cmap = plt.cm.get_cmap('Reds').copy()
         cmap.set_under(color='w', alpha=0)
-        zlim = [0, 25]
-        contour_levels = 6
-        zticks = [0, 5, 10, 15, 20, 25]
-        draw_contours(fig, axs[0], col_dict, x[0], y[0], z[1], zlim, contour_levels, zticks, label_var=plotz2, contour_extend='max', cmap=cmap, alpha=0.7)
+        zlim = [0, 180]
+        contour_levels = 7
+        zticks = [0, 60, 120, 180]
+        z_mod = z
+        z_mod[z == 0] = -30
+        draw_contours(fig, axs[0], col_dict, x, y, z_mod, zlim, contour_levels, zticks, label_var=plotz, contour_extend=None, cmap=cmap, alpha=0.7)
         
         # cmap = plt.cm.get_cmap('Blues').copy()
         # cmap.set_under(color='w', alpha=0)
@@ -592,7 +473,7 @@ def main():
     if include_legend == True:
         create_legend(axs[0])
     
-    print_data_summary(x, y, z)
+    print_data_summary(x, y, z, z2)
     
     plt.show()
 

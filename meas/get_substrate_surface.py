@@ -7,7 +7,7 @@ from pathlib import Path
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-show_figs = False
+show_figs = True
 save_figs= True
 save_measurements = True
 
@@ -85,7 +85,7 @@ def main():
     for f in sorted(files):
         fname = Path(f).name
         print(f'\nReading {fname}')
-        trackid = fname[:-3]
+        trackid = fname[:7]
         
         with h5py.File(f, 'a') as file:
             im = np.array(file['bs-f40'][-1]) # Take last frame of background subtracted dataset as a 2d array

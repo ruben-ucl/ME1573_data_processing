@@ -25,7 +25,7 @@ with open('data_path.txt', encoding='utf8') as f:
     print(f'Reading from {filepath}\n')
     
 input_dset_name = 'bs-f40'
-frame_no = 140
+frame_no = -1
 folder_name = f'{input_dset_name}_frame_{frame_no}_stills'
 
 add_scalebar = True
@@ -68,7 +68,7 @@ def main():
     print(f'Saving frame no. {frame_no} from dataset: {input_dset_name}\n')
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
-    files = glob.glob(str(Path(filepath, '*.hdf5')))
+    files = sorted(glob.glob(str(Path(filepath, '*.hdf5'))))
     n_files = len(files)
     for i, file in enumerate(files):
         with h5py.File(file, 'a') as f:

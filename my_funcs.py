@@ -23,7 +23,7 @@ def get_logbook(logbook_path = Path(r'C:\Users\lbn38569\UCL Dropbox\PhD students
                                 converters={'Substrate No.': str, 'Sample position': str}
                                 )
         # logging.info('Logbook data aquired from %s' % logbook_path)
-        print('Logbook read successfully')
+        print('Logbook read successfully', end='\n\n')
     
         return logbook
     
@@ -35,11 +35,8 @@ def get_logbook(logbook_path = Path(r'C:\Users\lbn38569\UCL Dropbox\PhD students
         raise
         
 def get_logbook_data(logbook, trackid, layer_n=1):  # Get scan speed and framerate from logbookprint('Reading scan speed and framerate from logbook')
-    substrate_n = trackid[1:4]
-    track_n = trackid[-1]
-    # print(trackid)
-    track_row = logbook.loc[(logbook['Substrate No.'] == substrate_n) &
-                            (logbook['Sample position'] == track_n) &
+    
+    track_row = logbook.loc[(logbook['trackid'] == trackid) &
                             (logbook['Layer'] == layer_n)
                             ]
     # print(track_row)
@@ -75,9 +72,15 @@ def define_collumn_labels():
                 'LED':                      ['LED [J/m]',
                                              'LED [J/m]'
                                              ],
+                'regime':                   ['Melting regime',
+                                             'Melting regime'
+                                             ],
                 'n_pores':                  ['n_pores',
                                              'Keyhole pore count'
                                              ],
+                'pore_density':              ['pore_density [/mm3]',
+                                              'Keyhole porosity [/mm\u00b3]'
+                                              ],
                 'pore_vol':                 ['pore_vol_mean [um^3]',
                                              'Mean pore volume [μm\u00b3]'
                                              ],
@@ -91,7 +94,7 @@ def define_collumn_labels():
                                              'End of track\ndepression'
                                              ],
                 'eot_depression_depth':     ['end_of_track_depression_depth',
-                                             'End of track\ndepression depth [μm]'
+                                             'End of track depression depth [μm]'
                                              ],
                 'h_pores':                  ['hydrogen_pores',
                                              'Hydrogen porosity'
@@ -105,7 +108,10 @@ def define_collumn_labels():
                 'MP_width':                 ['track_width_mean [um]',
                                              'Melt pool width [μm]'
                                              ],
-                'MP_vol':                   ['melt_pool_volume [mm^3]',
+                'track_height':             ['track_height [um]',
+                                             'Track height [μm]'
+                                             ],
+                'MP_vol':                   ['total_melt_volume [mm^3]',
                                              'Melt pool volume [mm\u00b3]'
                                              ],
                 'MP_vol_err':               ['melt_pool_volume_error [mm^3]',
@@ -114,10 +120,7 @@ def define_collumn_labels():
                 'MP_rear_wall_angle':       ['rear_melt_pool_wall_angle [deg]',
                                              'Melt pool rear wall angle [$\degree$]'
                                              ],
-                'melting_efficiency_s':     ['melting_efficiency',
-                                             'Melting efficiency, η'
-                                             ],
-                'melting_efficiency_sp':    ['melting_efficiency_with_powder',
+                'melting_efficiency':       ['melting_efficiency',
                                              'Melting efficiency, η'
                                              ],
                 'R':                        ['R [mm/s]',
@@ -159,7 +162,7 @@ def define_collumn_labels():
                 'KH_depth_at_max_length':   ['keyhole_depth_at_max_length_mean [um]',
                                              'Keyhole depth at max. length [μm]'
                                              ],
-                'layer_thickness':          ['substrate_avg_layer_thickness [um]',
+                'layer_thickness':          ['measured_layer_thickness [um]',
                                              'Powder layer thickness [μm]'
                                              ],
                 'KH_depth_w_powder':        ['KH_depth_w_powder',
@@ -185,7 +188,39 @@ def define_collumn_labels():
                                              ],
                 }
     return col_dict
-    
+
+def get_AMPM_channel_names():  
+    ChannelNames = ['GalvoXDemandBits', # 0
+        'GalvoXDemandCartesian',        # 1
+        'GalvoYDemandBits',             # 2
+        'GalvoYDemandCartesian',        # 3
+        'FocusDemandBits',              # 4
+        'FocusDemandCartesian',         # 5
+        'GalvoXActualBits',             # 6
+        'GalvoXActualCartesian',        # 7
+        'GalvoYActualBits',             # 8
+        'GalvoYActualCartesian',        # 9
+        'FocusActualBits',              # 10
+        'FocusActualCartesian',         # 11
+        'Modulate',                     # 12
+        'BeamDumpDiodeBits',            # 13
+        'BeamDumpDiodeWatts',           # 14
+        'Photodiode1Bits',              # 15
+        'Photodiode1Watts',             # 16
+        'Photodiode2Bits',              # 17
+        'Photodiode2Watts',             # 18
+        'PSDPositionXBits',             # 19
+        'PSDPositionYBits',             # 20
+        'PSDIntensity',                 # 21
+        'PowerValue1',                  # 22
+        'PowerValue2',                  # 23
+        'Photodiode1Normalised',        # 24
+        'Photodiode2Normalised',        # 25
+        'BeamDumpDiodeNormalised',      # 26
+        'LaserBackReflection',          # 27
+        'OutputPowerMonitor']           # 28
+    return ChannelNames
+
 def get_start_end_frames(trackid, logbook, margin=50, start_frame_offset=0):
     track_data = get_logbook_data(logbook, trackid)
     framerate = track_data['framerate']

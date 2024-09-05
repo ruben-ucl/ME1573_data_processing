@@ -20,7 +20,7 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 ### Figure settings ###
 #----------------------
 font_size = 9       # point
-figsize = (4, 4)    # inch # page width = 6.3
+figsize = (4, 4)    # inch (page width = 6.3)
 dpi = 300
 plot_bg = 'w'
 
@@ -31,27 +31,30 @@ label_points = False
 include_hline = None
 include_error_bars = False
 include_legend = True
+fit_curves = True
 
 
 ### X-axis settings ###
 #----------------------
 if True:
-    plotx = 'power'
-    xlim = None
-    xticks = None
+    plotx = 'scan_speed'
+    xlim = [300, 2100]
+    xticks = [400, 800, 1200, 1600, 2000]
 
 ### Y-axis settings ###
 #----------------------
 if True:
-    ploty = 'KH_depth_w_powder'
+    ploty = 'MP_vol'
     ylim = None
     yticks = None
 
 ### Z-axis settings ###
 #----------------------
 if True:
-    plotz = 'scan_speed'
-    zvals = [400, 800, 1200]
+    plotz = 'power'
+    # zunit = 'W'
+    # zvals = [400, 800, 1200, 1600]
+    zvals = [500, 450, 400, 350, 300]
 
 def filter_logbook():
     log = get_logbook()
@@ -106,20 +109,20 @@ def set_up_figure(col_dict):
     return fig, ax
 
 def define_point_formats():
-    # Define marker formats based on melting regime
-    # marker_dict = {'unstable keyhole': {'m': 'o', 'c': '#fde725'},
-                   # 'keyhole flickering': {'m': 's', 'c': '#3b528b'},
-                   # 'quasi-stable keyhole': {'m': '^', 'c': '#5ec962'},
-                   # 'quasi-stable vapour depression': {'m': 'D', 'c': '#21918c'},
-                   # 'conduction': {'m': 'v', 'c': '#440154'},
-                   # 'Al7A77 (Huang et al., 2022)': {'m': 'd', 'c': 'k'},
-                   # 'Ti64 (Zhao et al., 2020)': {'m': 'd', 'c': 'lightgray'},
-                   # 'Ti64 (Cunningham et al., 2019)': {'m': 'd', 'c': 'gray'},
-                   # }
-                   
-    marker_dict = {0: {'mp': 'o', 'mw': 'x', 'c': '#57106e'},
-                   1: {'mp': 'o', 'mw': 'x', 'c': '#bc3754'},
-                   2: {'mp': 'o', 'mw': 'x', 'c': '#f98e09'}
+                 
+    marker_dict = {0: {'mp': 'o', 'mw': 'x', 'c': '#fcffa4'},
+                   1: {'mp': 'o', 'mw': 'x', 'c': '#fca50a'},
+                   2: {'mp': 'o', 'mw': 'x', 'c': '#dd513a'},
+                   3: {'mp': 'o', 'mw': 'x', 'c': '#932667'},
+                   4: {'mp': 'o', 'mw': 'x', 'c': '#420a68'},
+                   'unstable keyhole': {'m': 'o', 'c': '#fde725'},
+                   'keyhole flickering': {'m': 's', 'c': '#3b528b'},
+                   'quasi-stable keyhole': {'m': '^', 'c': '#5ec962'},
+                   'quasi-stable vapour depression': {'m': 'D', 'c': '#21918c'},
+                   'conduction': {'m': 'v', 'c': '#440154'},
+                   'Al7A77 (Huang et al., 2022)': {'m': 'd', 'c': 'k'},
+                   'Ti64 (Zhao et al., 2020)': {'m': 'd', 'c': 'lightgray'},
+                   'Ti64 (Cunningham et al., 2019)': {'m': 'd', 'c': 'gray'},
                    }
                    
     # if regime_point_colours == False:
@@ -160,14 +163,16 @@ def plot_data(ax, iz, log_red, marker_dict, pw, col_dict):
                    # )
                    
         ax.plot(x[i], y[i],
-                label = f"{pw} {zvals[iz]} mm/s",
+                label = zvals[iz],
+                # label = f"{pw} {zvals[iz]} {zunit}",
                 c = marker_dict[iz]['c'],
-                marker = style[pw]['m'],
-                # markeredgecolor = 'k',
+                marker = marker_dict[iz]['mp'],
+                markeredgecolor = 'k',
+                markeredgewidth = 0.8,
                 ls = style[pw]['l'],
-                lw = 1,
-                ms = 8,
-                zorder = style[pw]['z']
+                lw = 0,
+                ms = 7.5,
+                # zorder = style[pw]['z']
                 )
                    
         if label_points == True:
@@ -184,16 +189,19 @@ def plot_data(ax, iz, log_red, marker_dict, pw, col_dict):
     return x.T, y.T
 
 def draw_hline(ax, hliney):
-    ax.plot((0, 1400), (hliney, hliney), c='gray', ls='--', lw=0.7, zorder=0)
-    ax.text(1000, 0.185, f'η = {hliney}', c='gray')
+    
+    ax.plot(ax.get_xlim(), (hliney, hliney), c='gray', ls='--', lw=0.7, zorder=0)
+    ax.text(1400, 0.185, f'η = {hliney}', c='gray')
 
 def curve_function(x, a, b, c, d):
     # return a*x**3 + b*x**2 + c*x + d
+    # return a*np.exp(-(x-b)**2/(2*c**2))+d
     # return a*x**2 + b*x + c
-    # return a*x + b
-    return np.log(a*x)*b
-    # return a**(x + b) + c
+    # return a*b**x
+    # return a + b*np.log(x)
+    # return a*np.exp(b*x)
     # return np.arctan(a*(x+b))*(180/np.pi)
+    return a*x**b
     pass
 
 def draw_curve_fit(ax, iz, marker_dict, ls, xx, yy):
@@ -201,7 +209,7 @@ def draw_curve_fit(ax, iz, marker_dict, ls, xx, yy):
     # xx = [x for x, y in zip(xx, yy) if not math.isnan(y)]
     # yy = [y for y in yy if not math.isnan(y)]
     
-    popt, _ = optimize.curve_fit(curve_function, xx, yy)
+    popt, _ = optimize.curve_fit(curve_function, xx, yy, p0=[1, 0, 1000, 0])
     # popt = (0.29, -0.2)
     
     X = np.linspace(min(xx), max(xx), 50)
@@ -212,21 +220,18 @@ def draw_curve_fit(ax, iz, marker_dict, ls, xx, yy):
     ss_tot = np.sum((yy-np.mean(yy))**2)
     r2 = 1 - (ss_res/ss_tot)
     a, b, c, d = [round(e, 3) for e in popt]
-    # ax.text(max(xx)*0.5, max(yy), f'y = {a}x\u00b2 + {b}x + {c}\nR\u00b2 = {round(r2, 3)}')
-    # ax.text(max(xx)*0.35, max(yy)*0.55,
-            # r'$\theta_{FKW} = tan^{-1}\left[a \dot \left(\frac{\Delta H}{h_m} \dot L_{th}^*+b\right)\right]$'+f'\na = {a}, b = {b}\nR\u00b2 = {round(r2, 3)}', 
-            # fontsize = 'small'
-            # )
-    ax.text(np.min(xx), np.min(yy), f'R\u00b2 = {round(r2, 2)}')
+    # ax.text(np.min(xx), np.max(yy), 'a={a}, b={b}, R\u00b2 = {r2}'
+        # .format(a=a, b=b, r2=round(r2, 2)))
+    ax.text(np.min(xx), np.max(yy), f'R\u00b2 = {round(r2, 2)}')
     ax.plot(X, Y, c = marker_dict[iz]['c'], ls = ls, lw=1, zorder=0)
 
-def create_legend(ax):
+def create_legend(ax, col_dict):
     # Get handles and labels for points
     handles, labels = plt.gca().get_legend_handles_labels()
     # Combine into dictionary to eliminate duplicates
     by_label = dict(zip(labels, handles))
     # Re-order legend entries
-    order = [0, 2, 4, 1, 3, 5]
+    order = [0, 1, 2, 3, 4, 5]
     # order = [0, 1, 2]
     order = order[:len(by_label)]
     handles = [list(by_label.values())[i] for i in order]
@@ -234,10 +239,11 @@ def create_legend(ax):
     # Create legend
     legend = ax.legend(handles,
                        labels,
+                       title = col_dict[plotz][1],
                        # loc = 'upper center',
                        # bbox_to_anchor = (0.5, -0.2),
                        ncol = 1,
-                       fontsize = 'small',
+                       fontsize = 'medium',
                        fancybox = False,
                        framealpha = 0,
                        edgecolor = 'inherit'
@@ -293,19 +299,20 @@ def main():
         
         x, y = plot_data(ax, iz, log_red_i_p, marker_dict, 'powder', col_dict)
         (x, y) = remove_nan_values((x[0], y[0]))
-        draw_curve_fit(ax, iz, marker_dict, '-', x, y)
         
-        x, y = plot_data(ax, iz, log_red_i_w, marker_dict, 'weld', col_dict)
-        (x, y) = remove_nan_values((x[0], y[0]))
-        draw_curve_fit(ax, iz, marker_dict, '--', x, y)
+        if fit_curves == True: draw_curve_fit(ax, iz, marker_dict, '-', x, y)
+        
+        # x, y = plot_data(ax, iz, log_red_i_w, marker_dict, 'weld', col_dict)
+        # (x, y) = remove_nan_values((x[0], y[0]))
+        # draw_curve_fit(ax, iz, marker_dict, '--', x, y)
         
         print_data_summary(x, y, zval)
         
-    if include_hline != None and projection == '2d':
-        draw_hline(axs[0], include_hline)
+    if include_hline != None:
+        draw_hline(ax, include_hline)
     
     if include_legend == True:
-        create_legend(ax)
+        create_legend(ax, col_dict)
     
     plt.show()
 

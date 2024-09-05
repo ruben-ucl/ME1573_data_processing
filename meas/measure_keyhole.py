@@ -23,14 +23,15 @@ INTENDED CHANGES
 '''
 
 """Controls"""
-input_dset_name = 'keyhole_bin'
+input_dset_name = 'keyhole_bin_nofilt'
 save_mode = 'save' # Set to 'preview' or 'save'
 frame_mode = 'cropped' # Set to 'full_frame' or 'cropped'
 plot_keyholes = False
-ignore_last_n_frames = 40
+ignore_first_n_frames = 70
+ignore_last_n_frames = 100
 
 um_per_pix = 4.3
-capture_framerate = 40000 # fps
+capture_framerate = 504000 # fps
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
@@ -78,8 +79,8 @@ def main():
             f1 = 0
             # frame_inds = range(f1, f2)
             # len_frame_inds = len(frame_inds)
-            len_frame_inds = len(dset[:-ignore_last_n_frames])
-            for i, im in enumerate(dset[:-ignore_last_n_frames]):
+            len_frame_inds = len(dset[ignore_first_n_frames:-ignore_last_n_frames])
+            for i, im in enumerate(dset[ignore_first_n_frames:-ignore_last_n_frames]):
                 # Get timestamp of frame
                 time = i * 1/capture_framerate * 1000 # ms
                 keyhole_data['time'].append(time)
@@ -111,11 +112,11 @@ def main():
             output_folder = Path(filepath, 'keyhole_measurements_lagrangian')
             if not os.path.exists(output_folder):
                 os.makedirs(output_folder)
-            keyhole_data.to_csv(Path(output_folder, f'{trackid}_keyhole_measurements.csv'))
+            keyhole_data.to_csv(Path(output_folder, f'{trackid}_keyhole_measurements_nofilt.csv'))
         else:
             print(keyhole_data[100:110])
     if save_mode == 'save':
-        pd.DataFrame(keyhole_data_summary).to_csv(Path(output_folder, 'keyhole_measurements_summary.csv'))
+        pd.DataFrame(keyhole_data_summary).to_csv(Path(output_folder, 'keyhole_measurements_summary_nofilt.csv'))
 
 def generate_summary_stats(keyhole_data, keyhole_data_summary, trackid):
     print('Calculating summary stats')

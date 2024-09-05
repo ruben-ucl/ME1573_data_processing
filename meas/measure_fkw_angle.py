@@ -12,13 +12,13 @@ input_dset_name = 'keyhole_bin'
 
 filter_by_regime = False
 preview_edge_fits = False
-preview_final_result = False
+preview_final_result = True
 save_result_figures = True
 save_result_data = True
 
-framerate = 40000 # fps
-ignore_last_n_frames = 50
-ignore_laser_onset = 1 # mm
+framerate = 504000 # fps
+ignore_last_n_frames = 100
+# ignore_laser_onset = 0 # mm # Changed below
 
 # Read data folder path from .txt file
 with open('data_path.txt', encoding='utf8') as f:
@@ -124,7 +124,8 @@ def main():
                 
             print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))
             scan_speed = log_filt.loc[log_filt['trackid']==trackid, 'Scan speed [mm/s]'].iloc[0]
-            ignore_first_n_frames = int(framerate * ignore_laser_onset / scan_speed)
+            # ignore_first_n_frames = int(framerate * ignore_laser_onset / scan_speed)
+            ignore_first_n_frames = 70
             
             fkw_measurements = get_fkw_angle(dset[ignore_first_n_frames:-ignore_last_n_frames])
             len_raw = len(fkw_measurements)
@@ -134,7 +135,8 @@ def main():
             len_filt = len(measurements_filtered)
             
             if save_result_data == True:
-                pd.DataFrame(measurements_filtered).to_csv(Path(output_folder, f'{trackid}_fkw_angle_measurements.csv'))
+                pd.DataFrame(measurements_filtered).to_csv(Path(output_folder, f'{trackid}_fkw_angle_measurements_filtered.csv'))
+                pd.DataFrame(fkw_measurements).to_csv(Path(output_folder, f'{trackid}_fkw_angle_measurements_raw.csv'))
             
             m_mean = np.mean(measurements_filtered['m'])
             c_mean = np.mean(measurements_filtered['c'])
@@ -149,19 +151,22 @@ def main():
             results['c'].append(c_mean)
             
             if preview_final_result == True or save_result_figures == True:
-                fig, ax = plt.subplots(figsize=(4, 3), dpi=600)
+                fig, ax = plt.subplots(figsize=(3.15, 3.15), dpi=300)
                 fig.suptitle(trackid)
-                ax.imshow(np.mean(file['bs-f40_lagrangian_meltpool'][30:-40], axis=0), vmin=100, vmax=150, cmap='gray')
+                ax.imshow(np.mean(file['bs-f40_lagrangian'][50:-100], axis=0), vmin=100, vmax=150, cmap='gray')
+                ax.set_axis_off()
                 X = range(dset.shape[1])
                 Y = [m_mean * x + c_mean for x in X]
                 ax.plot(Y, X, 'k--', lw=0.6)
-                ax.text(0, -10,
-                         f'θ_fkw = {round(fkw_angle_mean, 2)}°\nUsed {len_filt}/{len_raw} measurements',
-                         c='k'
+                ax.text(Y[-1]+10, X[-1]-5,
+                         f'θ_fkw = {round(fkw_angle_mean, 2)}°',
+                         c='k',
+                         fontsize='small'
                          )
-                ax.text(Y[-1]+10, X[-1]-5, 'θ_fkw')
+                # ax.text(Y[-1]+10, X[-1]-5, 'θ_fkw')
                 
                 if preview_final_result == True:
+                    print(f'Used {len_filt}/{len_raw} measurements')
                     plt.show()
                     
                 if save_result_figures == True:
