@@ -213,7 +213,7 @@ def make_dataframe(t, AMPM_data):
 
 # Default path
 # datFolder = Path(__location__)
-AMPM_path = Path('C:/Users/rlamb/Dropbox (UCL)/BeamtimeData/ME-1573 - ESRF ID19/ME1573_AMPM_data')
+AMPM_path = Path('J:\AMPM')
 
 with open('data_path.txt', encoding='utf8') as f:
     custom_path = fr'{f.read()}'
@@ -239,9 +239,10 @@ for file in glob.glob('%s/*.hdf5' % datFolder):
     try:
         with h5py.File(file, 'a') as f:
             for col in AMPM_dataframe:
-                f['AMPM_data/%s' % col] = AMPM_dataframe[col]
+                f['AMPM/%s' % col] = AMPM_dataframe[col]
         print('Done\n')
     except OSError as e:
-        print('Dataset with the same name already exists - skipping file\n')
+        print(str(e))
+        print('Dataset with the same name may already exist - skipping file\n')
         
 
