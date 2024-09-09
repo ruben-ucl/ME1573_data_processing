@@ -2,12 +2,14 @@ import glob, read_AMPM, functools, h5py
 from pathlib import Path
 import numpy as np
 from matplotlib import pyplot as plt
-from my_funcs import get_logbook, get_logbook_data
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-AMPM_path = 'J:\AMPM'
-hdf5_path = r'J:\AlSi10Mg single layer ffc'
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_logbook, get_logbook_data
+
+AMPM_path = get_paths()['AMPM']
+hdf5_path = get_paths()['hdf5']
 
 mode = 'append' # 'append' or 'overwrite'
 

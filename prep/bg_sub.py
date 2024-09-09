@@ -1,11 +1,13 @@
-import h5py, glob
+import h5py, glob, os, sys
 import numpy as np
 from pathlib import Path
 from skimage import filters
 from skimage import exposure
 from skimage.morphology import disk, ball
 import functools
-from my_funcs import *
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_logbook, median_filt
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v0.3'
@@ -23,11 +25,8 @@ INTENDED CHANGES
 '''
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-# Input informaton
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
-    
+# Input information
+filepath = get_paths()['hdf5']
 input_dset_name = 'ff_corrected'
 
 # Output information
@@ -116,5 +115,6 @@ def check_for_dset(file, dset_name):
     if dset_name in file.keys():    # Check if dataset with output name exists already, and skip file if so
         raise OSError
 
-main(mode, n)
+if __name__ == '__main__':
+    main(mode, n)
     

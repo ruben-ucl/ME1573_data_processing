@@ -1,4 +1,4 @@
-import h5py, glob, os, imageio, functools
+import h5py, glob, os, imageio, functools, sys
 import numpy as np
 from pathlib import Path
 from skimage import filters
@@ -7,6 +7,9 @@ from skimage import exposure
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib_scalebar.scalebar import ScaleBar
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v0.1'
@@ -23,9 +26,7 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 
 # Input informaton
 # Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
     
 input_dset_name = 'bs-p5-s5_lagrangian'
 

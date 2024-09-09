@@ -1,6 +1,11 @@
-import h5py, glob, cv2, functools
+import h5py, glob, cv2, functools, os, sys
 import numpy as np
 from pathlib import Path
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
+
+filepath = get_paths()['hdf5']
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
@@ -10,9 +15,7 @@ op_name = 'placeholder'
 output_dset_name = f'{input_dset_name}_{op_name}'
 
 # Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
 
 """Input function to execute on dataset here"""
 def placeholder_func_name(dset):

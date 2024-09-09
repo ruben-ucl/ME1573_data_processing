@@ -1,7 +1,9 @@
-import h5py, glob, cv2, functools
+import h5py, glob, cv2, functools, os, sys
 import numpy as np
 from pathlib import Path
-from my_funcs import compare_histograms
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, compare_histograms
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
@@ -13,9 +15,7 @@ input_dset_names = ['bs-p5-s5_lagrangian_keyhole',
 frame_pos = 0.5 # 0 is first frame, 1 is last frame
 
 # Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
 
 def main():
     for f in glob.glob(str(Path(filepath, '*.hdf5'))):

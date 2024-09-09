@@ -1,13 +1,16 @@
-import h5py, glob, functools
+import h5py, glob, functools, os, sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-from my_funcs import get_AMPM_channel_names
+from my_funcs import 
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_AMPM_channel_names
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-hdf5_path = r'J:\AlSi10Mg single layer ffc'
+hdf5_path = get_paths()['hdf5']
 
 channels = get_AMPM_channel_names()
 

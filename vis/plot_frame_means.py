@@ -1,16 +1,17 @@
-import h5py, glob, functools
+import h5py, glob, functools, os, sys
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
 input_dset_name = 'bs-p10-s37'
 
 # Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
 
 """Input function to execute on dataset here"""
 def get_means(dset):

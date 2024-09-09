@@ -3,16 +3,16 @@ import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
+
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
 mode = 'apply' # 'apply' or 'preview'
 input_dset_name = 'bg_sub_prev_5_frames_crop_rotate'
 output_dset_name = input_dset_name + '_denoised'
 
-# Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
 
 def denoise(dset):
     if mode == 'preview':

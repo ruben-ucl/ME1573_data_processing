@@ -1,10 +1,14 @@
-import h5py, glob, functools, os
+import h5py, glob, functools, os, sys
 import numpy as np
 import pandas as pd
 from skimage import filters, feature, measure, morphology, segmentation
 import matplotlib.pyplot as plt
 from pathlib import Path
-from my_funcs import get_logbook
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_logbook
+
+filepath = get_paths()['hdf5']
 
 '''
 
@@ -15,11 +19,6 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 show_figs = False
 save_figs = True
 save_measurements = True
-
-# Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
 
 # Define and create output folder if necessary
 output_folder = Path(filepath, 'layer_thickness_measurements')

@@ -1,10 +1,12 @@
-import h5py, glob, functools
+import h5py, glob, functools, sys, os
 import numpy as np
 import pandas as pd
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from my_funcs import *
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_logbook, get_logbook_data, get_substrate_surface_coords
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v0.1'
@@ -17,10 +19,7 @@ output_dset_name = f'{input_dset_name}_lagrangian'  # Set fov_h = 220 for keyhol
 # output_dset_name = 'ffc_lagrangian'  # Set fov_h = 220 for keyhole, fov_h = 350 for meltpool
 logbook = get_logbook()
 
-# Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading data from {filepath}')
+filepath = get_paths()['hdf5']
 
 substrate_surface_measurements_fpath = Path(filepath, 'substrate_surface_measurements', 'substrate_surface_locations.csv')
 

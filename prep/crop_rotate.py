@@ -1,6 +1,9 @@
-import h5py, glob, cv2, functools
+import h5py, glob, cv2, functools, sys, os
 import numpy as np
 from pathlib import Path
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
@@ -11,10 +14,7 @@ keep_frames = [400, 800] # [start_frame, end_frame]
 input_dset_name = 'ff_corrected'
 output_dset_name = input_dset_name + '_crop'
 
-# Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
 
 def rotation_correction(image, angle):
     image_centre = tuple(np.array(image.shape) / 2)

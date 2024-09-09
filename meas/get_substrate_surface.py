@@ -7,14 +7,14 @@ from pathlib import Path
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
+
+filepath = get_paths()['hdf5']
+
 show_figs = True
 save_figs= True
 save_measurements = True
-
-# Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
 
 def get_kernel(x, y):
 	return np.ones((y, x), dtype=np.uint8)

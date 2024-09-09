@@ -1,12 +1,16 @@
-import h5py, glob, functools, os
+import h5py, glob, functools, os, sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 from skimage import measure, segmentation
-from my_funcs import get_logbook
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_logbook
+
+filepath = get_paths()['hdf5']
 
 input_dset_name = 'keyhole_bin'
 
@@ -19,11 +23,6 @@ save_result_data = True
 framerate = 504000 # fps
 ignore_last_n_frames = 100
 # ignore_laser_onset = 0 # mm # Changed below
-
-# Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
 
 output_folder = Path(filepath, 'fkw_angle_measurements')
 if not os.path.exists(output_folder): os.makedirs(output_folder)

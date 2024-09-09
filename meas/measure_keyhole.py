@@ -1,11 +1,15 @@
-import h5py, glob, cv2, os, functools
+import h5py, glob, cv2, os, functools, sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from skimage import measure, morphology
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from my_funcs import *
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_logbook, printProgressBar
+
+filepath = get_paths()['hdf5']
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v1.0'
@@ -35,9 +39,6 @@ capture_framerate = 504000 # fps
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading data from {filepath}')
 
 def main():
     logbook = get_logbook()

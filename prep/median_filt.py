@@ -1,9 +1,13 @@
-import h5py, glob, functools
+import h5py, glob, functools, os, sys
 import numpy as np
 from pathlib import Path
 from skimage import filters
 from skimage.morphology import disk
-from my_funcs import *
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_logbook, get_start_end_frames
+
+filepath = get_paths()['hdf5']
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
@@ -12,11 +16,6 @@ op_name = 'med_filt'
 filt_rad = 3
 
 output_dset_name = f'{input_dset_name}_{op_name}_r{filt_rad}'
-
-# Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
 
 logbook = get_logbook()
 

@@ -4,11 +4,13 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
-from my_funcs import get_logbook
-from my_funcs import define_collumn_labels
 import scipy.optimize as optimize
 from scipy.interpolate import Rbf
 from sklearn.metrics import r2_score
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_logbook, define_collumn_labels
+
 
 __author__ ='Rubén Lambert-Garcia'
 __version__ = '1.0'

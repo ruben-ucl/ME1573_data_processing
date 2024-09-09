@@ -2,9 +2,12 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-import glob, functools
+import glob, functools, sys, os
 from pathlib import Path
 from scipy.signal import medfilt, find_peaks
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
@@ -13,7 +16,7 @@ __version__ = '1.0'
 
 ##################################################################################################
 
-path1 = r'J:\ESRF ME1573 LTP 6 Al data HDF5\ffc\keyhole_measurements_lagrangian'
+path1 = get_paths()['KH_meas']
 label1 = 'centroid'
 
 save_mode = 'save'

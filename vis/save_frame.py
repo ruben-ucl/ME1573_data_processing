@@ -1,8 +1,10 @@
-import h5py, glob, os, imageio, cv2, functools
+import h5py, glob, os, imageio, cv2, functools, sys
 import numpy as np
 from pathlib import Path
 from skimage import filters
-from my_funcs import printProgressBar
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, printProgressBar
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v0.1'
@@ -20,9 +22,7 @@ INTENDED CHANGES
 
 # Input informaton
 # Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
     
 input_dset_name = 'bs-f40'
 frame_no = -1

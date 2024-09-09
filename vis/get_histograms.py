@@ -1,8 +1,13 @@
-import h5py, glob
+import h5py, glob, os, sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
+
+filepath = get_paths()['hdf5']
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v0.1'
@@ -17,9 +22,7 @@ INTENDED CHANGES
 '''
 
 # Input informaton
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
 
 """ Controls """
 input_dset_name = 'xray_images'

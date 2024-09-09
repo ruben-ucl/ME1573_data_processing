@@ -24,13 +24,12 @@ INTENDED CHANGES:
 """
 __version__ = '1.0'
 
-import h5py, os, glob, logging, warnings, functools
+import h5py, os, glob, logging, warnings, functools, sys
 import numpy as np
 import pandas as pd
 from datetime import datetime as dt
 import matplotlib.pyplot as plt
 from pathlib import Path
-from my_funcs import *
 from skimage import exposure
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
@@ -41,10 +40,10 @@ flip_images = False
 trim = True # Trim video to laser scan accoding to start_frame number in logbook
 margin = 50 # Number of frames kept before and after laser scan
 
-# Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_logbook, compare_histograms, get_start_end_frames
+
+filepath = get_paths()['hdf5']
     
 output_fpath = Path(filepath, 'ffc')
 

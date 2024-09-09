@@ -1,4 +1,4 @@
-import h5py, glob, cv2, os, functools
+import h5py, glob, cv2, os, functools, sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -6,7 +6,11 @@ import matplotlib.pyplot as plt
 from matplotlib_scalebar.scalebar import ScaleBar
 from skimage import measure
 from skimage import morphology
-from my_funcs import get_substrate_mask
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_substrate_mask
+
+filepath = get_paths()['hdf5']
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v0.1'
@@ -27,10 +31,6 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 
 save_mode = 'preview' # Set to 'preview' or 'save'
 um_per_pix = 4.3
-
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
 
 substrate_surface_measurements_fpath = Path(filepath, 'substrate_surface_measurements', 'substrate_surface_locations.csv')
     

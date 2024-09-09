@@ -1,14 +1,14 @@
-import h5py, glob
+import h5py, glob, os, sys
 import numpy as np
 import pandas as pd
 from skimage import filters, feature, measure
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-# Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
+
+filepath = get_paths()['hdf5']
 
 def get_kernel(x, y):
 	return np.ones((y, x), dtype=np.uint8)

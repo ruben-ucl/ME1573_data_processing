@@ -1,10 +1,13 @@
-import h5py, glob, cv2
+import h5py, glob, cv2, sys, os
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib_scalebar.scalebar import ScaleBar
 from skimage import filters
 from skimage.morphology import disk, ball
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v0.1'
@@ -18,9 +21,7 @@ INTENDED CHANGES
     
 '''
 # Input data informaton
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
     
 input_dset_name = 'bg_sub_prev_10_frames'
 

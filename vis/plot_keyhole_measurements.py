@@ -1,19 +1,19 @@
-import functools, glob, math
+import functools, glob, math, os, sys
 import numpy as np
 import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
-from my_funcs import *
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_logbook, get_logbook_data
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
 mode = 'save'
 
 # Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
     
 data_path = Path(filepath, 'keyhole_measurements_lagrangian')
 logbook = get_logbook()

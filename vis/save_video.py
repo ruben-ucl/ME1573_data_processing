@@ -1,8 +1,10 @@
-import h5py, glob, os, cv2, time
+import h5py, glob, os, cv2, time, sys
 import numpy as np
 from skimage import morphology
 from pathlib import Path
-from my_funcs import *
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, printProgressBar
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v1.0'
@@ -34,9 +36,7 @@ output_framerate = 30 # fps
 text_colour = 'white'   # 'black' or 'white'
 
 # Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
     
 def main():
     print(f'Creating videos from dataset: {input_dset_name}')

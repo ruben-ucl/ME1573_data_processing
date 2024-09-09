@@ -1,4 +1,4 @@
-import glob, functools, h5py
+import glob, functools, h5py, os, sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -6,8 +6,11 @@ from matplotlib import pyplot as plt
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-csv_path = r'J:\AlSi10Mg single layer ffc\keyhole_measurements_lagrangian'
-hdf5_path = r'J:\AlSi10Mg single layer ffc'
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
+
+csv_path = get_paths()['KH_meas']
+hdf5_path = get_paths()['hdf5']
 
 mode = 'append' # 'append' or 'overwrite'
 

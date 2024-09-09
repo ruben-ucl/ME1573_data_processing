@@ -1,11 +1,10 @@
-import h5py, glob, functools, os
+import h5py, glob, functools, os, sys
 import numpy as np
 import pandas as pd
 from skimage import filters, feature, measure, morphology, segmentation
 import matplotlib.pyplot as plt
 from pathlib import Path
 from PIL import Image
-from my_funcs import get_logbook
 
 '''
 
@@ -13,7 +12,10 @@ from my_funcs import get_logbook
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-filepath = r'J:\AlSi10Mg_CW_powder_L1\mono'
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_logbook
+
+filepath = get_paths()['micro']
     
 def main():
     files = glob.glob(str(Path(filepath, '*.tif')))

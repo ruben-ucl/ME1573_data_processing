@@ -1,9 +1,12 @@
-import h5py, glob, functools
+import h5py, glob, functools, os, sys
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from skimage import filters
-from my_funcs import *
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths, get_substrate_mask, view_histogram
+
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
@@ -17,9 +20,7 @@ view_hists = False
 save_output = True
 
 # Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
 
 substrate_surface_measurements_fpath = Path(filepath, 'substrate_surface_measurements', 'substrate_surface_locations.csv')
 

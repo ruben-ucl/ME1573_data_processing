@@ -1,8 +1,11 @@
-import h5py, glob, functools
+import h5py, glob, functools, os, sys
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from skimage import exposure
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
@@ -11,10 +14,7 @@ op_name = 'hist_eq'
 
 output_dset_name = f'{input_dset_name}_{op_name}'
 
-# Read data folder path from .txt file
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'Reading from {filepath}\n')
+filepath = get_paths()['hdf5']
 
 def hist_eq(dset):
     output_dset = (exposure.equalize_hist(np.array(dset)) * 255).astype(np.uint8)

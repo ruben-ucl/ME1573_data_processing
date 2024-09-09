@@ -1,7 +1,10 @@
-import h5py, glob
+import h5py, glob, os, sys
 import pandas as pd
 import numpy as np
 from pathlib import Path
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
 
 __author__ = 'Rubén Lambert-Garcia'
 __version__ = 'v1.0'
@@ -20,9 +23,7 @@ INTENDED CHANGES
 '''
 
 # Input data informaton
-with open('data_path.txt', encoding='utf8') as f:
-    filepath = fr'{f.read()}'
-    print(f'\nReading from {filepath}')
+filepath = get_paths()['hdf5']
     
 repeat_for_all = True
 dset_to_delete_all = 'keyhole_bin'

@@ -6,6 +6,9 @@ Repository structure
 
 ✧ ME1573_data_processing (root - run scripts from here)
 	|
+	|---- ✧	dirs
+	|	text files containing file directories referenced by other scripts in repo
+	|
 	|---- ✧	file
 	|     	scripts for file management and managing formats
 	|
@@ -29,8 +32,6 @@ Repository structure
 	|
 	|
 	|
-	|---- ✧	my_funcs.py
-	|	library of functions referenced by other scripts in the repo
-	|
-	|---- ✧	data_path.txt
-		defines location of HDF5 files referenced by other scripts in the repo
+	|---- ✧	tools.py
+		library of functions referenced by other scripts in the repo
+
