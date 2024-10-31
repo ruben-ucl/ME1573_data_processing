@@ -35,12 +35,12 @@ label_points = False                # bool
 point_stems_3d = False              # bool
 include_hline = None                # float
 include_error_bars = None    # string or None
-include_legend = True              # bool
+include_legend = False              # bool
 
-include_curve_fit = True           # bool
+include_curve_fit = False           # bool
 include_surface_fit = False         # bool
 
-axis_sci_not = 'x'                 # None, 'x', 'y' or 'both'
+axis_sci_not = None                 # None, 'x', 'y' or 'both'
 LED_contours = False                # bool
 include_contours = False            # bool
 contour_cmap = 'Reds'              # string
@@ -48,7 +48,7 @@ contour_levels = 11                 # int
 contour_alpha = 0.7                 # float
 include_cbar = True                 # bool
 contour_extend = 'max'               # 'neither', 'min', 'max' or 'both'
-contour_line = 0.2                 # float
+contour_line = None                 # float or None
 contour_label = r'$\eta$'        # string
 # contour_label = r'$\theta_{FKW}$'
 contour_unit = ''                  # string
@@ -58,7 +58,7 @@ contour_line_color = 'k'            # string
 ### X-axis settings ###
 #----------------------
 if True:
-    plotx = 'MP_vol'
+    plotx = 'norm_H_prod'
     # xlim = [150, 1300]
     # xlim = [0, 0.4]
     # xlim = [300, 2100]                      # scan speed
@@ -88,6 +88,7 @@ if True:
 if True:
     plotz = 'melting_efficiency'
     zlim = [0.05, 0.3]
+    # zlim = [30, 120]
     # zticks = [0, 1, 2, 3]
     # zlim = None
     zticks = None
@@ -117,8 +118,21 @@ def filter_logbook():
         # filter for presence of KH pores
         pores = log['n_pores'] > 2
         
+        # filter by layer thickness
+        thin_layer = log['measured_layer_thickness [um]'] <= 80
+        very_thin_layer = log['measured_layer_thickness [um]'] <= 35
+        
         # filter by scan speed
         speed = log['Scan speed [mm/s]'] == 400
+        
+        # filter by beamtime
+        ltp1 = log['Beamtime'] == 1
+        ltp2 = log['Beamtime'] == 2
+        ltp3 = log['Beamtime'] == 3
+        
+        # filter by substrate
+        s0514 = log['Substrate No.'] == '0514'
+        s0515 = log['Substrate No.'] == '0515'
 
         # filter by material
         AlSi10Mg = log['Substrate material'] == 'AlSi10Mg'
@@ -126,11 +140,16 @@ def filter_logbook():
         Al = log['Substrate material'] == 'Al'
         Ti64 = log['Substrate material'] == 'Ti64'
         lit = np.logical_or(Ti64, Al7A77)
+        
+        # filter by regime
+        not_flickering = log['Melting regime'] != 'keyhole flickering'
+        not_cond = log['Melting regime'] != 'conduction'
 
     # Apply combination of above filters to select parameter subset to plot
     # log_red = log[np.logical_or(AlSi10Mg, lit) & L1 & cw & powder]
     log_red = log[AlSi10Mg & L1 & cw & powder]
     # print(log_red)
+    print(len(log_red))
     return log_red
 
 def set_up_figure(col_dict):
@@ -308,9 +327,9 @@ def surf_function(data, a, b, c, d, e, f, g, h, i, j):
     return a + b*x + c*y + d*x**2 + e*y**2 + f*x*y + g*x**2*y + h*x*y**2 + i*x**3 + j*y**3
     
 def curve_function(x, a, b, c, d):
-    # return a*x + b
-    # return a*b**x
-    return a+b*np.log(x)
+    return a*x + b
+    # return a*x**b
+    # return a+b*np.log(x)
 
 def draw_curve_fit(ax, xx, yy):
     # Remove value pairs that include NaN entries
