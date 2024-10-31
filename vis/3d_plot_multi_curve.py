@@ -1,4 +1,4 @@
-import functools, math
+import functools, math, os, sys
 import numpy as np
 import pandas as pd
 import matplotlib as mpl
@@ -28,12 +28,12 @@ plot_bg = 'w'
 
 pop_nans = True
 regime_point_colours = True
-regime_point_shapes = True
+regime_point_shapes = False
 label_points = False
 include_hline = None
 include_error_bars = False
 include_legend = True
-fit_curves = True
+fit_curves = False
 
 
 ### X-axis settings ###
@@ -46,7 +46,7 @@ if True:
 ### Y-axis settings ###
 #----------------------
 if True:
-    ploty = 'MP_vol'
+    ploty = 'PD_1_mean'
     ylim = None
     yticks = None
 
@@ -71,6 +71,11 @@ def filter_logbook():
 
     # filter for Layer 1 tracks only
     L1 = log['Layer'] == 1
+    
+    # filter by beamtime
+    ltp1 = log['Beamtime'] == 1
+    ltp2 = log['Beamtime'] == 2
+    ltp3 = log['Beamtime'] == 3
 
     # filter by material
     AlSi10Mg = log['Substrate material'] == 'AlSi10Mg'
@@ -81,7 +86,7 @@ def filter_logbook():
 
     # Apply combination of above filters to select parameter subset to plot
     # log_red = log[np.logical_or(AlSi10Mg, lit) & L1 & cw & powder]
-    log_red = log[AlSi10Mg & L1 & cw]
+    log_red = log[AlSi10Mg & L1 & cw & powder & ltp3]
     
     # filter by regime classified
     log_red = log_red[log_red['Melting regime'].notna()]
@@ -168,7 +173,7 @@ def plot_data(ax, iz, log_red, marker_dict, pw, col_dict):
                 label = zvals[iz],
                 # label = f"{pw} {zvals[iz]} {zunit}",
                 c = marker_dict[iz]['c'],
-                marker = marker_dict[iz]['mp'],
+                marker = marker_dict[regime]['m'] if regime_point_shapes == True else marker_dict[iz]['mp'],
                 markeredgecolor = 'k',
                 markeredgewidth = 0.8,
                 ls = style[pw]['l'],
