@@ -13,6 +13,8 @@ folder = get_paths()['hdf5']
 
 group, time, series, colour = ('AMPM', 'Time', 'Photodiode1Bits', 'r')
 
+mode = 'preview'
+
 files = sorted(glob.glob(f'{folder}/*.hdf5'))
 for i, filepath in enumerate(files):
     trackid = Path(filepath).name[:7]
@@ -65,9 +67,12 @@ for i, filepath in enumerate(files):
             ax.axis('off')
         plt.tight_layout()
         
-        if not os.path.exists(f'{folder}/CWT'):
-            os.makedirs(f'{folder}/CWT')
-        plt.savefig(f'{folder}/CWT/{trackid}_{series}_CWT.png')
+        if mode == 'save':
+            if not os.path.exists(f'{folder}/CWT'):
+                os.makedirs(f'{folder}/CWT')
+            plt.savefig(f'{folder}/CWT/{trackid}_{series}_CWT.png')
+        else:
+            plt.show()
         plt.close()
         
         printProgressBar(i, len(files), prefix='Progress', suffix=trackid)
