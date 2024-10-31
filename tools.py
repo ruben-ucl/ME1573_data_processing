@@ -14,12 +14,11 @@ def get_paths():
     for file in glob.glob('dirs/*.txt'):
         with open(file, encoding='utf8') as f:
             path_dict[Path(file).stem] = Path(f.read())
-            print(f'Reading filepath from {file}\n')
     return path_dict
 
 # def get_logbook(logbook_path = Path('J:\Logbook_Al_ID19_combined_RLG.xlsx')):
 def get_logbook():
-    logbook_path = get_paths['logbook']
+    logbook_path = get_paths()['logbook']
     print(f'Trying to read logbook: {logbook_path.name}')
     try:
         logbook = pd.read_excel(logbook_path,
@@ -203,9 +202,22 @@ def define_collumn_labels():
         'norm_H_prod':              ['Normalised enthalpy product',
                                      r'Normalised enthalpy product, $\Delta H/h_m \dot L_{th}^*$'
                                      ],
-        'KH_aspect':                ['keyhole_aspect_ratio',
+        'KH_AR':                ['keyhole_aspect_ratio',
                                      'Keyhole aspect ratio'
                                      ],
+        'PD_1_mean':                ['PD_1_mean [bits]',
+                                     'PD 1 mean signal intensity'
+                                     ],
+        'PD_1_std':                 ['PD_1_std [bits]',
+                                     'PD 1 signal intensity st. dev.'
+                                     ],
+        'PD_1_min':                ['PD_1_min [bits]',
+                                     'PD 1 signal intensity min.'
+                                     ],
+        'PD_1_max':                ['PD_1_max [bits]',
+                                     'PD 1 signal intensity max.'
+                                     ]
+         
         }
     return col_dict
 
