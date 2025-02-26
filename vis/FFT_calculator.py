@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import glob, functools, os, sys
+import glob, functools, os, sys, h5py
 from pathlib import Path
 from scipy.signal import medfilt, find_peaks
 
@@ -13,24 +13,28 @@ __version__ = '1.0'
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-data_path = get_paths()['KH_meas']
-data_label = 'area'
-general_filename = '1*v2.csv'
+data_path = get_paths()['hdf5']
+group = 'KH/'
+time_label = 'time'
+data_label = 'max_depth'
+general_filename = '*.hdf5'
 
 labels = {'area': ['Keyhole area', ' [μm\u00b2]'],
           'max_depth': ['Keyhole depth', '\n[μm]'],
           'max_length': ['Keyhole length', '\n[μm]'],
           'AR': ['Keyhole aspect ratio', ',\nd/l'],
-          'fkw_angle': ['Keyhole front wall angle', '\n[°]']
+          'fkw_angle': ['Keyhole front wall angle', '\n[°]'],
+          'Photodiode1Bits': ['Photodiode 1 intensity', '\n']
           }
 
-plot_x_fraction = 0.2 # Set fraction of frequency range to plot on FFT inset
-plot_y_fraction = 0.5 # Set fraction of fft magnitude to plot on FFT inset
+plot_x_fraction = 0.25 # Set fraction of frequency range to plot on FFT inset
+plot_y_fraction = 1.05 # Set fraction of fft magnitude to plot on FFT inset
 med_filt_window = None # None or odd-valued int
 running_mean_window = 5 # None or odd-valued int
-plot_sum = True
+plot_sum = False
 label_peaks = False
-sr = 504 # kHz
+sr = 40 # kHz
+mode = 'save'
 
 def main():
     files = sorted(glob.glob(str(Path(data_path, general_filename))))
@@ -41,10 +45,14 @@ def main():
         print('\nReading %s' % fname) 
         trackid = fname[:7]
         
-        df = pd.read_csv(f, index_col=0)
-        t = df['time']
-        x = np.nan_to_num(np.divide(df['max_depth'], df['max_length'])) if data_label == 'AR' else df[data_label]
-        x *= 4.3**2 if data_label == 'area' else 1 # convert area from px to um^2
+        # df = pd.read_csv(f, index_col=0)
+        with h5py.File(f, 'r') as file:
+            try:
+                t = np.array(file[group+time_label])[10:-10]#[500:-490]
+                x = np.array(file[group+data_label])[10:-10]#[500:-490]
+            except KeyError:
+                print(f'Dataset \'{data_label}\' not found - skipping file')
+                continue
         
         if med_filt_window != None:
             x = medfilt(x, med_filt_window)
@@ -64,7 +72,7 @@ def main():
         fig.suptitle(f'{trackid} KH flickering FFT - {labels[data_label][0]}')
         
         ax1 = fig.add_subplot(121)
-        ax1.plot(t, x, lw=0.8)
+        ax1.plot(t*1000, x, lw=0.8)
         ax1.set_xlabel('Time [ms]')
         ax1.set_ylabel(labels[data_label][0]+labels[data_label][1])
         
@@ -72,24 +80,28 @@ def main():
         ax2.stem(freq, np.abs(X), markerfmt=' ', basefmt=' ')
         ax2.set_xlabel('Frequency [kHz]')
         ax2.set_ylabel('FFT Amplitude')
-        x_max = sr/2*plot_x_fraction
-        y_max = np.abs(np.max(X))
-        ax2.set_xlim(0, None)
+        x_max = sr/2
+        ax2.set_xlim(0, x_max)
         ax2.set_ylim(0, None)
+        ax2.set_xticks([0, 5, 10, 15, 20])
         
         if True:
             ax2_sub = ax2.inset_axes([0.4,0.45,0.55,0.45])
             ax2_sub.stem(freq, np.abs(X), markerfmt=' ', basefmt=' ')
-            x_max = sr/2*plot_x_fraction
-            y_max = np.max(np.abs(X))*plot_y_fraction
-            ax2_sub.set_xlim(0, x_max)
-            ax2_sub.set_ylim(0, y_max)
-            # ax2_sub.set_xticks([0, 10, 20, 30, 40])
+            x2_max = sr/2*plot_x_fraction
+            y2_max = np.max(np.abs(X))*plot_y_fraction
+            ax2_sub.set_xlim(0, x2_max)
+            ax2_sub.set_ylim(0, y2_max)
+            # ax2_sub.set_xticks([0, 2, 4])
         
-        # plt.show()
-        plt.savefig(str(Path(data_path, f'{trackid}_KH_{data_label}_fft.png')))
-        plt.close()
-    
+        if mode == 'save':
+            output_folder = f'{data_path}/FFT_{data_label}'
+            if not os.path.exists(output_folder):
+                    os.makedirs(output_folder)
+            plt.savefig(str(Path(output_folder, f'{trackid}_{data_label}_fft.png')))
+            plt.close()
+        else:
+            plt.show()
     
     if plot_sum == True:
         try:
@@ -120,7 +132,7 @@ def main():
                 ax1_sub.set_ylim(0, None)
                 # ax1_sub.set_xticks([0, 10, 20, 30, 40, 50])
             # plt.show()
-            plt.savefig(str(Path(data_path, f'KH_{data_label}_fft_sum.png')))
+            plt.savefig(str(Path(data_path, f'{data_label}_fft_sum.png')))
         except ValueError:
             print('Series lengths do not match - cannot calulate FFT sum')
     
