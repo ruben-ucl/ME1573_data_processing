@@ -23,8 +23,9 @@ def get_logbook():
     try:
         logbook = pd.read_excel(logbook_path,
             sheet_name='Logbook',
-            # usecols='C, D, E, F, I, J, M, O, P, Q, R, S, T, U, W, AM, AP, AS, AT, AU, AV, AW, AX, AY, AZ, BA, BG, BN, BP, BV, BW, BX, BY, BZ, CA, CB, CC, CD, CE, CF, CG, CH, CI, CJ, CK, CL',
-            converters={'Substrate No.': str, 'Sample position': str}
+            converters={'Substrate No.': str, 'Sample position': str},
+            keep_default_na = False,
+            na_values = ['', 'NaN', 'nan', 'null']
             )
         # logging.info('Logbook data aquired from %s' % logbook_path)
         print('Logbook read successfully', end='\n\n')
@@ -45,16 +46,16 @@ def get_logbook_data(logbook, trackid, layer_n=1):  # Get scan speed and framera
         ]
     # print(track_row)
     track_data = {}
-    track_data['peak_power'] = int(track_row['Power [W]'])
-    track_data['avg_power'] = int(track_row['Avg. power [W]'])
-    track_data['pt_dist'] = int(track_row['Point distance [um]'])
-    track_data['exp_time'] = int(track_row['Exposure time [us]'])
-    track_data['pt_jump_delay'] = int(track_row['Point jump delay [us]'])
-    track_data['scan_speed'] = int(track_row['Scan speed [mm/s]'])
-    track_data['LED'] = int(track_row['LED [J/m]'])
-    track_data['framerate'] = int(track_row['Frame rate (kHz)'] * 1000)
-    track_data['laser_onset_frame'] = int(track_row['Laser onset frame #'])
-    track_data['keyhole_regime'] = track_row['Melting regime'].values[0]
+    track_data['peak_power'] = int(track_row['Power [W]'].iloc[0])
+    track_data['avg_power'] = int(track_row['Avg. power [W]'].iloc[0])
+    track_data['pt_dist'] = int(track_row['Point distance [um]'].iloc[0])
+    track_data['exp_time'] = int(track_row['Exposure time [us]'].iloc[0])
+    track_data['pt_jump_delay'] = int(track_row['Point jump delay [us]'].iloc[0])
+    track_data['scan_speed'] = int(track_row['Scan speed [mm/s]'].iloc[0])
+    track_data['LED'] = int(track_row['LED [J/m]'].iloc[0])
+    track_data['framerate'] = int(track_row['Frame rate (kHz)'].iloc[0] * 1000)
+    track_data['laser_onset_frame'] = int(track_row['Laser onset frame #'].iloc[0])
+    track_data['keyhole_regime'] = track_row['Melting regime'].iloc[0]
     
     return track_data
 
@@ -116,7 +117,7 @@ def define_collumn_labels():
                                      'Track height [μm]'
                                      ],
         'MP_vol':                   ['total_melt_volume [mm^3]',
-                                     'Melt pool volume [mm\u00b3]'
+                                     'Melt pool volume, $\it{V}$ [mm\u00b3]'
                                      ],
         'MP_vol_err':               ['melt_pool_volume_error [mm^3]',
                                      'Melt pool volume error [mm\u00b3]'
@@ -125,7 +126,7 @@ def define_collumn_labels():
                                      'Melt pool rear wall angle [$\degree$]'
                                      ],
         'melting_efficiency':       ['melting_efficiency',
-                                     'Melting efficiency, η'
+                                     'Melting efficiency, $\it{η}$'
                                      ],
         'R':                        ['R [mm/s]',
                                      'Solidification rate, R [mm/s]'
@@ -188,7 +189,7 @@ def define_collumn_labels():
                                      'Normalised keyhole (from powder) [μm]'
                                      ],
         'fkw_angle':                ['fkw_angle_mean [deg]',
-                                     r'FKW angle, $\theta_{FKW}$ [$\degree$]'
+                                     r'FKW angle, $\it{\theta_{FKW}}$ [$\degree$]'
                                      ],
         'tan_fkw_angle':            ['tan_fkw_angle',
                                      'FKW angle tangent'
@@ -200,7 +201,7 @@ def define_collumn_labels():
                                      'FKW angle sample count'
                                      ],
         'norm_H_prod':              ['Normalised enthalpy product',
-                                     r'Normalised enthalpy product, $\Delta H/h_m \dot L_{th}^*$'
+                                     r'Normalised enthalpy product, $\it{\Delta H/h_m \dot L_{th}^*}$'
                                      ],
         'KH_AR':                ['keyhole_aspect_ratio',
                                      'Keyhole aspect ratio'
