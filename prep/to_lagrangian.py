@@ -159,13 +159,17 @@ def to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords,
         # If in 'preview' mode, plot every 50th frame to check the cropping result
         preview_int = 50
         if (mode == 'preview') & (i in [n * preview_int for n in range(len(dset)//preview_int)]):
+            # create figure with two subplots, ax1 for original image and ax2 for cropped image
             fig, (ax1, ax2) = plt.subplots(1, 2)
+            
+            # Display original image and plot cropped field of view boundaries in blue on top
             ax1.imshow(frame, cmap='gray')
             ax1.plot([col_min, col_max, col_max, col_min, col_min],
                      [row_min, row_min, row_max, row_max, row_min],
                      color = 'b',
-                     lw = 1
-                     )
+                     lw = 1)
+                     
+            # Display cropped image, and outline it in blue
             ax2.imshow(frame_cropped, cmap='gray')
             for spine in ax2.spines.values():
                 spine.set_edgecolor('b')
