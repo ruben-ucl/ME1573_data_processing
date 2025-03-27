@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from skimage import filters, exposure
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import time, functools, glob
@@ -290,6 +289,7 @@ def get_substrate_surface_coords(shape, substrate_surface_measurements_fpath, tr
     return xx, yy
     
 def median_filt(dset, kernel):
+    from skimage import filters
     if dset.dtype == np.uint8:
         median_filter = filters.rank.median_filt # faster method for 8-bit integers
     else:
@@ -378,6 +378,7 @@ def compare_histograms(im_dict, fig_title=None):
     plt.show()    
 
 def hist_eq(dset):
+    from skimage import exposure
     tic = time.perf_counter()
     # output_dset = np.zeros_like(dset, dtype=np.uint8)
     # for i, im in enumerate(dset):
@@ -388,6 +389,38 @@ def hist_eq(dset):
     
     return output_dset
     
+# Scales optimization
+def get_cwt_scales(wavelet, num=512):
+    # Dictionary with min and max scales at indices 0 and 1, and vmax for heatmap at index 2
+    scale_lims = {'cmor1.5-1.0': [1, 7, 150],
+        'cmor2.5-0.5': [0, 6, 150],
+        'cmor3.0-0.5': [0, 6, 150],
+        'cmor10.0-0.3': [-0.67808, 5.4, 150],
+        'mexh': [-1, 5, 300],
+        'morl': [0.70043, 6.7, 300],
+        'gaus1': [-1.32194, 5, 300]
+        }
+    
+    # Return list of supported wavelet names
+    if wavelet == None:
+        return scale_lims.keys()
+    
+    try:
+        lims = scale_lims[wavelet]
+    except KeyError:
+        lims = [1, 7, 300]
+        print('No scale preset found - using default range of 1-7')
+        
+    scales = np.logspace(lims[0],
+        lims[1],
+        base=2,
+        num=num,
+        endpoint=True)
+        
+    vmax = lims[2]
+        
+    return scales, vmax
+
 def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '|', printEnd = "\r"):
     """
     Call in a loop to create terminal progress bar
