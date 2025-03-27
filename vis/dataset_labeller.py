@@ -10,13 +10,14 @@ import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib import pyplot as plt, ticker as mticker
+import matplotlib as mpl
 from pathlib import Path
 from time import strftime, sleep
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from tools import get_paths, printProgressBar, get_logbook, get_logbook_data
+from tools import get_paths, printProgressBar, get_logbook, get_logbook_data, get_cwt_scales
 
 from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
@@ -38,9 +39,63 @@ class Window(QMainWindow):
         self.setFixedWidth(1000)
         self.setFixedHeight(1000)
         
-        # Create and connect widgets
+        # Create widgets in sublayout
+        # Load data
         self.btnStart = QPushButton('Load data')
         
+        # CWT settings
+        wlLabel = QLabel('Window length:')
+        msUnit1 = QLabel('ms')
+        woLabel = QLabel('Window offset:')
+        msUnit2 = QLabel('ms')
+        nfLabel = QLabel('Frequency steps:')
+        wsLabel = QLabel('Wavelet:')
+        cmLabel = QLabel('Colourmap:')
+        
+        self.windowLengthSelector = QLineEdit('1')
+        self.windowOffsetSelector = QLineEdit('1')
+        self.freqsSelector = QLineEdit('256')
+        
+        self.waveletSelector = QComboBox()
+        wavelet_names = get_cwt_scales(None)
+        for n in sorted(wavelet_names):
+            self.waveletSelector.addItem(n)
+        
+        self.cmapSelector = QComboBox()
+        cmaps = ['grey', 'grey_r', 'jet', 'magma', 'plasma', 'viridis']
+        for c in cmaps:
+            self.cmapSelector.addItem(c)
+            
+        inputsRow = QGroupBox('Setup')
+        inputsLayout = QHBoxLayout()
+        inputsLayout.addWidget(self.btnStart, stretch=4)
+        inputsLayout.addStretch(4)
+        inputsLayout.addWidget(wlLabel, stretch=4)
+        inputsLayout.addWidget(self.windowLengthSelector, stretch=2)
+        inputsLayout.addWidget(msUnit1, stretch=8)
+        inputsLayout.addWidget(woLabel, stretch=4)
+        inputsLayout.addWidget(self.windowOffsetSelector, stretch=2)
+        inputsLayout.addWidget(msUnit2, stretch=8)
+        inputsLayout.addWidget(nfLabel, stretch=4)
+        inputsLayout.addWidget(self.freqsSelector, stretch=4)
+        inputsLayout.addWidget(wsLabel, stretch=4)
+        inputsLayout.addWidget(self.waveletSelector, stretch=4)
+        inputsLayout.addWidget(cmLabel, stretch=4)
+        inputsLayout.addWidget(self.cmapSelector, stretch=4)
+        inputsRow.setLayout(inputsLayout)
+        
+        # Auto labelling inputs
+        self.autoLabelPath = QLineEdit(r'E:\AlSi10Mg single layer ffc\CWT_ML_training_data\CWT_labelled_cw_powder_in-situ_ss_double_sliced\250123_14-06-21_1ms-window_all_labels.csv')
+        self.btnAuto = QPushButton('Run auto')
+        self.btnAuto.setEnabled(False)
+        
+        autoRow = QGroupBox('Auto labelling')
+        autoLayout = QHBoxLayout()
+        autoLayout.addWidget(self.autoLabelPath, stretch=6)
+        autoLayout.addWidget(self.btnAuto, stretch=1)
+        autoRow.setLayout(autoLayout)
+        
+        # CWT and radiograph image display
         self.cwtFig = plt.figure(frameon=self.show_axes)
         self.cwtCanvas = FigureCanvas(self.cwtFig)
         
@@ -53,7 +108,8 @@ class Window(QMainWindow):
         figLayout.addWidget(self.xrayCanvas, stretch=6)
         self.figRow.setLayout(figLayout)
         
-        self.btnRow = QGroupBox()
+        # Controls
+        self.btnRow = QGroupBox('Manual labelling')
         btnRowLayout = QHBoxLayout()
         self.buttons = {}
         for label in ['Previous', 'Go back', 'Label 0', 'Label 1', 'Skip', 'Next']:
@@ -62,22 +118,22 @@ class Window(QMainWindow):
             btnRowLayout.addWidget(self.buttons[label])
         self.btnRow.setLayout(btnRowLayout)
         
+        # Progress bar
         self.progressBar = QProgressBar()
         
+        # Text readout
         self.readout = QLineEdit()
         self.readout.setReadOnly(True)
         
-        # self.overviewFig = plt.figure()
-        # self.overviewCanvas = FigureCanvas(self.overviewFig)
-        
-        # Set the layout
+        # Combine GUI elements into main wndow layout
         layout = QVBoxLayout()
-        layout.addWidget(self.btnStart, stretch=1)
-        layout.addWidget(self.figRow, stretch=10)
+        # layout.addWidget(self.btnStart, stretch=1)
+        layout.addWidget(inputsRow, stretch=1)
+        layout.addWidget(autoRow, stretch=1)
+        layout.addWidget(self.figRow, stretch=20)
         layout.addWidget(self.btnRow, stretch=1)
         layout.addWidget(self.progressBar, stretch=1)
         layout.addWidget(self.readout, stretch=1)
-        # layout.addWidget(self.overviewCanvas)
         self.centralWidget.setLayout(layout)
         
     def update_progress(self, perc, text):
@@ -87,9 +143,10 @@ class Window(QMainWindow):
     def grey_out_load(self):
         self.btnStart.setEnabled(False)
         
-    def enable_controls(self):
+    def enable_controls(self, mode=True):
         for label in self.buttons:
-            self.buttons[label].setEnabled(True)
+            self.buttons[label].setEnabled(mode)
+        self.btnAuto.setEnabled(mode)
         
     def set_readout_text(self, text):
         self.readout.setText(text)
@@ -249,8 +306,6 @@ class VideoPlayerWindow(QWidget):
     
     
 class Controller(QObject):
-    sendFPath = pyqtSignal(float)  # Signal for sending filepath to read to worker thread
-    sendFigure = pyqtSignal(object)    # Signal for sending device objects to the worker thread
     updateReadout = pyqtSignal(str)
     progress = pyqtSignal(int, str)
     
@@ -270,14 +325,17 @@ class Controller(QObject):
         self.wStart = 0
         self.wEnd = 0
         self.label = ''
-        # Window length for CWT sections
-        self.windowLength = 1 # ms
-        self.wOffset = 1 # ms
+        # CWT settings
+        self.windowLength = self.view.windowLengthSelector.text()
+        self.windowOffset = self.view.windowOffsetSelector.text()
+        self.cmap = self.view.cmapSelector.currentText()
+        self.wavelet = self.view.waveletSelector.currentText()
+        self.n_freqs = self.view.freqsSelector.text()
         # Initialise sampling rate variable
         self.samplingRate = 0 # Hz
         # Define file locations
         self.folder = get_paths()['hdf5']
-        self.outputFolder = Path(self.folder, 'CWT_labelled_test')
+        self.outputFolder = Path(self.folder, 'CWT_labelled_windows')
         if not os.path.exists(self.outputFolder):
             os.makedirs(self.outputFolder)
         self.logbook = get_logbook()
@@ -285,10 +343,34 @@ class Controller(QObject):
         self.logging = True
         # Define xray resolution
         self.xrayRes = 4.3 # um/px
+        self.autoSave = False # Sets to True if using auto-labelling
+        # Tracks to exclude due to corrupted PD signal
+        self.exclude = ['0514_02',
+           '0514_04',
+           '0514_05',
+           '0515_01',
+           '0515_02',
+           '0515_03',
+           '0515_04',
+           '0515_05',
+           '0515_06',
+           '0516_01',
+           '0516_02',
+           '0516_03',
+           '0516_04',
+           '0516_05',
+           '0516_06']
     
     def connect_signals(self):
         self.view.btnStart.clicked.connect(self.get_data)
         self.view.btnStart.clicked.connect(self.view.grey_out_load)
+        self.view.btnAuto.clicked.connect(lambda: self.view.enable_controls(mode=False))
+        self.view.btnAuto.clicked.connect(self.auto_label)
+        self.view.waveletSelector.currentTextChanged.connect(lambda: self.update_wavelet(self.view.waveletSelector.currentText()))
+        self.view.cmapSelector.currentTextChanged.connect(lambda: self.update_cmap(self.view.cmapSelector.currentText()))
+        self.view.windowLengthSelector.textEdited.connect(lambda: self.update_window_length(self.view.windowLengthSelector.text()))
+        self.view.windowOffsetSelector.textEdited.connect(lambda: self.update_window_offset(self.view.windowOffsetSelector.text()))
+        self.view.freqsSelector.textEdited.connect(lambda: self.update_n_freqs(self.view.freqsSelector.text()))       
         self.updateReadout.connect(self.view.set_readout_text)
         self.view.buttons['Next'].clicked.connect(lambda: self.navigate(fileDirection='+'))
         self.view.buttons['Previous'].clicked.connect(lambda: self.navigate(fileDirection='-'))
@@ -299,6 +381,36 @@ class Controller(QObject):
         self.view.buttons['Skip'].clicked.connect(lambda: self.navigate(windowDirection='+'))
         self.view.buttons['Go back'].clicked.connect(lambda: self.navigate(windowDirection='-'))
         self.progress.connect(self.view.update_progress)
+        
+    def print_settings(self):
+        print()
+        print(f'wavelet = {self.wavelet}')
+        print(f'cmap = {self.cmap}')
+        print(f'n_freqs = {self.n_freqs}')
+        print(f'window length = {self.windowLength}')
+        print(f'window offset = {self.windowOffset}')
+   
+    def update_wavelet(self, name):
+        self.wavelet = name
+        self.print_settings()
+        
+    def update_cmap(self, name):
+        self.cmap = name
+        self.print_settings()
+        
+    def update_window_length(self, value):
+        self.windowLength = value
+        self.print_settings()
+        
+    def update_window_offset(self, value):
+        self.windowOffset = value
+        self.print_settings()
+        
+    def update_n_freqs(self, value):
+        self.n_freqs = value
+        self.print_settings()
+        
+        
     
     def show_video_player(self):
         # Show the video player window directly to the right of the main window
@@ -312,7 +424,7 @@ class Controller(QObject):
         video_data = self.data.iloc[self.fIndex]['video']
         
         framerate = get_logbook_data(self.logbook, self.trackid)['framerate']
-        start = int((self.wOffset + self.wIndex * self.windowLength) / 1000 * framerate)
+        start = int((self.windowOffset + self.wIndex * self.windowLength) / 1000 * framerate)
         end = int(start + framerate * self.windowLength / 1000)
         print(f'start, end = {start}, {end}')
         
@@ -369,7 +481,7 @@ class Controller(QObject):
             
         # Apply combination of above filters to select parameter subset to plot
         # log_red = log[np.logical_or(AlSi10Mg, lit) & L1 & cw & powder]
-        log_red = log[AlSi10Mg & cw & L1 & powder & s0514]
+        log_red = log[AlSi10Mg & cw & L1 & powder]
         # log_red = log[s0514]
         
         return log_red
@@ -382,7 +494,7 @@ class Controller(QObject):
             'label' : []})
         logDf.set_index('trackid')
         now = strftime('%y%m%d_%H-%M-%S')
-        self.logPath = Path(self.outputFolder, f'{now}_{self.windowLength}ms-window_{self.wOffset}ms-offset_labels.csv')
+        self.logPath = Path(self.outputFolder, f'{now}_{self.windowLength}ms-window_{self.windowOffset}ms-offset_labels.csv')
         logDf.to_csv(self.logPath, index=False)
     
     def background_write(self):
@@ -399,7 +511,8 @@ class Controller(QObject):
     
     def get_data(self):
         # Create log for storing results
-        if self.logging == True: self.create_log()
+        if self.logging == True:
+            self.create_log()
         # Create file read job on worker thread
         print('Initialising Worker to read data')
         worker = Worker(self.read_files)
@@ -410,7 +523,7 @@ class Controller(QObject):
         worker.signals.finished.connect(self.show_video_player)
         # Execute
         self.threadpool.start(worker)
-            
+    
     def read_files(self):
         trackids_filt = self.filter_logbook()['trackid'].to_list()
         all_files = sorted(glob.glob(f'{self.folder}/*.hdf5'))
@@ -425,6 +538,8 @@ class Controller(QObject):
         data = {'trackid': [], 't': [], 'PD': [], 'xray': [], 'video': []} 
         for i, filepath in enumerate(sorted(files)):
             trackid = Path(filepath).name[:7]
+            if trackid in self.exclude:
+                continue
             data['trackid'].append(trackid)
             
             with h5py.File(filepath, 'r') as file:
@@ -437,15 +552,6 @@ class Controller(QObject):
         
         df = pd.DataFrame(data)
         return df
-    
-    def save_cwt(self, label):
-        self.label = label
-        label_folder = Path(self.outputFolder, label)
-        if not os.path.exists(label_folder):
-            os.makedirs(label_folder)
-        outputFPath = Path(label_folder, f'{self.trackid}_w{self.wIndex}_{self.windowLength}ms_{self.wOffset}ms-offset.png')
-        self.background_write()
-        self.view.cwtFig.savefig(outputFPath)
     
     def navigate(self, fileDirection='=', windowDirection='='):
         try:
@@ -465,13 +571,13 @@ class Controller(QObject):
                 self.wIndex += 1
             elif windowDirection == '-':
                 self.wIndex -= 1
-            self.wStart =  self.wOffset + self.wIndex * self.windowLength
-            self.wEnd = self.wOffset + (self.wIndex + 1) * self.windowLength
+            self.wStart =  self.windowOffset + self.wIndex * self.windowLength
+            self.wEnd = self.windowOffset + (self.wIndex + 1) * self.windowLength
             row = self.data.iloc[self.fIndex]
             self.trackid = row['trackid']
             print(self.trackid, ' window ', self.wIndex)
             worker = Worker(self.cwt, row)
-            worker.signals.output.connect(self.cwtPlot)
+            worker.signals.output.connect(self.cwt_plot)
             self.threadpool.start(worker)
             self.xray_plot()
             self.load_video()
@@ -479,9 +585,71 @@ class Controller(QObject):
         except IndexError:
             print('No more files')
     
-    def cwt(self, data):
+    def auto_label(self):
+        self.autoSave = True
+        plt.close('all')
+        mpl.use('agg')
+        labelPath = self.view.autoLabelPath.text()
+        window_definitions = pd.read_csv(labelPath)
+        n_windows = len(window_definitions)
+        
+        # Optimise dataframe for faster lookup of PD data
+        if len(self.data.keys()) > 2:
+            self.data.drop(columns=['xray', 'video'], inplace=True)
+            self.data.set_index('trackid', inplace=True)
+            
+        for i, row in enumerate(window_definitions.itertuples()):
+            self.view.update_progress(int(100*(i+1)/n_windows), '')
+            self.trackid = row.trackid
+            if self.trackid in self.exclude:
+                continue
+            self.wIndex = row.window_n
+            self.wStart = row.window_start_ms
+            self.wEnd = row.window_end_ms
+            self.label = str(row.label)
+            
+            print(f'{self.trackid} {self.wStart}-{self.wEnd} ms')
+            try:
+                data_row = self.data.loc[self.trackid]
+            except KeyError:
+                print(self.trackid, ' not found, check filter_logbook() parameters')
+                continue            
+            
+            worker = Worker(self.cwt, data = data_row,
+                                      wavelet = self.wavelet,
+                                      cmap = self.cmap,
+                                      n_freqs = self.n_freqs,
+                                      label = self.label,
+                                      xmin = self.wStart,
+                                      xmax = self.wEnd,
+                                      auto_save = self.autoSave,
+                                      outputFolder = self.outputFolder
+                                      )
+            sleep(0.2)
+            self.threadpool.start(worker)
+            
+        self.view.set_readout_text('Done')    
+        self.view.progressBar.reset()
+        self.view.enable_controls()
+            
+        pass
+    
+    def cwt(self,
+            data,
+            wavelet = 'cmor1.5-1.0',
+            cmap = 'jet',
+            n_freqs = 256,
+            printCWTSpec = False,
+            label = None,
+            xmin = None,
+            xmax = None,
+            auto_save = None,
+            outputFolder = None,
+            ):
+            
+        # Perform CWT
         samplingPeriod = round(data['t'][1]-data['t'][0], 9)
-        self.samplingRate = round(1/samplingPeriod, 7)
+        samplingRate = round(1/samplingPeriod, 7)
         s = data['PD']
         t = data['t']
         n_points = len(t)
@@ -489,25 +657,57 @@ class Controller(QObject):
         s_r = s[::-1]
         s_pad = np.concatenate((s_r, s, s_r))
         
-        scales = np.logspace(1, 7, num=256, base=2, endpoint=True)
-        wavelet = "cmor1.5-1.0"
+        scales, vmax = get_cwt_scales(wavelet, n_freqs)
         cwtmatr, freqs = pywt.cwt(s_pad, scales, wavelet, sampling_period=samplingPeriod)
-        print(f'Frequency range:{round(freqs[-1],0)}-{round(freqs[0],0)} Hz')
-        print(f'Period range:{round(1000/freqs[0],2)}-{round(1000/freqs[-1],2)} ms')
         cwtmatr = np.abs(cwtmatr[:-1, n_points:2*n_points-1])
-        return((t, freqs, cwtmatr))
-    
-    def keep_data(self, data):
-        self.data = data
-    
-    def cwtPlot(self, data):
+        
+        if printCWTSpec:
+            print(f'Wavelet: {wavelet}')
+            print(f'Frequency range: {round(freqs[-1], 0)}-{round(freqs[0], 0)} Hz')
+            print(f'Period range: {round(1000/freqs[0],2)}-{round(1000/freqs[-1],2)} ms')
+            printCWTSpec = False # Only print these details once
+        
+        if not auto_save:
+            return (t, freqs, cwtmatr)
+        
+        # Generate and save plot in the background
+        dpi = 30
+        rect = [0, 0, 1, 1]
+        cwtFig = plt.figure(frameon=False)
+        ax = plt.Axes(cwtFig, rect)
+        tAx, fAx = np.meshgrid(t*1000, freqs/1000)
+        ax.pcolormesh(tAx, fAx, cwtmatr, cmap=cmap, vmin=0, vmax=vmax)
+        ax.set_yscale('log', base=2)
+        ax.set_xlim(xmin, xmax)
+        cwtFig.set_figwidth(0.001*self.windowLength*samplingRate/100)
+        cwtFig.set_figheight(len(fAx)/100)
+        ax.set_axis_off()
+        ax = cwtFig.add_axes(ax)
+        
+        label_folder = Path(outputFolder,
+                            wavelet.replace('.', '_'),
+                            f'{self.windowLength}_ms',
+                            f'{int(round(freqs[-1]))}-{int(round(freqs[0]))}_Hz_{n_freqs}_steps',
+                            cmap,
+                            label)
+                            
+        if not os.path.exists(label_folder):
+            os.makedirs(label_folder)
+            
+        outputFPath = Path(label_folder, f'{self.trackid}_{xmin}-{xmax}ms.png')
+        cwtFig.savefig(outputFPath)
+        
+        plt.close()
+        
+        
+    def cwt_plot(self, data, cmap='jet'):
         dpi = 30
         t, freqs, cwtmatr = data
         self.view.cwtFig.clear()
         rect = [0.2, 0.1, 0.75, 0.85] if self.view.show_axes == True else [0, 0, 1, 1]
         ax = plt.Axes(self.view.cwtFig, rect)
         self.tAx, self.fAx = np.meshgrid(t*1000, freqs/1000)
-        ax.pcolormesh(self.tAx, self.fAx, cwtmatr, cmap='jet', vmin=0, vmax=200)
+        ax.pcolormesh(self.tAx, self.fAx, cwtmatr, cmap=cmap, vmin=0, vmax=200)
         ax.set_yscale('log', base=2)
         ax.set_xlim(self.wStart, self.wEnd)
         
@@ -521,6 +721,15 @@ class Controller(QObject):
             ax.set_axis_off()
         ax = self.view.cwtFig.add_axes(ax)
         self.view.cwtCanvas.draw()
+
+    def save_cwt(self, label):
+        self.label = label
+        label_folder = Path(self.outputFolder, label)
+        if not os.path.exists(label_folder):
+            os.makedirs(label_folder)
+        outputFPath = Path(label_folder, f'{self.trackid}_w{self.wIndex}_{self.windowLength}ms_{self.windowOffset}ms-offset.png')
+        self.background_write()
+        self.view.cwtFig.savefig(outputFPath)
 
     def xray_plot(self):
         self.view.xrayFig.clear()
@@ -544,6 +753,9 @@ class Controller(QObject):
         l = v * t / self.xrayRes
         return int(l)
 
+    def keep_data(self, data):
+        self.data = data
+        
     
 class Worker(QRunnable):
     def __init__(self, fn, *args, **kwargs):
@@ -577,6 +789,8 @@ class WorkerSignals(QObject):
 
 
 def main():
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True) # Enable highdpi scaling
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True) # Use highdpi icons
     Gui = QApplication(sys.argv)
     # Define Qt stylesheet for GUI
     Gui.setStyleSheet("""QLabel         {font-size: 10pt;}
@@ -588,8 +802,6 @@ def main():
                          QGroupBox      {font: bold 10pt; color: gray}
                          QToolButton    {font-size: 10pt;}
                          """)
-    Gui.setAttribute(Qt.AA_EnableHighDpiScaling, True) # Enable highdpi scaling
-    Gui.setAttribute(Qt.AA_UseHighDpiPixmaps, True) # Use highdpi icons
     view = Window() # Define and then show GUI window
     view.show()
     videoPlayer = VideoPlayerWindow()
