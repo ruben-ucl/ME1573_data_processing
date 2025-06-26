@@ -1,0 +1,106 @@
+TIME SERIES ANALYSIS REPORT
+==================================================
+
+DATASET INFORMATION
+--------------------
+HDF5 File: E:\ESRF ME1573 LTP 6 Al data HDF5\ffc\1112_01.hdf5
+Default Sampling Rate: 100.0 Hz
+Number of datasets: 3
+
+Dataset: PD1
+  Group: AMPM
+  Name: Photodiode1Bits
+  Time vector: AMPM/Time
+  Time units: s
+  Samples: 1500
+  Actual sampling rate: 100000.00 Hz
+  Duration: 0.015 s
+
+Dataset: PD2
+  Group: AMPM
+  Name: Photodiode2Bits
+  Time vector: AMPM/Time
+  Time units: s
+  Samples: 650
+  Actual sampling rate: 504000000.00 Hz
+  Duration: 0.000 s
+
+Dataset: PD2
+  Group: KH
+  Name: max_depth
+  Time vector: KH/time
+  Time units: ms
+  Samples: 650
+  Actual sampling rate: 504000000.00 Hz
+  Duration: 0.000 s
+
+PROCESSING CONFIGURATION
+-------------------------
+apply_savgol: True
+savgol_window: 51
+savgol_polyorder: 3
+apply_lowpass: True
+lowpass_cutoff: 0.1
+lowpass_order: 4
+apply_highpass: False
+highpass_cutoff: 0.01
+highpass_order: 4
+apply_bandpass: False
+bandpass_low: 0.01
+bandpass_high: 0.1
+bandpass_order: 4
+apply_smoothing: False
+smoothing_window: 10
+smoothing_method: gaussian
+apply_detrend: True
+detrend_method: linear
+apply_normalization: True
+normalization_method: standard
+apply_resampling: False
+target_samples: 1000
+resampling_method: linear
+
+STATISTICS SUMMARY
+------------------
+PD1:
+  mean: -0.000000
+  median: -0.699588
+  std: 1.000000
+  var: 1.000000
+  min: -0.862447
+  max: 1.611483
+  range: 2.473930
+  skewness: 0.734632
+  kurtosis: -1.398187
+  rms: 1.000000
+  energy: 1500.000000
+  zero_crossings: 2.000000
+
+PD2:
+  mean: 0.003977
+  median: 0.112291
+  std: 0.451616
+  var: 0.203957
+  min: -0.949731
+  max: 0.594572
+  range: 1.544303
+  skewness: -0.706157
+  kurtosis: -0.687156
+  rms: 0.451634
+  energy: 132.582504
+  zero_crossings: 6.000000
+
+CORRELATION ANALYSIS
+--------------------
+PD1 vs PD2:
+  Pearson: 0.034898
+  Spearman: 0.058442
+
+DIFFERENCE ANALYSIS
+-------------------
+PD1 vs PD2:
+  mse: 0.565777
+  mae: 0.664915
+  rmse: 0.752182
+  normalized_rmse: 0.969935
+
