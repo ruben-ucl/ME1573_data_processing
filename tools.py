@@ -15,7 +15,6 @@ def get_paths():
             path_dict[Path(file).stem] = Path(f.read())
     return path_dict
 
-# def get_logbook(logbook_path = Path('J:\Logbook_Al_ID19_combined_RLG.xlsx')):
 def get_logbook():
     logbook_path = get_paths()['logbook']
     print(f'Trying to read logbook: {logbook_path.name}')
@@ -39,11 +38,9 @@ def get_logbook():
         raise
         
 def get_logbook_data(logbook, trackid, layer_n=1):  # Get scan speed and framerate from logbookprint('Reading scan speed and framerate from logbook')
-    
     track_row = logbook.loc[(logbook['trackid'] == trackid) &
         (logbook['Layer'] == layer_n)
         ]
-    # print(track_row)
     track_data = {}
     track_data['peak_power'] = int(track_row['Power [W]'].iloc[0])
     track_data['avg_power'] = int(track_row['Avg. power [W]'].iloc[0])
@@ -54,7 +51,7 @@ def get_logbook_data(logbook, trackid, layer_n=1):  # Get scan speed and framera
     track_data['LED'] = int(track_row['LED [J/m]'].iloc[0])
     track_data['framerate'] = int(track_row['Frame rate (kHz)'].iloc[0] * 1000)
     track_data['laser_onset_frame'] = int(track_row['Laser onset frame #'].iloc[0])
-    track_data['keyhole_regime'] = track_row['Melting regime'].iloc[0]
+    track_data['melting_regime'] = track_row['Melting regime'].iloc[0]
     
     return track_data
 
@@ -89,7 +86,7 @@ def define_collumn_labels():
                                      'Mean pore volume [μm\u00b3]'
                                      ],
         'pore_angle':               ['pore_angle_mean [°]',
-                                     'Mean pore angle [$\degree$]'
+                                     r'Mean pore angle [$\degree$]'
                                      ],
         'pore_roundness':           ['pore_roundness_mean',
                                      'Mean pore roundness'
@@ -116,16 +113,16 @@ def define_collumn_labels():
                                      'Track height [μm]'
                                      ],
         'MP_vol':                   ['total_melt_volume [mm^3]',
-                                     'Melt pool volume, $\it{V}$ [mm\u00b3]'
+                                     r'Melt pool volume, $\it{V}$ [mm\u00b3]'
                                      ],
         'MP_vol_err':               ['melt_pool_volume_error [mm^3]',
                                      'Melt pool volume error [mm\u00b3]'
                                      ],
         'MP_rear_wall_angle':       ['rear_melt_pool_wall_angle [deg]',
-                                     'Melt pool rear wall angle [$\degree$]'
+                                     r'Melt pool rear wall angle [$\degree$]'
                                      ],
         'melting_efficiency':       ['melting_efficiency',
-                                     'Melting efficiency, $\it{η}$'
+                                     r'Melting efficiency, $\it{η}$'
                                      ],
         'R':                        ['R [mm/s]',
                                      'Solidification rate, R [mm/s]'
@@ -194,7 +191,7 @@ def define_collumn_labels():
                                      'FKW angle tangent'
                                      ],
         'fkw_angle_sd':             ['fkw_angle_sd [deg]',
-                                     'FKW angle standard deviation [$\degree$]'
+                                     r'FKW angle standard deviation [$\degree$]'
                                      ],
         'fkw_angle_n_samples':      ['fkw_angle_n_samples',
                                      'FKW angle sample count'
@@ -202,7 +199,7 @@ def define_collumn_labels():
         'norm_H_prod':              ['Normalised enthalpy product',
                                      r'Normalised enthalpy product, $\it{\Delta H/h_m \dot L_{th}^*}$'
                                      ],
-        'KH_AR':                ['keyhole_aspect_ratio',
+        'KH_AR':                    ['keyhole_aspect_ratio',
                                      'Keyhole aspect ratio'
                                      ],
         'PD_1_mean':                ['PD_1_mean [bits]',
@@ -211,13 +208,24 @@ def define_collumn_labels():
         'PD_1_std':                 ['PD_1_std [bits]',
                                      'PD 1 signal intensity st. dev.'
                                      ],
-        'PD_1_min':                ['PD_1_min [bits]',
+        'PD_1_min':                 ['PD_1_min [bits]',
                                      'PD 1 signal intensity min.'
                                      ],
-        'PD_1_max':                ['PD_1_max [bits]',
+        'PD_1_max':                 ['PD_1_max [bits]',
                                      'PD 1 signal intensity max.'
-                                     ]
-         
+                                     ],
+        'Bo':                       ['Bo',
+                                     'Bond number'
+                                     ],
+        'Ca':                       ['Ca',
+                                     'Capillary number'
+                                     ],                             
+        'La':                       ['La',
+                                     'Laplace number'
+                                     ],                             
+        'St':                       ['St',
+                                     'Strouhal number'
+                                     ],
         }
     return col_dict
 
@@ -409,7 +417,7 @@ def get_cwt_scales(wavelet, num=512):
         lims = scale_lims[wavelet]
     except KeyError:
         lims = [1, 7, 300]
-        print('No scale preset found - using default range of 1-7')
+        print('get_cwt_scales() error: No scale preset found - using default range of 1-7')
         
     scales = np.logspace(lims[0],
         lims[1],
@@ -420,6 +428,265 @@ def get_cwt_scales(wavelet, num=512):
     vmax = lims[2]
         
     return scales, vmax
+
+def interpolate_low_quality_data(fkw_angle: np.ndarray, 
+                                n_points_fit: np.ndarray | None, 
+                                min_score: int = 3,
+                                min_consecutive_zeros: int = 6,
+                                max_isolated_nonzeros: int = 2) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Interpolate timeseries data points with low quality scores using linear interpolation.
+    Also cleans up isolated non-zero points surrounded by zeros.
+    
+    Parameters:
+    -----------
+    fkw_angle : np.ndarray
+        1D array of timeseries data values
+    n_points_fit : np.ndarray
+        1D array of quality scores corresponding to each data point
+    min_score : int, default=5
+        Minimum acceptable quality score
+    min_consecutive_zeros : int, default=4
+        Minimum number of consecutive zeros required to be considered valid.
+        Isolated zero sequences shorter than this will be interpolated.
+    max_isolated_nonzeros : int, default=4
+        Maximum number of consecutive non-zero points that will be set to zero
+        if they are surrounded by zeros on both sides.
+    
+    Returns:
+    --------
+    Tuple[np.ndarray, np.ndarray]
+        - Corrected fkw_angle array with interpolated values and cleaned zeros
+        - Boolean mask indicating which values were modified (True = modified)
+    
+    Notes:
+    ------
+    - Values with score < min_score are interpolated
+    - Zero values are preserved only if they form sequences of min_consecutive_zeros or more
+    - Isolated zero sequences (< min_consecutive_zeros) are treated as low quality and interpolated
+    - Isolated non-zero sequences (≤ max_isolated_nonzeros) surrounded by zeros are set to zero
+    - If no good neighbors exist for interpolation, the original value is kept
+    - Edge cases (first/last points) use the nearest good value or extrapolation
+    """
+    
+    # Input validation
+    if (n_points_fit != None) and (len(fkw_angle) != len(n_points_fit)):
+        raise ValueError("fkw_angle and n_points_fit must have the same length")
+    
+    if len(fkw_angle) == 0:
+        return np.array([]), np.array([], dtype=bool)
+    
+    # Create copies to avoid modifying original arrays
+    corrected_data = fkw_angle.copy()
+    modified_mask = np.zeros(len(fkw_angle), dtype=bool)
+    
+    # Step 1: Clean up isolated non-zero points surrounded by zeros
+    zero_mask = (fkw_angle == 0)
+    nonzero_mask = ~zero_mask
+    
+    if np.any(nonzero_mask):
+        # Find sequences of consecutive non-zero values
+        nonzero_diff = np.diff(np.concatenate(([False], nonzero_mask, [False])).astype(int))
+        nonzero_starts = np.where(nonzero_diff == 1)[0]
+        nonzero_ends = np.where(nonzero_diff == -1)[0]
+        
+        # Check each non-zero sequence
+        for start, end in zip(nonzero_starts, nonzero_ends):
+            sequence_length = end - start
+            
+            # Only process short sequences that could be isolated
+            if sequence_length <= max_isolated_nonzeros:
+                # Check if surrounded by zeros (or at edges)
+                left_is_zero = (start <= 1) or (corrected_data[start - 1] == 0 and corrected_data[start - 2] == 0)
+                right_is_zero = (end >= len(corrected_data) - 1) or (corrected_data[end] == 0 and corrected_data[end + 1] == 0)
+                
+                # If surrounded by zeros on both sides, set to zero
+                if left_is_zero and right_is_zero:
+                    corrected_data[start:end] = 0
+                    modified_mask[start:end] = True
+    
+    # Step 2: Find sequences of consecutive zeros (after cleaning)
+    zero_mask = (corrected_data == 0)
+    valid_zeros = np.zeros(len(corrected_data), dtype=bool)
+    
+    if np.any(zero_mask):
+        # Find start and end of zero sequences
+        zero_diff = np.diff(np.concatenate(([False], zero_mask, [False])).astype(int))
+        zero_starts = np.where(zero_diff == 1)[0]
+        zero_ends = np.where(zero_diff == -1)[0]
+        
+        # Mark zeros that are part of sequences >= min_consecutive_zeros
+        for start, end in zip(zero_starts, zero_ends):
+            if end - start >= min_consecutive_zeros:
+                valid_zeros[start:end] = True
+    
+    # Step 3: Identify points that need interpolation
+    # Low quality points, but exclude zeros that are part of valid sequences
+    if n_points_fit != None:
+        needs_interpolation = (n_points_fit < min_score) & (~valid_zeros)
+    else:
+        needs_interpolation = ~valid_zeros & (corrected_data == 0)
+    
+    if not np.any(needs_interpolation):
+        return corrected_data, modified_mask
+    
+    # Find indices of good quality points
+    good_points = ~needs_interpolation
+    good_indices = np.where(good_points)[0]
+    
+    if len(good_indices) == 0:
+        # No good points available, return original data
+        return corrected_data, interpolated_mask
+    
+    # Process each bad point
+    bad_indices = np.where(needs_interpolation)[0]
+    
+    for bad_idx in bad_indices:
+        # Find the nearest good neighbors
+        left_neighbors = good_indices[good_indices < bad_idx]
+        right_neighbors = good_indices[good_indices > bad_idx]
+        
+        if len(left_neighbors) > 0 and len(right_neighbors) > 0:
+            # Normal case: interpolate between left and right neighbors
+            left_idx = left_neighbors[-1]  # Closest left neighbor
+            right_idx = right_neighbors[0]  # Closest right neighbor
+            
+            # Linear interpolation
+            x0, x1 = left_idx, right_idx
+            y0, y1 = corrected_data[left_idx], corrected_data[right_idx]
+            
+            # Interpolate at bad_idx
+            corrected_data[bad_idx] = y0 + (y1 - y0) * (bad_idx - x0) / (x1 - x0)
+            
+        elif len(left_neighbors) > 0:
+            # Only left neighbors available (extrapolate or use nearest)
+            if len(left_neighbors) >= 2:
+                # Extrapolate using last two good points
+                x0, x1 = left_neighbors[-2], left_neighbors[-1]
+                y0, y1 = corrected_data[x0], corrected_data[x1]
+                slope = (y1 - y0) / (x1 - x0)
+                corrected_data[bad_idx] = y1 + slope * (bad_idx - x1)
+            else:
+                # Use the single left neighbor
+                corrected_data[bad_idx] = corrected_data[left_neighbors[-1]]
+                
+        elif len(right_neighbors) > 0:
+            # Only right neighbors available (extrapolate or use nearest)
+            if len(right_neighbors) >= 2:
+                # Extrapolate using first two good points
+                x0, x1 = right_neighbors[0], right_neighbors[1]
+                y0, y1 = corrected_data[x0], corrected_data[x1]
+                slope = (y1 - y0) / (x1 - x0)
+                corrected_data[bad_idx] = y0 + slope * (bad_idx - x0)
+            else:
+                # Use the single right neighbor
+                corrected_data[bad_idx] = corrected_data[right_neighbors[0]]
+        
+        # Mark as interpolated
+        modified_mask[bad_idx] = True
+    
+    return corrected_data, modified_mask
+
+
+def validate_timeseries_quality(fkw_angle: np.ndarray, 
+                               n_points_fit: np.ndarray | None, 
+                               min_score: int = 5,
+                               min_consecutive_zeros: int = 4,
+                               max_isolated_nonzeros: int = 4) -> dict:
+    """
+    Analyze the quality of timeseries data and provide statistics.
+    
+    Parameters:
+    -----------
+    fkw_angle : np.ndarray
+        1D array of timeseries data values
+    n_points_fit : np.ndarray
+        1D array of quality scores
+    min_score : int, default=5
+        Minimum acceptable quality score
+    min_consecutive_zeros : int, default=4
+        Minimum number of consecutive zeros required to be considered valid
+    max_isolated_nonzeros : int, default=4
+        Maximum number of consecutive non-zero points that will be set to zero
+        if surrounded by zeros
+    
+    Returns:
+    --------
+    dict
+        Dictionary containing quality statistics
+    """
+    
+    total_points = len(fkw_angle)
+    
+    # Count isolated non-zeros that will be set to zero
+    zero_mask = (fkw_angle == 0)
+    nonzero_mask = ~zero_mask
+    isolated_nonzeros = 0
+    
+    if np.any(nonzero_mask):
+        nonzero_diff = np.diff(np.concatenate(([False], nonzero_mask, [False])).astype(int))
+        nonzero_starts = np.where(nonzero_diff == 1)[0]
+        nonzero_ends = np.where(nonzero_diff == -1)[0]
+        
+        for start, end in zip(nonzero_starts, nonzero_ends):
+            sequence_length = end - start
+            if sequence_length <= max_isolated_nonzeros:
+                left_is_zero = (start == 0) or (fkw_angle[start - 1] == 0)
+                right_is_zero = (end == len(fkw_angle)) or (fkw_angle[end] == 0)
+                if left_is_zero and right_is_zero:
+                    isolated_nonzeros += sequence_length
+    
+    # Find valid zero sequences (after cleaning isolated non-zeros)
+    # For statistics, we simulate the cleaning process
+    temp_data = fkw_angle.copy()
+    if np.any(nonzero_mask):
+        nonzero_diff = np.diff(np.concatenate(([False], nonzero_mask, [False])).astype(int))
+        nonzero_starts = np.where(nonzero_diff == 1)[0]
+        nonzero_ends = np.where(nonzero_diff == -1)[0]
+        
+        for start, end in zip(nonzero_starts, nonzero_ends):
+            sequence_length = end - start
+            if sequence_length <= max_isolated_nonzeros:
+                left_is_zero = (start == 0) or (temp_data[start - 1] == 0)
+                right_is_zero = (end == len(temp_data)) or (temp_data[end] == 0)
+                if left_is_zero and right_is_zero:
+                    temp_data[start:end] = 0
+    
+    # Now analyze the cleaned data
+    zero_mask_cleaned = (temp_data == 0)
+    valid_zeros = np.zeros(len(temp_data), dtype=bool)
+    
+    if np.any(zero_mask_cleaned):
+        zero_diff = np.diff(np.concatenate(([False], zero_mask_cleaned, [False])).astype(int))
+        zero_starts = np.where(zero_diff == 1)[0]
+        zero_ends = np.where(zero_diff == -1)[0]
+        
+        for start, end in zip(zero_starts, zero_ends):
+            if end - start >= min_consecutive_zeros:
+                valid_zeros[start:end] = True
+    
+    valid_zero_count = np.sum(valid_zeros)
+    isolated_zeros = np.sum(zero_mask_cleaned & ~valid_zeros)
+    if n_points_fit != None:
+        low_quality_non_zero = np.sum((n_points_fit < min_score) & ~zero_mask_cleaned)
+    else:
+        low_quality_non_zero = ~valid_zeros & (fkw_angle == 0)
+    total_interpolated = low_quality_non_zero + isolated_zeros
+    total_modified = total_interpolated + isolated_nonzeros
+    good_quality = total_points - total_modified - valid_zero_count
+    
+    return {
+        'total_points': total_points,
+        'good_quality_points': good_quality,
+        'low_quality_non_zero': low_quality_non_zero,
+        'isolated_zeros': isolated_zeros,
+        'isolated_nonzeros_to_zero': isolated_nonzeros,
+        'valid_zero_sequences': valid_zero_count,
+        'total_interpolated': total_interpolated,
+        'total_modified': total_modified,
+        'percentage_good': (good_quality / total_points * 100) if total_points > 0 else 0,
+        'percentage_modified': (total_modified / total_points * 100) if total_points > 0 else 0
+    }
 
 def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '|', printEnd = "\r"):
     """
