@@ -254,7 +254,6 @@ class TimeSeriesProcessor:
             
         return normalized.flatten()
 
-
 class TimeSeriesComparator:
     """Main class for comparing multiple time series"""
     
@@ -575,7 +574,238 @@ class TimeSeriesComparator:
         
         return data1_interp, data2_interp
     
-    def auto_align_time_series(self, reference_label: str, 
+    def _calculate_group_correlation(self, ref_group_name: str, ref_group_labels: List[str],
+                                   target_group_name: str, target_group_labels: List[str],
+                                   data_dict: Dict, time_vectors: Dict,
+                                   cross_correlation_window: Optional[int],
+                                   max_shift_time: Optional[float],
+                                   correlation_method: str, normalize_signals: bool,
+                                   visualize: bool = False) -> float:
+        """
+        Calculate optimal shift between two groups of signals using composite correlation
+        
+        Args:
+            ref_group_name: Name of reference group
+            ref_group_labels: List of signal labels in reference group
+            target_group_name: Name of target group to align
+            target_group_labels: List of signal labels in target group
+            data_dict: Dictionary of signal data
+            time_vectors: Dictionary of time vectors
+            cross_correlation_window: Window size for correlation
+            max_shift_time: Maximum shift to search
+            correlation_method: Correlation method to use
+            normalize_signals: Whether to normalize signals
+            visualize: Whether to show diagnostic plots
+            
+        Returns:
+            Optimal time shift for target group
+        """
+        
+        def normalize_for_correlation(signal, method='normalized'):
+            """Normalize signal for better correlation"""
+            if method == 'zero_mean':
+                return signal - np.mean(signal)
+            elif method == 'normalized':
+                signal_zm = signal - np.mean(signal)
+                std = np.std(signal_zm)
+                return signal_zm / std if std > 0 else signal_zm
+            elif method == 'minmax':
+                signal_min, signal_max = np.min(signal), np.max(signal)
+                range_val = signal_max - signal_min
+                return (signal - signal_min) / range_val if range_val > 0 else signal - signal_min
+            else:
+                return signal
+        
+        def calculate_correlation(ref_sig, target_sig, method='normalized'):
+            """Calculate cross-correlation with different methods"""
+            if method == 'normalized':
+                ref_norm = normalize_for_correlation(ref_sig, 'normalized')
+                target_norm = normalize_for_correlation(target_sig, 'normalized')
+                from scipy.signal import correlate
+                correlation = correlate(ref_norm, target_norm, mode='full')
+                n = min(len(ref_norm), len(target_norm))
+                correlation = correlation / n
+            elif method == 'zero_mean':
+                ref_zm = normalize_for_correlation(ref_sig, 'zero_mean')
+                target_zm = normalize_for_correlation(target_sig, 'zero_mean')
+                correlation = np.correlate(ref_zm, target_zm, mode='full')
+            else:
+                correlation = np.correlate(ref_sig, target_sig, mode='full')
+            return correlation
+        
+        # Create composite signals by averaging normalized signals within each group
+        print(f"  Correlating group '{target_group_name}' against reference group '{ref_group_name}'")
+        
+        # Process reference group - use first signal as base and average others onto it
+        ref_composite_data = None
+        ref_composite_time = None
+        
+        for i, label in enumerate(ref_group_labels):
+            data = data_dict[label]
+            time_vec = time_vectors[label]
+            
+            # Ensure data and time vector have same length
+            min_len = min(len(data), len(time_vec))
+            data = data[:min_len]
+            time_vec = time_vec[:min_len]
+            
+            # Normalize individual signal before averaging
+            if normalize_signals:
+                data_norm = normalize_for_correlation(data, correlation_method)
+            else:
+                data_norm = data
+            
+            if i == 0:
+                # First signal becomes the reference
+                ref_composite_time = time_vec.copy()
+                ref_composite_data = data_norm.copy()
+                print(f"    Reference base: {label} ({len(data)} samples)")
+            else:
+                # Synchronize subsequent signals to the reference
+                try:
+                    data_sync, ref_sync = self._synchronize_time_series(data_norm, time_vec, ref_composite_data, ref_composite_time)
+                    ref_composite_data = (ref_sync + data_sync) / 2  # Running average
+                    print(f"    Added to reference: {label} (sync: {len(data_sync)} samples)")
+                except Exception as e:
+                    print(f"    Warning: Could not sync {label} to reference group: {e}")
+                    # Skip this signal if synchronization fails
+                    continue
+        
+        # Process target group - use first signal as base and average others onto it
+        target_composite_data = None
+        target_composite_time = None
+        
+        for i, label in enumerate(target_group_labels):
+            data = data_dict[label]
+            time_vec = time_vectors[label]
+            
+            # Ensure data and time vector have same length
+            min_len = min(len(data), len(time_vec))
+            data = data[:min_len]
+            time_vec = time_vec[:min_len]
+            
+            # Normalize individual signal before averaging
+            if normalize_signals:
+                data_norm = normalize_for_correlation(data, correlation_method)
+            else:
+                data_norm = data
+            
+            if i == 0:
+                # First signal becomes the target base
+                target_composite_time = time_vec.copy()
+                target_composite_data = data_norm.copy()
+                print(f"    Target base: {label} ({len(data)} samples)")
+            else:
+                # Synchronize subsequent signals to the target base
+                try:
+                    data_sync, target_sync = self._synchronize_time_series(data_norm, time_vec, target_composite_data, target_composite_time)
+                    target_composite_data = (target_sync + data_sync) / 2  # Running average
+                    print(f"    Added to target: {label} (sync: {len(data_sync)} samples)")
+                except Exception as e:
+                    print(f"    Warning: Could not sync {label} to target group: {e}")
+                    # Skip this signal if synchronization fails
+                    continue
+        
+        # Validate that we have composite signals
+        if ref_composite_data is None or target_composite_data is None:
+            print(f"    Error: Could not create composite signals for group correlation")
+            return 0.0
+        
+        if len(ref_composite_data) == 0 or len(target_composite_data) == 0:
+            print(f"    Error: Empty composite signals")
+            return 0.0
+        
+        print(f"    Composite signals: ref={len(ref_composite_data)}, target={len(target_composite_data)}")
+        
+        # Synchronize composite signals
+        try:
+            ref_sync, target_sync = self._synchronize_time_series(ref_composite_data, ref_composite_time, 
+                                                                target_composite_data, target_composite_time)
+            print(f"    Synchronized composites: ref={len(ref_sync)}, target={len(target_sync)}")
+        except Exception as e:
+            print(f"    Error synchronizing composite signals: {e}")
+            return 0.0
+        common_time = np.linspace(max(ref_composite_time[0], target_composite_time[0]), 
+                                 min(ref_composite_time[-1], target_composite_time[-1]), 
+                                 len(ref_sync))
+        
+        # Apply windowing
+        if cross_correlation_window and cross_correlation_window < len(ref_sync):
+            center = len(ref_sync) // 2
+            half_window = cross_correlation_window // 2
+            start_idx = max(0, center - half_window)
+            end_idx = min(len(ref_sync), center + half_window)
+            ref_windowed = ref_sync[start_idx:end_idx]
+            target_windowed = target_sync[start_idx:end_idx]
+            window_time = common_time[start_idx:end_idx]
+        else:
+            ref_windowed = ref_sync
+            target_windowed = target_sync
+            window_time = common_time
+        
+        # Calculate correlation
+        correlation = calculate_correlation(ref_windowed, target_windowed, correlation_method)
+        
+        # Create lag vectors
+        lags_samples = np.arange(-len(target_windowed) + 1, len(ref_windowed))
+        dt = np.mean(np.diff(ref_composite_time))
+        lags_time = lags_samples * dt
+        
+        # Limit search range
+        if max_shift_time is not None:
+            mask = np.abs(lags_time) <= max_shift_time
+            correlation_limited = correlation[mask]
+            lags_time_limited = lags_time[mask]
+        else:
+            correlation_limited = correlation
+            lags_time_limited = lags_time
+        
+        # Find optimal shift
+        max_corr_idx = np.argmax(correlation_limited)
+        time_shift = lags_time_limited[max_corr_idx]
+        max_corr_value = correlation_limited[max_corr_idx]
+        
+        print(f"    Composite correlation: max={max_corr_value:.4f}, shift={time_shift*1000:.3f}ms")
+        
+        # Visualization for group correlation
+        if visualize:
+            import matplotlib.pyplot as plt
+            fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+            
+            # Plot composite signals
+            axes[0].plot(window_time, ref_windowed, label=f'{ref_group_name} (composite)', alpha=0.8)
+            axes[0].plot(window_time, target_windowed, label=f'{target_group_name} (composite)', alpha=0.8)
+            axes[0].set_title('Composite Group Signals')
+            axes[0].legend()
+            axes[0].grid(True, alpha=0.3)
+            
+            # Plot correlation
+            correlation_norm = correlation_limited / np.max(np.abs(correlation_limited))
+            axes[1].plot(lags_time_limited * 1000, correlation_norm, 'b-', linewidth=1)
+            axes[1].axvline(time_shift * 1000, color='red', linestyle='--', 
+                           label=f'{time_shift*1000:.3f}ms')
+            axes[1].set_xlabel('Lag [ms]')
+            axes[1].set_ylabel('Normalized Correlation')
+            axes[1].set_title(f'Group Cross-Correlation')
+            axes[1].legend()
+            axes[1].grid(True, alpha=0.3)
+            
+            # Plot aligned result
+            target_shifted = np.interp(window_time - time_shift, window_time, target_windowed)
+            axes[2].plot(window_time, ref_windowed, label=f'{ref_group_name}', alpha=0.8)
+            axes[2].plot(window_time, target_shifted, label=f'{target_group_name} (shifted)', alpha=0.8)
+            axes[2].set_title('Aligned Group Signals')
+            axes[2].legend()
+            axes[2].grid(True, alpha=0.3)
+            
+            plt.suptitle(f'Group Alignment: {ref_group_name} ↔ {target_group_name}')
+            plt.tight_layout()
+            plt.show()
+        
+        return time_shift
+    
+    def auto_align_time_series(self, reference_label: str = None,
+                              reference_group: str = None, 
                               cross_correlation_window: Optional[int] = None,
                               correlation_window_time: Optional[float] = None,
                               use_original_positions: bool = False,
@@ -583,12 +813,14 @@ class TimeSeriesComparator:
                               visualize: bool = False,
                               max_shift_time: float = None,
                               normalize_signals: bool = True,
-                              correlation_method: str = 'normalized') -> Dict[str, float]:
+                              correlation_method: str = 'normalized',
+                              sync_within_groups: bool = True) -> Dict[str, float]:
         """
-        Automatically align time series using cross-correlation with normalization options
+        Automatically align time series using cross-correlation with group synchronization
         
         Args:
-            reference_label: Label of the reference time series
+            reference_label: Label of the reference time series (overrides reference_group)
+            reference_group: Group to use as reference (e.g., 'AMPM', 'KH')
             cross_correlation_window: Window size for cross-correlation in SAMPLES
             correlation_window_time: Window size for cross-correlation in SECONDS
             use_original_positions: Use original or current time vectors
@@ -597,9 +829,10 @@ class TimeSeriesComparator:
             max_shift_time: Maximum shift to search in seconds
             normalize_signals: Remove DC offset and normalize amplitude before correlation
             correlation_method: 'normalized', 'standard', or 'zero_mean'
+            sync_within_groups: If True, maintain synchronization within dataset groups
             
         Returns:
-            Dictionary of calculated time shifts for each dataset
+            Dictionary of calculated time shifts for each dataset/group
         """
         
         def normalize_for_correlation(signal, method='normalized'):
@@ -649,13 +882,27 @@ class TimeSeriesComparator:
             
             return correlation
         
-        # [Previous setup code remains the same...]
-        if reference_label not in self.processed_data:
+        # Determine reference approach
+        if reference_label and reference_label not in self.processed_data:
             raise ValueError(f"Reference dataset '{reference_label}' not found")
+        
+        if not reference_label and not reference_group:
+            raise ValueError("Must specify either reference_label or reference_group")
         
         position_type = "original" if use_original_positions else "current"
         data_type = "raw" if use_raw_data else "processed"
-        print(f"\nAuto-aligning time series using '{reference_label}' as reference...")
+        
+        if sync_within_groups:
+            if reference_group:
+                print(f"\nAuto-aligning time series using '{reference_group}' group as reference...")
+            else:
+                ref_group = next((d.group for d in self.datasets if d.label == reference_label), None)
+                print(f"\nAuto-aligning time series using '{reference_label}' (group: {ref_group}) as reference...")
+            print(f"Group sync mode: Signals within same group stay synchronized")
+        else:
+            print(f"\nAuto-aligning time series using '{reference_label}' as reference...")
+            print(f"Individual signal mode: Each signal aligned independently")
+        
         print(f"Method: {correlation_method} correlation, normalize_signals: {normalize_signals}")
         print(f"Using {position_type} positions with {data_type} data")
         
@@ -682,142 +929,200 @@ class TimeSeriesComparator:
             data_dict = self.processed_data
             print("Using current processed data for correlation")
         
-        ref_data = data_dict[reference_label]
-        ref_time = time_vectors[reference_label]
         calculated_shifts = {}
         
-        # [Window calculation code remains the same...]
-        if correlation_window_time is not None:
-            ref_dt = np.mean(np.diff(ref_time)) if len(ref_time) > 1 else 1.0 / self.sampling_rates[reference_label]
-            cross_correlation_window = int(correlation_window_time / ref_dt)
-            print(f"Using correlation window: {correlation_window_time:.3f}s ({cross_correlation_window} samples)")
+        # Organize datasets by group
+        groups = {}
+        for dataset_config in self.datasets:
+            if dataset_config.group not in groups:
+                groups[dataset_config.group] = []
+            if dataset_config.label in data_dict:
+                groups[dataset_config.group].append(dataset_config.label)
         
-        # Visualization setup
-        if visualize:
-            import matplotlib.pyplot as plt
-            n_targets = len([label for label in data_dict.keys() if label != reference_label])
-            if n_targets > 0:
-                fig, axes = plt.subplots(n_targets, 4, figsize=(20, 5*n_targets))  # Added 4th column
-                if n_targets == 1:
-                    axes = axes.reshape(1, -1)
-                plot_idx = 0
+        print(f"Dataset groups: {dict(groups)}")
         
-        for label, data in data_dict.items():
-            if label == reference_label:
+        if sync_within_groups:
+            # Group-based alignment: correlate groups against each other
+            if reference_group:
+                ref_group_name = reference_group
+            else:
+                ref_group_name = next((d.group for d in self.datasets if d.label == reference_label), None)
+            
+            if ref_group_name not in groups:
+                raise ValueError(f"Reference group '{ref_group_name}' not found")
+            
+            # Calculate window size using first signal in reference group
+            ref_sample_label = groups[ref_group_name][0] if not reference_label else reference_label
+            if correlation_window_time is not None:
+                ref_dt = np.mean(np.diff(time_vectors[ref_sample_label])) if len(time_vectors[ref_sample_label]) > 1 else 1.0 / self.sampling_rates[ref_sample_label]
+                cross_correlation_window = int(correlation_window_time / ref_dt)
+                print(f"Using correlation window: {correlation_window_time:.3f}s ({cross_correlation_window} samples)")
+            
+            # Reference group has no shift
+            for label in groups[ref_group_name]:
                 calculated_shifts[label] = 0.0
-                continue
             
-            time_vec = time_vectors[label]
-            
-            # Synchronize signals
-            ref_sync, data_sync = self._synchronize_time_series(ref_data, ref_time, data, time_vec)
-            common_time = np.linspace(max(ref_time[0], time_vec[0]), 
-                                     min(ref_time[-1], time_vec[-1]), 
-                                     len(ref_sync))
-            
-            # Apply windowing
-            if cross_correlation_window and cross_correlation_window < len(ref_sync):
-                center = len(ref_sync) // 2
-                half_window = cross_correlation_window // 2
-                start_idx = max(0, center - half_window)
-                end_idx = min(len(ref_sync), center + half_window)
-                ref_windowed = ref_sync[start_idx:end_idx]
-                data_windowed = data_sync[start_idx:end_idx]
-                window_time = common_time[start_idx:end_idx]
-            else:
-                ref_windowed = ref_sync
-                data_windowed = data_sync
-                window_time = common_time
-            
-            # Calculate correlation with chosen method
-            correlation = calculate_correlation(ref_windowed, data_windowed, correlation_method)
-            
-            # Create lag vectors
-            lags_samples = np.arange(-len(data_windowed) + 1, len(ref_windowed))
-            dt = np.mean(np.diff(time_vectors[reference_label]))
-            lags_time = lags_samples * dt
-            
-            # Limit search range
-            if max_shift_time is not None:
-                mask = np.abs(lags_time) <= max_shift_time
-                correlation_limited = correlation[mask]
-                lags_time_limited = lags_time[mask]
-            else:
-                correlation_limited = correlation
-                lags_time_limited = lags_time
-            
-            # Find optimal shift
-            max_corr_idx = np.argmax(correlation_limited)
-            time_shift = lags_time_limited[max_corr_idx]
-            calculated_shifts[label] = time_shift
-            
-            # Enhanced diagnostics
-            max_corr_value = correlation_limited[max_corr_idx]
-            corr_mean = np.mean(correlation_limited)
-            corr_std = np.std(correlation_limited)
-            
-            # Signal statistics before and after normalization
-            ref_stats = f"mean={np.mean(ref_windowed):.3f}, std={np.std(ref_windowed):.3f}"
-            target_stats = f"mean={np.mean(data_windowed):.3f}, std={np.std(data_windowed):.3f}"
-            
-            if normalize_signals:
-                ref_norm = normalize_for_correlation(ref_windowed, correlation_method)
-                target_norm = normalize_for_correlation(data_windowed, correlation_method)
-                ref_norm_stats = f"mean={np.mean(ref_norm):.3f}, std={np.std(ref_norm):.3f}"
-                target_norm_stats = f"mean={np.mean(target_norm):.3f}, std={np.std(target_norm):.3f}"
-            
-            print(f"✓ {label}: {time_shift*1000:.3f}ms shift, max_corr={max_corr_value:.4f}")
-            print(f"  Original - Ref: {ref_stats}, Target: {target_stats}")
-            if normalize_signals:
-                print(f"  Normalized - Ref: {ref_norm_stats}, Target: {target_norm_stats}")
-            
-            # Visualization
-            if visualize:
-                # Plot 1: Original signals
-                axes[plot_idx, 0].plot(window_time, ref_windowed, label=f'{reference_label}', alpha=0.8)
-                axes[plot_idx, 0].plot(window_time, data_windowed, label=f'{label}', alpha=0.8)
-                axes[plot_idx, 0].set_title(f'Original Signals')
-                axes[plot_idx, 0].legend()
-                axes[plot_idx, 0].grid(True, alpha=0.3)
+            # Align other groups to reference group
+            for group_name, group_labels in groups.items():
+                if group_name == ref_group_name:
+                    continue
                 
-                # Plot 2: Normalized signals (if applicable)
+                # Calculate group-to-group correlation using composite signals
+                group_shift = self._calculate_group_correlation(
+                    ref_group_name, groups[ref_group_name], 
+                    group_name, group_labels,
+                    data_dict, time_vectors, 
+                    cross_correlation_window, max_shift_time,
+                    correlation_method, normalize_signals, visualize
+                )
+                
+                # Apply same shift to all signals in the target group
+                for label in group_labels:
+                    calculated_shifts[label] = group_shift
+                
+                print(f"✓ Group '{group_name}': {group_shift*1000:.3f}ms shift (applied to {len(group_labels)} signals)")
+        
+        else:
+            # Individual signal alignment (original behavior)
+            if not reference_label:
+                raise ValueError("Individual signal mode requires reference_label")
+                
+            # Calculate window size
+            if correlation_window_time is not None:
+                ref_dt = np.mean(np.diff(time_vectors[reference_label])) if len(time_vectors[reference_label]) > 1 else 1.0 / self.sampling_rates[reference_label]
+                cross_correlation_window = int(correlation_window_time / ref_dt)
+                print(f"Using correlation window: {correlation_window_time:.3f}s ({cross_correlation_window} samples)")
+            
+            ref_data = data_dict[reference_label]
+            ref_time = time_vectors[reference_label]
+            calculated_shifts[reference_label] = 0.0
+            
+            # Visualization setup for individual signal mode
+            if visualize:
+                import matplotlib.pyplot as plt
+                n_targets = len([label for label in data_dict.keys() if label != reference_label])
+                if n_targets > 0:
+                    fig, axes = plt.subplots(n_targets, 4, figsize=(20, 5*n_targets))
+                    if n_targets == 1:
+                        axes = axes.reshape(1, -1)
+                    plot_idx = 0
+            
+            # Individual signal processing loop
+            for label, data in data_dict.items():
+                if label == reference_label:
+                    continue
+                
+                time_vec = time_vectors[label]
+                
+                # Synchronize signals
+                ref_sync, data_sync = self._synchronize_time_series(ref_data, ref_time, data, time_vec)
+                common_time = np.linspace(max(ref_time[0], time_vec[0]), 
+                                         min(ref_time[-1], time_vec[-1]), 
+                                         len(ref_sync))
+                
+                # Apply windowing
+                if cross_correlation_window and cross_correlation_window < len(ref_sync):
+                    center = len(ref_sync) // 2
+                    half_window = cross_correlation_window // 2
+                    start_idx = max(0, center - half_window)
+                    end_idx = min(len(ref_sync), center + half_window)
+                    ref_windowed = ref_sync[start_idx:end_idx]
+                    data_windowed = data_sync[start_idx:end_idx]
+                    window_time = common_time[start_idx:end_idx]
+                else:
+                    ref_windowed = ref_sync
+                    data_windowed = data_sync
+                    window_time = common_time
+                
+                # Calculate correlation with chosen method
+                correlation = calculate_correlation(ref_windowed, data_windowed, correlation_method)
+                
+                # Create lag vectors
+                lags_samples = np.arange(-len(data_windowed) + 1, len(ref_windowed))
+                dt = np.mean(np.diff(time_vectors[reference_label]))
+                lags_time = lags_samples * dt
+                
+                # Limit search range
+                if max_shift_time is not None:
+                    mask = np.abs(lags_time) <= max_shift_time
+                    correlation_limited = correlation[mask]
+                    lags_time_limited = lags_time[mask]
+                else:
+                    correlation_limited = correlation
+                    lags_time_limited = lags_time
+                
+                # Find optimal shift
+                max_corr_idx = np.argmax(correlation_limited)
+                time_shift = lags_time_limited[max_corr_idx]
+                calculated_shifts[label] = time_shift
+                
+                # Enhanced diagnostics
+                max_corr_value = correlation_limited[max_corr_idx]
+                corr_mean = np.mean(correlation_limited)
+                corr_std = np.std(correlation_limited)
+                
+                # Signal statistics before and after normalization
+                ref_stats = f"mean={np.mean(ref_windowed):.3f}, std={np.std(ref_windowed):.3f}"
+                target_stats = f"mean={np.mean(data_windowed):.3f}, std={np.std(data_windowed):.3f}"
+                
                 if normalize_signals:
                     ref_norm = normalize_for_correlation(ref_windowed, correlation_method)
                     target_norm = normalize_for_correlation(data_windowed, correlation_method)
-                    axes[plot_idx, 1].plot(window_time, ref_norm, label=f'{reference_label} (norm)', alpha=0.8)
-                    axes[plot_idx, 1].plot(window_time, target_norm, label=f'{label} (norm)', alpha=0.8)
-                    axes[plot_idx, 1].set_title(f'Normalized Signals ({correlation_method})')
-                else:
-                    axes[plot_idx, 1].plot(window_time, ref_windowed, label=f'{reference_label}', alpha=0.8)
-                    axes[plot_idx, 1].plot(window_time, data_windowed, label=f'{label}', alpha=0.8)
-                    axes[plot_idx, 1].set_title(f'Signals (no normalization)')
-                axes[plot_idx, 1].legend()
-                axes[plot_idx, 1].grid(True, alpha=0.3)
+                    ref_norm_stats = f"mean={np.mean(ref_norm):.3f}, std={np.std(ref_norm):.3f}"
+                    target_norm_stats = f"mean={np.mean(target_norm):.3f}, std={np.std(target_norm):.3f}"
                 
-                # Plot 3: Cross-correlation
-                correlation_norm = correlation_limited / np.max(np.abs(correlation_limited))
-                axes[plot_idx, 2].plot(lags_time_limited * 1000, correlation_norm, 'b-', linewidth=1)
-                axes[plot_idx, 2].axvline(time_shift * 1000, color='red', linestyle='--', 
-                                        label=f'{time_shift*1000:.3f}ms')
-                axes[plot_idx, 2].set_xlabel('Lag [ms]')
-                axes[plot_idx, 2].set_ylabel('Normalized Correlation')
-                axes[plot_idx, 2].set_title(f'Cross-Correlation ({correlation_method})')
-                axes[plot_idx, 2].legend()
-                axes[plot_idx, 2].grid(True, alpha=0.3)
+                print(f"✓ {label}: {time_shift*1000:.3f}ms shift, max_corr={max_corr_value:.4f}")
+                print(f"  Original - Ref: {ref_stats}, Target: {target_stats}")
+                if normalize_signals:
+                    print(f"  Normalized - Ref: {ref_norm_stats}, Target: {target_norm_stats}")
                 
-                # Plot 4: Aligned result
-                target_shifted = np.interp(window_time - time_shift, window_time, data_windowed)
-                axes[plot_idx, 3].plot(window_time, ref_windowed, label=f'{reference_label}', alpha=0.8)
-                axes[plot_idx, 3].plot(window_time, target_shifted, label=f'{label} (shifted)', alpha=0.8)
-                axes[plot_idx, 3].set_title(f'Aligned Result')
-                axes[plot_idx, 3].legend()
-                axes[plot_idx, 3].grid(True, alpha=0.3)
-                
-                plot_idx += 1
-        
-        if visualize and n_targets > 0:
-            plt.tight_layout()
-            plt.show()
+                # Visualization
+                if visualize:
+                    # Plot 1: Original signals
+                    axes[plot_idx, 0].plot(window_time, ref_windowed, label=f'{reference_label}', alpha=0.8)
+                    axes[plot_idx, 0].plot(window_time, data_windowed, label=f'{label}', alpha=0.8)
+                    axes[plot_idx, 0].set_title(f'Original Signals')
+                    axes[plot_idx, 0].legend()
+                    axes[plot_idx, 0].grid(True, alpha=0.3)
+                    
+                    # Plot 2: Normalized signals (if applicable)
+                    if normalize_signals:
+                        ref_norm = normalize_for_correlation(ref_windowed, correlation_method)
+                        target_norm = normalize_for_correlation(data_windowed, correlation_method)
+                        axes[plot_idx, 1].plot(window_time, ref_norm, label=f'{reference_label} (norm)', alpha=0.8)
+                        axes[plot_idx, 1].plot(window_time, target_norm, label=f'{label} (norm)', alpha=0.8)
+                        axes[plot_idx, 1].set_title(f'Normalized Signals ({correlation_method})')
+                    else:
+                        axes[plot_idx, 1].plot(window_time, ref_windowed, label=f'{reference_label}', alpha=0.8)
+                        axes[plot_idx, 1].plot(window_time, data_windowed, label=f'{label}', alpha=0.8)
+                        axes[plot_idx, 1].set_title(f'Signals (no normalization)')
+                    axes[plot_idx, 1].legend()
+                    axes[plot_idx, 1].grid(True, alpha=0.3)
+                    
+                    # Plot 3: Cross-correlation
+                    correlation_norm = correlation_limited / np.max(np.abs(correlation_limited))
+                    axes[plot_idx, 2].plot(lags_time_limited * 1000, correlation_norm, 'b-', linewidth=1)
+                    axes[plot_idx, 2].axvline(time_shift * 1000, color='red', linestyle='--', 
+                                            label=f'{time_shift*1000:.3f}ms')
+                    axes[plot_idx, 2].set_xlabel('Lag [ms]')
+                    axes[plot_idx, 2].set_ylabel('Normalized Correlation')
+                    axes[plot_idx, 2].set_title(f'Cross-Correlation ({correlation_method})')
+                    axes[plot_idx, 2].legend()
+                    axes[plot_idx, 2].grid(True, alpha=0.3)
+                    
+                    # Plot 4: Aligned result
+                    target_shifted = np.interp(window_time - time_shift, window_time, data_windowed)
+                    axes[plot_idx, 3].plot(window_time, ref_windowed, label=f'{reference_label}', alpha=0.8)
+                    axes[plot_idx, 3].plot(window_time, target_shifted, label=f'{label} (shifted)', alpha=0.8)
+                    axes[plot_idx, 3].set_title(f'Aligned Result')
+                    axes[plot_idx, 3].legend()
+                    axes[plot_idx, 3].grid(True, alpha=0.3)
+                    
+                    plot_idx += 1
+            
+            if visualize and 'n_targets' in locals() and n_targets > 0:
+                plt.tight_layout()
+                plt.show()
         
         return calculated_shifts
     
@@ -854,7 +1159,8 @@ class TimeSeriesComparator:
                     'time_shift': total_shift,
                     'shift_type': shift_type,
                     'manual_shift': self.alignment_info[label].get('time_shift', 0.0) if not relative_to_original else 0.0,
-                    'auto_shift': shift
+                    'auto_shift': shift,
+                    'group': next((d.group for d in self.datasets if d.label == label), None)
                 }
                 
                 print(f"✓ Applied calculated shift of {shift:.6f}s to {label}")
@@ -1142,18 +1448,25 @@ class TimeSeriesComparator:
                     color = None
                     linestyle = '-'
                 
-                # Use current time vectors for processed data
+                # Use current time vectors for processed data (after alignment optimization)
                 time_vec = self.time_vectors[label]
                 # Ensure time vector matches data length
                 time_vec = time_vec[:len(data)]
                 
+                # Create label showing total alignment applied
+                total_shift = self.alignment_info.get(label, {}).get('time_shift', 0.0)
+                if abs(total_shift) > 1e-6:
+                    label_text = f"{label} (aligned: {total_shift*1000:+.3f}ms)"
+                else:
+                    label_text = f"{label} (processed)"
+                
                 ax.plot(time_vec, data, 
-                       label=f"{label} (processed)", 
+                       label=label_text, 
                        color=color, linestyle=linestyle, alpha=0.8)
             
             ax.set_xlabel('Time [s]')
             ax.set_ylabel('Amplitude')
-            ax.set_title('Processed Time Series Comparison')
+            ax.set_title('Processed & Aligned Time Series Comparison')
             ax.legend()
             ax.grid(True, alpha=0.3)
         
@@ -1258,7 +1571,7 @@ class TimeSeriesComparator:
     
     def plot_alignment_comparison(self, save_path: Optional[str] = None, 
                                  use_full_data: bool = True) -> None:
-        """Plot comparison of original vs aligned time series"""
+        """Plot side-by-side comparison of original vs aligned signals overlaid for direct comparison"""
         if not self.original_time_vectors:
             print("No original time vectors available for comparison")
             return
@@ -1281,79 +1594,422 @@ class TimeSeriesComparator:
             data_type = "current processed"
             print("Plotting current processed data (potentially cropped)")
         
-        n_datasets = len(plot_data)
-        fig, axes = plt.subplots(n_datasets, 1, figsize=(15, 4*n_datasets), sharex=True)
-        if n_datasets == 1:
-            axes = [axes]
+        # Create side-by-side comparison: Original vs Aligned
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+        
+        # Create secondary y-axes for non-PD signals
+        ax1_sec = ax1.twinx()
+        ax2_sec = ax2.twinx()
+        
+        # Define colors for each signal
+        colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple', 'tab:brown', 'tab:pink', 'tab:gray']
+        
+        # Plot 1: Original positions (before any alignment)
+        ax1.set_title(f'Before Alignment - Original Signal Positions ({data_type})', fontsize=14, fontweight='bold')
+        
+        pd_signals = []
+        non_pd_signals = []
         
         for i, (label, data) in enumerate(plot_data.items()):
-            ax = axes[i]
+            color = colors[i % len(colors)]
             
-            # Get shift information
-            shift = self.alignment_info[label]['time_shift']
-            shift_type = self.alignment_info[label]['shift_type']
-            
-            # Plot original (unshifted) time series
             if label in self.original_time_vectors:
                 orig_time = self.original_time_vectors[label]
                 
                 if use_full_data:
                     # Use full original time vector with full data
-                    ax.plot(orig_time, data, 
-                           label=f"{label} (original)", 
-                           alpha=0.7, linestyle='--')
+                    time_vec = orig_time
                 else:
                     # Ensure time vector matches cropped data length
-                    orig_time_cropped = orig_time[:len(data)]
-                    ax.plot(orig_time_cropped, data, 
-                           label=f"{label} (original)", 
-                           alpha=0.7, linestyle='--')
-            
-            # Plot shifted time series
-            if shift != 0.0:
-                label_text = f"{label} (shifted {shift:+.6f}s, {shift_type})"
+                    time_vec = orig_time[:len(data)]
                 
+                # Separate PD signals from others for different y-axes
+                if 'PD' in label.upper():
+                    ax1.plot(time_vec, data, 
+                           label=f"{label} (original)", 
+                           color=color, linewidth=2, alpha=0.8)
+                    pd_signals.append(label)
+                else:
+                    ax1_sec.plot(time_vec, data, 
+                           label=f"{label} (original)", 
+                           color=color, linewidth=2, alpha=0.8, linestyle='--')
+                    non_pd_signals.append(label)
+        
+        ax1.set_xlabel('Time [s]')
+        ax1.set_ylabel('PD Signals (Bits)', color='blue')
+        ax1_sec.set_ylabel('Keyhole Measurements (μm, degrees)', color='red')
+        ax1.tick_params(axis='y', labelcolor='blue')
+        ax1_sec.tick_params(axis='y', labelcolor='red')
+        ax1.grid(True, alpha=0.3)
+        
+        # Combine legends from both axes
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines1_sec, labels1_sec = ax1_sec.get_legend_handles_labels()
+        ax1.legend(lines1 + lines1_sec, labels1 + labels1_sec, loc='upper left')
+        
+        # Plot 2: Final aligned positions
+        ax2.set_title(f'After Alignment - Optimally Aligned Signals ({data_type})', fontsize=14, fontweight='bold')
+        
+        # Store alignment info for annotation
+        alignment_summary = []
+        
+        for i, (label, data) in enumerate(plot_data.items()):
+            color = colors[i % len(colors)]
+            
+            # Get comprehensive shift information
+            shift_info = self.alignment_info[label]
+            total_shift = shift_info['time_shift']
+            manual_shift = shift_info.get('manual_shift', 0.0)
+            auto_shift = shift_info.get('auto_shift', 0.0)
+            
+            # Determine time vector for aligned signals
+            if total_shift != 0.0:
                 if use_full_data:
-                    # Create shifted time vector for full data
-                    shifted_time = self.original_time_vectors[label] + shift
-                    ax.plot(shifted_time, data, 
-                           label=label_text, 
-                           alpha=0.9, linewidth=1.5, color='red')
+                    # Create final shifted time vector for full data
+                    time_vec = self.original_time_vectors[label] + total_shift
                 else:
                     # Use current (cropped and shifted) time vectors
-                    curr_time = self.time_vectors[label][:len(data)]
-                    ax.plot(curr_time, data, 
-                           label=label_text, 
-                           alpha=0.9, linewidth=1.5, color='red')
+                    time_vec = self.time_vectors[label][:len(data)]
+                label_text = f"{label} ({total_shift*1000:+.2f}ms)"
             else:
-                label_text = f"{label} (no shift)"
+                # No shift applied
                 if use_full_data:
-                    ax.plot(self.original_time_vectors[label], data, 
-                           label=label_text, 
-                           alpha=0.9, linewidth=1.5)
+                    time_vec = self.original_time_vectors[label]
                 else:
-                    curr_time = self.time_vectors[label][:len(data)]
-                    ax.plot(curr_time, data, 
-                           label=label_text, 
-                           alpha=0.9, linewidth=1.5)
+                    time_vec = self.time_vectors[label][:len(data)]
+                label_text = f"{label} (no shift)"
             
-            # Add shift annotation if significant
-            if abs(shift) > 1e-6:
-                ax.text(0.02, 0.98, f'Time shift: {shift*1000:+.3f}ms', 
-                       transform=ax.transAxes, verticalalignment='top',
-                       bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.7))
+            # Plot on appropriate axis
+            if 'PD' in label.upper():
+                ax2.plot(time_vec, data, 
+                       label=label_text, 
+                       color=color, linewidth=2, alpha=0.8)
+            else:
+                ax2_sec.plot(time_vec, data, 
+                       label=label_text, 
+                       color=color, linewidth=2, alpha=0.8, linestyle='--')
             
-            ax.set_ylabel('Amplitude')
-            ax.set_title(f'Time Alignment Comparison - {label} ({data_type})')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
+            # Build alignment summary
+            if total_shift != 0.0:
+                if manual_shift != 0.0 and auto_shift != 0.0:
+                    alignment_summary.append(f"{label}: Manual {manual_shift*1000:+.2f}ms + Auto {auto_shift*1000:+.2f}ms = {total_shift*1000:+.2f}ms")
+                elif manual_shift != 0.0:
+                    alignment_summary.append(f"{label}: Manual only {total_shift*1000:+.2f}ms")
+                elif auto_shift != 0.0:
+                    alignment_summary.append(f"{label}: Auto only {total_shift*1000:+.2f}ms")
+                else:
+                    alignment_summary.append(f"{label}: {total_shift*1000:+.2f}ms")
+            else:
+                alignment_summary.append(f"{label}: No alignment applied")
         
-        axes[-1].set_xlabel('Time [s]')
+        ax2.set_xlabel('Time [s]')
+        ax2.set_ylabel('PD Signals (Bits)', color='blue')
+        ax2_sec.set_ylabel('Keyhole Measurements (μm, degrees)', color='red')
+        ax2.tick_params(axis='y', labelcolor='blue')
+        ax2_sec.tick_params(axis='y', labelcolor='red')
+        ax2.grid(True, alpha=0.3)
+        
+        # Combine legends from both axes
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        lines2_sec, labels2_sec = ax2_sec.get_legend_handles_labels()
+        ax2.legend(lines2 + lines2_sec, labels2 + labels2_sec, loc='upper left')
+        
+        # Add vertical guides to both plots for reference
+        if len(plot_data) > 1:
+            # Get common time range from aligned signals
+            all_final_times = []
+            for label, data in plot_data.items():
+                total_shift = self.alignment_info[label]['time_shift']
+                if use_full_data:
+                    if total_shift != 0.0:
+                        time_vec = self.original_time_vectors[label] + total_shift
+                    else:
+                        time_vec = self.original_time_vectors[label]
+                else:
+                    time_vec = self.time_vectors[label][:len(data)]
+                all_final_times.extend([time_vec[0], time_vec[-1]])
+            
+            if all_final_times:
+                t_min, t_max = min(all_final_times), max(all_final_times)
+                t_range = t_max - t_min
+                
+                # Create vertical guides
+                n_guides = 6
+                guide_times = [t_min + i * t_range / (n_guides - 1) for i in range(n_guides)]
+                
+                # Add guides to both subplots
+                for ax in [ax1, ax2]:
+                    for guide_time in guide_times:
+                        ax.axvline(x=guide_time, color='lightblue', linestyle=':', 
+                                  alpha=0.5, linewidth=0.8, zorder=0)
+        
+        # Add comprehensive alignment summary in top right corner
+        if alignment_summary:
+            summary_text = "Alignment Summary:\n" + "\n".join(alignment_summary)
+            # Place summary in the top-right area, outside the plot area
+            fig.text(0.98, 0.98, summary_text, ha='right', va='top', 
+                    bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.9, pad=0.8),
+                    fontsize=9, transform=fig.transFigure)
+        
         plt.tight_layout()
         
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             print(f"Alignment comparison plot saved to {save_path}")
+        
+        plt.show()
+    
+    def plot_processing_and_alignment_summary(self, save_path: Optional[str] = None, 
+                                             use_full_data: bool = True) -> None:
+        """Consolidated plot showing complete data processing pipeline: Raw → Processed → Aligned"""
+        if not self.original_time_vectors:
+            print("No original time vectors available for alignment comparison")
+            return
+        
+        # Choose data source
+        if use_full_data and hasattr(self, 'full_processed_data') and self.full_processed_data:
+            plot_data = self.full_processed_data
+            data_type = "full processed"
+            print("Plotting full processed data (before cropping)")
+        else:
+            plot_data = self.processed_data
+            data_type = "current processed"
+            print("Plotting current processed data (potentially cropped)")
+        
+        # Create 3-panel comparison: Raw → Processed → Final Aligned
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6), facecolor='white')
+        fig.subplots_adjust(top=0.85, bottom=0.15, left=0.08, right=0.95, wspace=0.3)  # Better spacing
+        
+        # Create secondary y-axes for all plots
+        ax1_sec = ax1.twinx()
+        ax2_sec = ax2.twinx()
+        ax3_sec = ax3.twinx()
+        
+        # Define colorblind-friendly colors (using Okabe-Ito palette)
+        colors = ['#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161', '#FBAFE4', '#949494', '#ECE133']
+        pd_linestyle = '-'
+        kh_linestyle = '--'
+        linewidth_thin = 1.0
+        linewidth_medium = 1.5
+        
+        # Store alignment info for final summary
+        alignment_summary = []
+        
+        # Panel 1: Raw signals at original positions
+        ax1.set_title('Raw Signals', fontsize=14, fontweight='bold', pad=15)
+        
+        for i, (label, processed_data) in enumerate(plot_data.items()):
+            color = colors[i % len(colors)]
+            
+            if label in self.original_time_vectors and label in self.raw_data:
+                orig_time = self.original_time_vectors[label]
+                raw_data = self.raw_data[label]
+                
+                if use_full_data:
+                    time_vec = orig_time
+                    # Use raw data at full length to match
+                    raw_plot_data = raw_data[:len(time_vec)] if len(raw_data) >= len(time_vec) else raw_data
+                    time_vec = time_vec[:len(raw_plot_data)]
+                else:
+                    time_vec = orig_time[:len(processed_data)]
+                    raw_plot_data = raw_data[:len(processed_data)]
+                
+                # Plot on appropriate axis with thinner lines
+                if 'PD' in label.upper():
+                    ax1.plot(time_vec, raw_plot_data, 
+                           label=f"{label}", 
+                           color=color, linewidth=linewidth_thin, alpha=0.8, linestyle=pd_linestyle)
+                else:
+                    ax1_sec.plot(time_vec, raw_plot_data, 
+                           label=f"{label}", 
+                           color=color, linewidth=linewidth_thin, alpha=0.8, linestyle=kh_linestyle)
+        
+        # Panel 2: Processed signals (filtered/normalized) at original positions
+        ax2.set_title('Processed Signals', fontsize=14, fontweight='bold', pad=15)
+        
+        for i, (label, data) in enumerate(plot_data.items()):
+            color = colors[i % len(colors)]
+            
+            if label in self.original_time_vectors:
+                orig_time = self.original_time_vectors[label]
+                
+                if use_full_data:
+                    time_vec = orig_time
+                else:
+                    time_vec = orig_time[:len(data)]
+                
+                # Plot on appropriate axis with thinner lines
+                if 'PD' in label.upper():
+                    ax2.plot(time_vec, data, 
+                           label=f"{label}", 
+                           color=color, linewidth=linewidth_thin, alpha=0.9, linestyle=pd_linestyle)
+                else:
+                    ax2_sec.plot(time_vec, data, 
+                           label=f"{label}", 
+                           color=color, linewidth=linewidth_thin, alpha=0.9, linestyle=kh_linestyle)
+        
+        # Panel 3: Final aligned, cropped, and normalized signals
+        ax3.set_title('Final Aligned, Cropped & Normalized', fontsize=14, fontweight='bold', pad=15)
+        
+        # Use current processed data (which includes cropping) for the final panel
+        final_data = self.processed_data if not use_full_data or not hasattr(self, 'full_processed_data') else self.processed_data
+        
+        for i, (label, data) in enumerate(final_data.items()):
+            color = colors[i % len(colors)]
+            
+            # Get shift information
+            shift_info = self.alignment_info[label]
+            total_shift = shift_info['time_shift']
+            manual_shift = shift_info.get('manual_shift', 0.0)
+            auto_shift = shift_info.get('auto_shift', 0.0)
+            
+            # Always apply normalization for final panel display (regardless of processing config)
+            # This ensures the final panel shows normalized data for comparison
+            data_min, data_max = np.min(data), np.max(data)
+            if data_max > data_min:  # Avoid division by zero
+                data_norm = (data - data_min) / (data_max - data_min)
+            else:
+                data_norm = np.zeros_like(data)
+            
+            # Use current time vectors (which include alignment and cropping)
+            time_vec = self.time_vectors[label][:len(data)]
+            
+            # Create concise labels
+            if abs(total_shift) > 1e-6:
+                label_text = f"{label} ({total_shift*1000:+.1f}ms)"
+            else:
+                label_text = f"{label} (ref)"
+            
+            # Plot normalized data on appropriate axis with better styling
+            if 'PD' in label.upper():
+                ax3.plot(time_vec, data_norm, 
+                       label=label_text, 
+                       color=color, linewidth=linewidth_medium, alpha=0.95, linestyle=pd_linestyle)
+            else:
+                ax3_sec.plot(time_vec, data_norm, 
+                       label=label_text, 
+                       color=color, linewidth=linewidth_medium, alpha=0.95, linestyle=kh_linestyle)
+            
+            # Build alignment summary for text box
+            if total_shift != 0.0:
+                if manual_shift != 0.0 and auto_shift != 0.0:
+                    alignment_summary.append(f"{label}: {manual_shift*1000:+.1f}ms (manual) + {auto_shift*1000:+.1f}ms (auto) = {total_shift*1000:+.1f}ms")
+                elif manual_shift != 0.0:
+                    alignment_summary.append(f"{label}: {total_shift*1000:+.1f}ms (manual only)")
+                elif auto_shift != 0.0:
+                    alignment_summary.append(f"{label}: {total_shift*1000:+.1f}ms (auto only)")
+                else:
+                    alignment_summary.append(f"{label}: {total_shift*1000:+.1f}ms")
+            else:
+                alignment_summary.append(f"{label}: Reference (0.0ms)")
+        
+        # Configure axes labels and colors with better formatting
+        axis_configs = [(ax1, ax1_sec, 'upper right'), (ax2, ax2_sec, 'upper right'), (ax3, ax3_sec, 'best')]
+        
+        for i, (ax, ax_sec, legend_loc) in enumerate(axis_configs):
+            ax.set_xlabel('Time [s]', fontsize=11)
+            if i == 2:  # Third panel (final normalized)
+                ax.set_ylabel('PD Signals\n(normalized)', color='black', fontsize=11)
+                ax_sec.set_ylabel('KH Measurements\n(normalized)', color='black', fontsize=11)
+            else:
+                ax.set_ylabel('PD Signals', color='black', fontsize=11)
+                ax_sec.set_ylabel('Keyhole Measurements', color='black', fontsize=11) 
+            # Configure tick marks - external (outward) ticks with black borders
+            ax.tick_params(axis='y', labelcolor='black', labelsize=10, direction='out', 
+                          colors='black', width=1, length=4)
+            ax_sec.tick_params(axis='y', labelcolor='black', labelsize=10, direction='out', 
+                              colors='black', width=1, length=4)
+            ax.tick_params(axis='x', labelsize=10, direction='out', 
+                          colors='black', width=1, length=4)
+            
+            # Set plot background
+            ax.set_facecolor('white')
+            ax_sec.set_facecolor('white')
+            
+            # Add black border around each plot
+            for spine in ax.spines.values():
+                spine.set_edgecolor('black')
+                spine.set_linewidth(1)
+                spine.set_visible(True)
+            
+            # Configure secondary axis spines (only right side visible)
+            for spine_name, spine in ax_sec.spines.items():
+                if spine_name == 'right':
+                    spine.set_edgecolor('black')
+                    spine.set_linewidth(1)
+                    spine.set_visible(True)
+                else:
+                    spine.set_visible(False)
+            
+            # ax.grid(True, color='black', alpha=0.5, linestyle='-', linewidth=0.5, zorder=-1000)
+            
+            # Only show legend on first panel
+            if i == 0:  # First panel only
+                lines, labels = ax.get_legend_handles_labels()
+                lines_sec, labels_sec = ax_sec.get_legend_handles_labels()
+                if lines or lines_sec:
+                    ax.legend(lines + lines_sec, labels + labels_sec, 
+                             loc='upper right', fontsize=10, framealpha=0.9,
+                             bbox_to_anchor=(0.99, 0.99))
+        
+        # Add vertical guides to final aligned plot for phase comparison
+        if len(final_data) > 1:
+            all_final_times = []
+            for label, data in final_data.items():
+                time_vec = self.time_vectors[label][:len(data)]
+                all_final_times.extend([time_vec[0], time_vec[-1]])
+            
+            if all_final_times:
+                t_min, t_max = min(all_final_times), max(all_final_times)
+                t_range = t_max - t_min
+                n_guides = 5  # Fewer guides to reduce clutter
+                guide_times = [t_min + i * t_range / (n_guides - 1) for i in range(n_guides)]
+                
+                # Add subtle guides only to final aligned plot
+                for guide_time in guide_times:
+                    ax3.axvline(x=guide_time, color='lightgray', linestyle=':', 
+                              alpha=0.6, linewidth=0.5, zorder=0)
+        
+        # Add compact processing information as text box
+        processing_info = []
+        if self.processing_config.apply_normalization:
+            processing_info.append(f"Norm: {self.processing_config.normalization_method}")
+        if self.processing_config.apply_savgol:
+            processing_info.append(f"Savgol({self.processing_config.savgol_window})")
+        if self.processing_config.apply_lowpass:
+            processing_info.append(f"Lowpass({self.processing_config.lowpass_cutoff})")
+        if self.processing_config.apply_smoothing:
+            processing_info.append(f"Smooth: {self.processing_config.smoothing_method}")
+        
+        processing_text = "Processing: " + ", ".join(processing_info) if processing_info else "Processing: None"
+        
+        # Compact alignment summary
+        alignment_compact = []
+        for label, info in self.alignment_info.items():
+            shift = info['time_shift']
+            if abs(shift) > 1e-6:
+                alignment_compact.append(f"{label}: {shift*1000:+.1f}ms")
+            else:
+                alignment_compact.append(f"{label}: ref")
+        
+        alignment_text = "Alignment: " + ", ".join(alignment_compact) if alignment_compact else "Alignment: None"
+        
+        # Cleaner overall title centered
+        fig.suptitle('Data Processing Pipeline Summary', 
+                    fontsize=16, fontweight='bold', y=0.95)
+        
+        # Place compact summary in bottom center
+        summary_text = processing_text + " | " + alignment_text
+        fig.text(0.5, 0.02, summary_text, ha='center', va='bottom', 
+                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.7, pad=0.3),
+                fontsize=9, transform=fig.transFigure)
+        
+        # Don't use tight_layout since we have custom spacing
+        # plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Processing and alignment summary saved to {save_path}")
         
         plt.show()
     
@@ -1369,10 +2025,9 @@ class TimeSeriesComparator:
         differences = self.calculate_differences()
         
         # Generate plots
-        self.plot_time_series(save_path=output_path / 'time_series_comparison.png')
+        self.plot_processing_and_alignment_summary(save_path=output_path / 'processing_and_alignment_summary.png')
         self.plot_statistics_summary(save_path=output_path / 'statistics_summary.png')
         self.plot_correlation_matrix(save_path=output_path / 'correlation_matrix.png')
-        self.plot_alignment_comparison(save_path=output_path / 'alignment_comparison.png')
         
         # Save alignment summary
         alignment_df = self.get_alignment_summary()
@@ -1510,7 +2165,7 @@ def main():
             time_group='AMPM',  # Time vector in same group
             time_name='Time',   # Explicit time vector
             time_units='s',     # Time in seconds
-            time_shift=0.0      # No phase shift
+            time_shift=0.0      # Phase shift
         ),
         DatasetConfig(
             group='AMPM',
@@ -1521,7 +2176,7 @@ def main():
             time_group='AMPM',  # Time vector in same group
             time_name='Time',   # Shared time vector
             time_units='s',     # Time in seconds
-            time_shift=0.0      # No phase shift (was 0.005 in example)
+            time_shift=0.0      # Phase shift
         ),
         DatasetConfig(
             group='KH',
@@ -1532,7 +2187,7 @@ def main():
             time_group='KH',  # Time vector in same group
             time_name='time',   # Shared time vector
             time_units='s',     # Time in seconds
-            time_shift=0.00165      # No phase shift (was 0.005 in example)
+            time_shift=0.00165      # Phase shift (~0.00165 in 504kfps)
         ),
         # DatasetConfig(
             # group='KH',
@@ -1543,7 +2198,7 @@ def main():
             # time_group='KH',  # Time vector in same group
             # time_name='time',   # Shared time vector
             # time_units='s',     # Time in seconds
-            # time_shift=0.00165      # No phase shift (was 0.005 in example)
+            # time_shift=0.00165      # Phase shift
         # ),
         DatasetConfig(
             group='KH',
@@ -1554,7 +2209,7 @@ def main():
             time_group='KH',  # Time vector in same group
             time_name='time',   # Shared time vector
             time_units='s',     # Time in seconds
-            time_shift=0.00165      # No phase shift (was 0.005 in example)
+            time_shift=0.00165      # Phase shift
         ),
         # Example with individual sampling rate and time shift
         # DatasetConfig(
@@ -1599,7 +2254,7 @@ def main():
         
         # Enable normalization
         apply_normalization=True,
-        normalization_method='standard',
+        normalization_method='min-max',
         
         # Disable other options for this example
         apply_highpass=False,
@@ -1634,14 +2289,15 @@ def main():
         # calculated_shifts = comparator.auto_align_time_series('PD1', cross_correlation_window=20)
         
         # Option 2: Auto-align using time-based window (recommended)
-        # With visualization to debug correlation
-        # Normalized correlation (recommended)
-        calculated_shifts = comparator.auto_align_time_series('PD1', 
-                                                              correlation_window_time=0.005,
+        # Group-based alignment: AMPM group vs KH group
+        # PD1 and PD2 stay synchronized, KH depth and FKW angle stay synchronized
+        calculated_shifts = comparator.auto_align_time_series(reference_group='AMPM', 
+                                                              correlation_window_time=0.001,
                                                               use_raw_data=True,
                                                               correlation_method='normalized',
                                                               visualize=True,
-                                                              max_shift_time=0.0005)
+                                                              max_shift_time=0.0005,
+                                                              sync_within_groups=True)
         
         # Option 3: Auto-align from original positions (ignoring manual shifts)
         # calculated_shifts = comparator.auto_align_time_series('PD1', 
@@ -1649,7 +2305,7 @@ def main():
         #                                                      use_original_positions=True)
         
         # Apply calculated shifts
-        # comparator.apply_calculated_shifts(calculated_shifts)
+        comparator.apply_calculated_shifts(calculated_shifts)
         
         # Debug time shifts
         print("\n=== Time Vector Debug ===")
