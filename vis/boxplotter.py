@@ -6,7 +6,7 @@ from matplotlib.ticker import ScalarFormatter
 import seaborn as sns
 import pandas as pd
 import numpy as np
-import sys, os
+import sys, os, textwrap
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from tools import get_logbook, define_collumn_labels
@@ -82,7 +82,7 @@ def plot_posthoc_heatmap(posthoc_results, title="Post-hoc Statistical Comparison
     mask = np.triu(np.ones_like(plot_data, dtype=bool), k=1)
     
     # Set up the matplotlib figure with high DPI
-    fig, ax = plt.subplots(figsize=(6, 5), dpi=dpi)
+    fig, ax = plt.subplots(figsize=(3.15, 3.15), dpi=dpi)
     
     # Create custom colormap
     colors = ['#08519c', '#3182bd', '#6baed6', '#c6dbef', '#fee5d9', '#fcae91', '#fb6a4a', '#cb181d']
@@ -97,26 +97,25 @@ def plot_posthoc_heatmap(posthoc_results, title="Post-hoc Statistical Comparison
                 vmin=0, vmax=1,
                 square=True,
                 cbar_kws={'label': 'p-value', 'shrink': 0.7, 'aspect': 15},
-                annot_kws={'fontsize': 9, 'fontweight': 'bold'},  # Smaller for high DPI
+                annot_kws={'fontweight': 'bold'},  # Smaller for high DPI
                 ax=ax,
                 linewidths=0.2,  # Thinner lines for high DPI
                 linecolor='white')
     
     # Customize the plot with smaller fonts for high DPI
     ax.set_title(f"{title}\n({method_name} pairwise comparisons)", 
-                fontsize=12, fontweight='bold', pad=8)  # Smaller size and padding
+                fontweight='bold', pad=8)
     
     # Rotate labels for better readability with smaller fonts
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=20, ha='right', fontsize=9)
-    ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=9)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=20, ha='right')
+    ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
     
     # Add significance threshold line to colorbar with thinner elements
     cbar = ax.collections[0].colorbar
-    cbar.ax.tick_params(labelsize=6)  # Smaller colorbar tick size
-    cbar.set_label('p-value', fontsize=11)  # Smaller colorbar label size
+    cbar.set_label('p-value')  # Smaller colorbar label size
     cbar.ax.axhline(y=alpha, color='black', linewidth=1, alpha=0.8)  # Thinner line
-    cbar.ax.text(1.1, alpha, f'α = {alpha}', transform=cbar.ax.transData, 
-                fontsize=9, fontweight='bold', va='center')  # Smaller font size
+    cbar.ax.text(1.1, alpha, f'α = {alpha}', transform=cbar.ax.transData,
+        fontweight='bold', va='center')  # Smaller font size
     
     # Add legend explaining the visualization with smaller text
     legend_text = (f"Lower triangle + diagonal show p-values\n"
@@ -124,11 +123,23 @@ def plot_posthoc_heatmap(posthoc_results, title="Post-hoc Statistical Comparison
                   f"Light colors: p ≥ {alpha} (not significant)")
     
     ax.text(0.99, 0.99, legend_text, transform=ax.transAxes, 
-            fontsize=8, ha='right', va='top',  # Smaller legend font size
+            ha='right', va='top',  # Smaller legend font size
             bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.9,
                      edgecolor='gray', linewidth=0.5))  # Thinner legend box
     
-    plt.tight_layout(pad=0.3)  # Smaller padding for high DPI
+    # plt.tight_layout(pad=0.3)  # Smaller padding for high DPI
+    
+    wrap_tick_labels(ax, axes='y', width=20)
+    
+    # Font size settings
+    plt.rcParams.update({
+        'font.size': 8,           # Base font size (9pt)
+        'axes.titlesize': 10,     # Title slightly larger
+        'axes.labelsize': 8,      # Axis labels
+        'xtick.labelsize': 8,     # X-axis tick labels
+        'ytick.labelsize': 8,     # Y-axis tick labels
+        'legend.fontsize': 8,     # Legend text
+        })
     
     return fig
 
@@ -281,6 +292,17 @@ def pairwise_mannwhitney(data, value_col, group_col):
     
     return p_df
 
+def wrap_tick_labels(ax, axes='both', width=8):
+    if axes == 'x' or axes == 'both':
+        xlabels = [item.get_text() for item in ax.get_xticklabels()]
+        wrapped_xlabels = ['\n'.join(textwrap.wrap(label, width)) for label in xlabels]
+        ax.set_xticklabels(wrapped_xlabels)
+        
+    if axes == 'y' or axes == 'both':
+        ylabels = [item.get_text() for item in ax.get_yticklabels()]
+        wrapped_ylabels = ['\n'.join(textwrap.wrap(label, width)) for label in ylabels]
+        ax.set_yticklabels(wrapped_ylabels) 
+
 def print_statistical_summary(results, value_name="pool length"):
     """
     Print a formatted summary of statistical results.
@@ -320,7 +342,7 @@ def print_statistical_summary(results, value_name="pool length"):
     
     print("\n" + "=" * 60)
 
-def plot_boxplot_by_category(df, data_column, category_column, x_label=None, y_label = None, title=None, order=None, figsize=(4, 5),
+def plot_boxplot_by_category(df, data_column, category_column, x_label=None, y_label=None, title=None, order=None, figsize=(2.9, 2.17),
         show_counts=True, show_medians=False, show_points=False, scientific=False, dpi=300):
     """
     Create a box and whisker plot from a pandas DataFrame with optional data point counts.
@@ -369,27 +391,23 @@ def plot_boxplot_by_category(df, data_column, category_column, x_label=None, y_l
         formatter = ScalarFormatter(useMathText=True)
         formatter.set_scientific(True)
         formatter.set_powerlimits((-1, 1))  # Forces scientific notation
-        ax.yaxis.set_major_formatter(formatter)
+        ax.xaxis.set_major_formatter(formatter)
     
     # Create the box plot
     # palette = sns.color_palette("viridis", n_colors=df[category_column].nunique())
     palette = ['#440154', '#3b528b', '#21918c', '#5ec962', '#fde725']
     
-    marker_dict = {'unstable keyhole': {'m': 'o', 'c': '#fde725'},
-                   'keyhole flickering': {'m': 's', 'c': '#3b528b'},
-                   'quasi-stable keyhole': {'m': '^', 'c': '#5ec962'},
-                   'quasi-stable vapour depression': {'m': 'D', 'c': '#21918c'},
-                   'conduction': {'m': 'v', 'c': '#440154'}
-                   }
-                   
-    sns.boxplot(data=df, x=category_column, y=data_column, ax=ax, order=order, palette=palette,
-                linewidth=0.8)  # Thinner lines for high DPI
+    sns.boxplot(data=df, x=data_column, y=category_column, ax=ax, order=order, hue_order=order,
+                palette=palette, hue=category_column, legend=False, linewidth=0.7, fliersize=1, width=0.7)
+    
+    ax.set_yticklabels(order)
+    # ax.set_xticks([250, 500, 750, 1000, 1250])
     
     # Label axes if provided, otherwise column labels are used - smaller fonts for high DPI
     if x_label:
-        ax.set_xlabel(x_label, fontsize=11)
+        ax.set_xlabel(x_label)
     if y_label:
-        ax.set_ylabel(y_label, fontsize=11)
+        ax.set_ylabel(y_label)
     
     # Add data point counts if requested
     if show_counts:
@@ -402,25 +420,22 @@ def plot_boxplot_by_category(df, data_column, category_column, x_label=None, y_l
                 i = order.index(category)
             ax.text(i, ax.get_ylim()[0] - (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.05, 
                    f'n={count}', 
-                   ha='center', va='top', fontsize=9, color='gray', rotation=20)
+                   ha='center', va='top', color='gray', rotation=20)
     
     # Set title if provided - smaller font for high DPI
     if title:
-        ax.set_title(title, fontsize=12)
+        ax.set_title(title)
     
     # Rotate x-axis labels if there are many categories
-    if df[category_column].nunique() > 4:
-        plt.xticks(rotation=20, ha='right')
-    
-    # Format labels - smaller fonts for high DPI
-    plt.xticks(fontsize=9)
-    plt.yticks(fontsize=9)
+    # if df[category_column].nunique() > 4:
+        # plt.xticks(rotation=20, ha='right')
     
     # Adjust layout to prevent label cutoff (extra space for count labels)
     if show_counts:
         plt.subplots_adjust(bottom=0.25)
     else:
-        plt.tight_layout(pad=0.3)  # Smaller padding for high DPI
+        # plt.tight_layout(pad=0.3)  # Smaller padding for high DPI
+        pass
     
     # Print counts to console as well
     if show_counts:
@@ -433,7 +448,7 @@ def plot_boxplot_by_category(df, data_column, category_column, x_label=None, y_l
         medians = df.groupby(category_column)[data_column].median()
         for i, median in enumerate(medians):
             ax.text(i, median, f'{median:.1f}', ha='center', va='bottom', 
-                    fontweight='bold', fontsize=6,  # Smaller font for high DPI
+                    fontweight='bold',
                     bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8,
                              edgecolor='gray', linewidth=0.5))  # Thinner box for high DPI
                     
@@ -441,6 +456,18 @@ def plot_boxplot_by_category(df, data_column, category_column, x_label=None, y_l
         # Overlay actual data points - smaller points for high DPI
         sns.stripplot(data=df, x=category_column, y=data_column, 
                       size=2, alpha=1, color='black', ax=ax)  # Smaller points for high DPI
+    
+    wrap_tick_labels(ax, axes='y', width=18)
+    
+    # Font size settings
+    plt.rcParams.update({
+        'font.size': 8,           # Base font size (9pt)
+        'axes.titlesize': 10,     # Title slightly larger
+        'axes.labelsize': 8,      # Axis labels
+        'xtick.labelsize': 8,     # X-axis tick labels
+        'ytick.labelsize': 8,     # Y-axis tick labels
+        'legend.fontsize': 8,     # Legend text
+        })
     
     return fig
 
@@ -522,11 +549,11 @@ def main():
     results['fig'].savefig(f'{val_title} significance by {cat_title} heatmap.png', dpi=300, bbox_inches='tight', facecolor='white')
     
     # Generate boxplot of grouped data
-    fig = plot_boxplot_by_category(df, val_col, cat_col, cat_title, val_title, order=order, show_points=False, show_counts=False, scientific=True)
+    fig = plot_boxplot_by_category(df, val_col, cat_col, val_title, cat_title, order=order, show_points=False, show_counts=False, scientific=False)
     # Save figure
-    fig.savefig(f'{val_title} by {cat_title} boxplot.png', dpi=300, bbox_inches='tight', facecolor='white')
+    fig.savefig(f'{val_title} by {cat_title} boxplot horizontal.png', dpi=300, bbox_inches='tight', facecolor='white')
     
-    plt.show()
+    # plt.show()
 
 if __name__ == "__main__":
     main()
