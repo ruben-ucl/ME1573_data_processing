@@ -28,19 +28,19 @@ projection = '2d'
 plot_bg = 'w'
 
 pop_nans = True                     # bool
-regime_point_colours = True         # bool
+regime_point_colours = False         # bool
 regime_point_shapes = True          # bool
 colour_points_by_z = False          # bool
 label_points = False                # bool
 point_stems_3d = False              # bool
 include_hline = None                # float
 include_error_bars = None    # string or None
-include_legend = False              # bool
+include_legend = True              # bool
 
-include_curve_fit = False           # bool
+include_curve_fit = True           # bool
 include_surface_fit = False         # bool
 
-axis_sci_not = None                 # None, 'x', 'y' or 'both'
+axis_sci_not = 'x'                 # None, 'x', 'y' or 'both'
 LED_contours = False                # bool
 include_contours = False            # bool
 contour_cmap = 'Reds'              # string
@@ -58,7 +58,7 @@ contour_line_color = 'k'            # string
 ### X-axis settings ###
 #----------------------
 if True:
-    plotx = 'norm_H_prod'
+    plotx = 'MP_vol'
     # xlim = [150, 1300]
     # xlim = [0, 0.4]
     # xlim = [300, 2100]                      # scan speed
@@ -327,9 +327,11 @@ def surf_function(data, a, b, c, d, e, f, g, h, i, j):
     return a + b*x + c*y + d*x**2 + e*y**2 + f*x*y + g*x**2*y + h*x*y**2 + i*x**3 + j*y**3
     
 def curve_function(x, a, b, c, d):
-    return a*x + b
+    # return a*x + b
     # return a*x**b
-    # return a+b*np.log(x)
+    # return a*(1-b**(-c*x))+d
+    # return a/(1+np.exp(-b*(x-c)))
+    return a+b*np.log10(x)
 
 def draw_curve_fit(ax, xx, yy):
     # Remove value pairs that include NaN entries
@@ -347,13 +349,14 @@ def draw_curve_fit(ax, xx, yy):
     ss_tot = np.sum((yy-np.mean(yy))**2)
     r2 = 1 - (ss_res/ss_tot)
     a, b, c, d = [round(e, 3) for e in popt]
-    # ax.text(max(xx)*0.5, max(yy), f'y = {a}x\u00b2 + {b}x + {c}\nR\u00b2 = {round(r2, 3)}')
-    # ax.text(max(xx)*0.35, max(yy)*0.55,
+    ax.text(0.45, 0.55,
             # r'$\theta_{FKW} = tan^{-1}\left[a \dot \left(\frac{\Delta H}{h_m} \dot L_{th}^*+b\right)\right]$'+f'\na = {a}, b = {b}\nR\u00b2 = {round(r2, 3)}', 
-            # fontsize = 'small'
-            # )
-    ax.text(0.5, 0.65, f'R\u00b2 = {round(r2, 2):1.2f}', fontsize='small', transform=ax.transAxes)
-    # ax.text(0.3, 0.5, f'y={a}+{b}log(x), R\u00b2 = {round(r2, 2):1.2f}', fontsize='small', transform=ax.transAxes)
+            fr'$\eta={a}+{b}\log(V)$'
+            '\n'
+            '$\it{R\u00b2} = $' f'${round(r2, 2):1.2f}$',
+            fontsize = 'small',
+            transform=ax.transAxes
+            )
     ax.plot(X, Y, 'k--', lw=0.75, zorder=0)
 
 def draw_surface_fit(fig, ax, xx, yy, zz):
@@ -406,13 +409,14 @@ def create_legend(ax):
     # Create legend
     legend = ax.legend(handles,
                        labels,
-                       # loc = 'upper center',
-                       # bbox_to_anchor = (0.5, -0.2),
-                       ncol = 1,
+                       loc = 'upper center',
+                       bbox_to_anchor = (0.5, -0.2),
+                       ncol = 5,
                        fontsize = 'small',
                        fancybox = False,
                        framealpha = 0,
-                       edgecolor = 'inherit'
+                       edgecolor = 'inherit',
+                       columnspacing = 1
                        )
     legend.get_frame().set_linewidth(mpl.rcParams['axes.linewidth'])
 

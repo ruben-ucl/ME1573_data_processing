@@ -23,14 +23,16 @@ INTENDED CHANGES
 '''
 """Controls"""
 
-input_dset_name = 'bs-p10-s37_lagrangian'
+input_dset_name = 'ff_corrected'
 
-binary_dset_name = 'bs-p10-s37_lagrangian_bin'
+binary_dset_name = None
 binary_overlay_mode = 'outline'     # 'outline' or 'fill'
 overlay_suffix = '_KH-overlay' if binary_dset_name != None else ''
 
 output_name = f'{input_dset_name}{overlay_suffix}'
 
+upscale_factor = 3 # int or None
+overlay = True # bool
 capture_framerate = 504000 # fps
 output_framerate = 30 # fps
 text_colour = 'white'   # 'black' or 'white'
@@ -45,8 +47,12 @@ def main():
         trackid = fname[:5] + '0' + fname[-6]
         with h5py.File(file, 'a') as f:
             dset = np.array(f[input_dset_name])
+            if upscale_factor != None:
+                dset = dset.repeat(upscale_factor, axis=1).repeat(upscale_factor, axis=2)
             try:
                 binary_dset = np.array(f[binary_dset_name])   # Get binary dataset of same dimensions as input to use as coloured overlay in output video
+                if upscale_factor != None:
+                    binary_dset = binary_dset.repeat(upscale_factor, axis=1).repeat(upscale_factor, axis=2)
                 if binary_overlay_mode == 'outline':
                     binary_dset = get_perimeter(binary_dset, 1)
                 isRGB = True                        # If a binary dataset is enabled for a colour overlay, set to save vid in RGB
@@ -58,7 +64,7 @@ def main():
         fileext = '.mp4'
         vid_filename = f'{trackid}_{output_name}{fileext}'
         output_folder = 'videos'
-        create_video_from_dset(dset, vid_filename, output_folder, binary_dset, isRGB, overlay=False)
+        create_video_from_dset(dset, vid_filename, output_folder, binary_dset, isRGB, overlay)
 
 def get_perimeter(dset, weight):
     perimeter_mask = np.zeros_like(dset)
@@ -104,7 +110,20 @@ def create_overlay(i, frame, fontscale=1, scalebar_length=200, scale_txt_from_ri
     scale_txt_from_right = 70
     bottom_margin = 10
     left_margin = 5
+    
+    For 504 kHz full frame video:
+    fontscale = 0.8 # with upscale_factor = 3
+    scalebar_length = 200
+    scale_txt_from_right = 110
+    bottom_margin = 15
+    left_margin = 5
     '''
+    fontscale = 0.8 # with upscale_factor = 3
+    scalebar_length = 200
+    scale_txt_from_right = 110
+    bottom_margin = 15
+    left_margin = 5
+    
     if text_colour == 'black':
         bgr_colour = (0, 0, 0)
     elif text_colour == 'white':

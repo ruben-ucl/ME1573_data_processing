@@ -5,8 +5,9 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
 import scipy.optimize as optimize
-from scipy.interpolate import Rbf
 from sklearn.metrics import r2_score
+from scipy.interpolate import griddata
+from scipy.ndimage import gaussian_filter
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from tools import get_logbook, define_collumn_labels
@@ -20,7 +21,7 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 
 ### Figure settings ###
 #----------------------
-font_size = 9       # point
+font_size = 8       # point
 figsize = (6.3, 3.15)    # inch
 dpi = 300
 projection = '2d'
@@ -28,6 +29,7 @@ plot_bg = 'w'
 n_subplots = 1
 
 pop_nans = True
+smooth_data = True
 regime_point_colours = False
 regime_point_shapes = True
 label_points = False
@@ -93,6 +95,8 @@ if True:
     if bins_per_tick != None and zticks != None: contour_levels = (len(zticks) - 1) * bins_per_tick + 1
 
     plotz2 = 'eot_depression_depth'
+    
+    plotz3 = 'melting_efficiency'
 
 ### Additional axes settings ###
 #-------------------------------
@@ -107,7 +111,6 @@ if True:
     ploty3 = 'h_pores'
     y3lim = [-0.07, 1.07]
     y2ticks = [0, 1]
-    plotz3 = None
 
 def filter_logbook():
     log = get_logbook()
@@ -129,6 +132,15 @@ def filter_logbook():
     Al = log['Substrate material'] == 'Al'
     Ti64 = log['Substrate material'] == 'Ti64'
     lit = np.logical_or(Ti64, Al7A77)
+    
+    # filter by beamtime
+    ltp1 = log['Beamtime'] == 1
+    ltp2 = log['Beamtime'] == 2
+    ltp3 = log['Beamtime'] == 3
+    
+    # filter by substrate
+    s0514 = log['Substrate No.'] == '514'
+    s0515 = log['Substrate No.'] == '515'
 
     # Apply combination of above filters to select parameter subset to plot
     # log_red = log[np.logical_or(AlSi10Mg, lit) & L1 & cw & powder]
@@ -212,6 +224,7 @@ def plot_data(ax, log_red, marker_dict, col_dict):
     y = np.zeros_like(x)
     z = np.zeros_like(x)
     z2 = np.zeros_like(x)
+    z3 = np.zeros_like(x)
     
     # Add points to plot by iterating through the logbook row by row
     for i, row in log_red.iterrows():
@@ -229,6 +242,7 @@ def plot_data(ax, log_red, marker_dict, col_dict):
         y[i] = row[col_dict[ploty][0]]
         z[i] = row[col_dict[plotz][0]]
         z2[i] = row[col_dict[plotz2][0]]
+        z3[i] = row[col_dict[plotz3][0]]
 
         if projection == '2d':
             ax.scatter(x[i], y[i],
@@ -274,7 +288,7 @@ def plot_data(ax, log_red, marker_dict, col_dict):
                            linewidths = 0.5
                            )
     
-    return x, y, z, z2
+    return x, y, z, z2, z3
 
 def remove_nan_values(data):
     # Get indices of NaN values in all lists
@@ -283,27 +297,265 @@ def remove_nan_values(data):
         for i, e in enumerate(dset):
             if math.isnan(e) and i not in nan_indices:
                 nan_indices.append(i)
+                
     # Remove values at NaN indices from all lists
-    output_data = data
-    for dset in output_data:
-        for i in sorted(nan_indices, reverse=True):
-            del dset[i]
+    output_data = np.delete(data, nan_indices, axis=1)
+    
     print(f'Removed {len(nan_indices)} datapoints that contained NaN values')        
+    
     return output_data
 
-def draw_contours(fig, ax, col_dict, xx, yy, zz, zlim, contour_levels, zticks, label_var, contour_extend=None, cmap='Greys', alpha=1):
-    levels = np.linspace(zlim[0], zlim[1], contour_levels) if zlim != None else np.linspace(min(zz), max(zz), contour_levels)
-    contours = ax.tricontourf(xx, yy, zz, levels=levels, cmap=cmap, zorder=0, extend=contour_extend, alpha=alpha)
+def draw_contours_old(fig, ax, col_dict, x, y, z, zlim, contour_levels, zticks,
+                  label_var, contour_extend=None, cmap='Greys', alpha=1, filled=True,
+                  resolution=2, smooth_factor=None):
+                      
+    # Define contour function depending on whether it needs to be filled or not
+    contour_func = ax.tricontourf if filled == True else ax.tricontour
+    
+    # Define the number of levels depending on whether it is given explicitly or not
+    levels = np.linspace(zlim[0], zlim[1], contour_levels) if zlim != None else np.linspace(min(z), max(z), contour_levels)
+    
+    # Create regular grid
+    xi = np.linspace(np.min(x), np.max(x), resolution)
+    yi = np.linspace(np.min(y), np.max(y), resolution)
+    xi, yi = np.meshgrid(xi, yi)
+    
+    # Interpolate scattered data to regular grid
+    zi = griddata((x, y), z, (xi, yi), method='cubic')
+    
+    # Apply smoothing
+    if smooth_factor != None: zi = gaussian_filter(zi, sigma=smooth_factor)
+    
+    # Draw contours
+    contours = contour_func(xi, yi, zi, levels=levels, cmap=cmap, zorder=0, extend=contour_extend, alpha=alpha, linewidths=0.5)
+    
+    # Include colourbar - optional
     if include_cbar == True:
         cbar = fig.colorbar(contours, location='right', ticks=zticks, label=col_dict[label_var][1], shrink=1)
         if zticks != None: cbar.set_ticks(zticks)
-    
+        
+    # Draw single contour line at specified level - optional
     if contour_line != None:
-        if contour_text_loc[0] == None: contour_text_loc[0], contour_text_loc[1] = ((max(xx)+min(xx))/2, (max(yy)+min(yy))/2)
+        if contour_text_loc[0] == None: contour_text_loc[0], contour_text_loc[1] = ((max(x)+min(x))/2, (max(y)+min(y))/2)
         levels = [contour_line]
-        contours = ax.tricontour(xx, yy, zz, levels=levels, zorder=0, linestyles= '--', linewidths=0.7, colors=contour_line_color)
+        contours = ax.tricontour(x, y, z, levels=levels, zorder=0, linestyles= '--', linewidths=0.7, colors=contour_line_color)
         contour_text = fr'{contour_label} = {contour_line}{contour_unit}' if contour_label != '' else fr'{contour_line}{contour_unit}'
         ax.text(contour_text_loc[0], contour_text_loc[1], contour_text, c=contour_line_color)
+
+
+
+###############################################################
+
+
+def fit_polynomial(x, y, degree=2):
+    """Fit a polynomial of specified degree to x, y data."""
+    coeffs = np.polyfit(x, y, degree)
+    return coeffs
+
+def eval_polynomial(x, coeffs):
+    """Evaluate a polynomial with given coefficients at x points."""
+    return np.polyval(coeffs, x)
+
+def draw_contours(fig, ax, col_dict, x, y, z, zlim=None, contour_levels=20, zticks=None,
+                 label_var=None, contour_extend=None, cmap='Greys', alpha=1.0, 
+                 filled=True, resolution=20, smooth_factor=0, include_cbar=True, labels_on_plot=False,
+                 contour_line=None, contour_line_color='k', contour_label='',
+                 contour_unit='', contour_text_loc=(None, None), fit_contours=False,
+                 fit_degree=3, min_points=10, r2_threshold=0.9, fit_color='r',
+                 fit_style='--', fit_width=0.5, fit_alpha=0.7):
+    """
+    Draw smoothed contours from scattered data with optional features.
+    
+    Args:
+        fig: matplotlib figure object
+        ax: matplotlib axes object
+        x, y, z: coordinate and value arrays
+        zlim: tuple of (min, max) for z range, or None for auto-range
+        contour_levels: number of contour levels
+        zticks: custom ticks for colorbar, or None for auto-ticks
+        label_var: label for colorbar
+        contour_extend: how to extend contours beyond data range
+        cmap: colormap name
+        alpha: transparency of contours
+        filled: whether to use filled contours
+        resolution: grid resolution for smoothing
+        smooth_factor: smoothing intensity
+        include_cbar: whether to include colorbar
+        contour_line: value for single contour line, or None
+        contour_line_color: color for single contour line
+        contour_label: label for single contour line
+        contour_unit: unit for contour line label
+        contour_text_loc: (x, y) location for contour line label
+        fit_contours: whether to fit and plot polynomial curves to contour lines
+        fit_contours: whether to fit polynomials to contour lines
+        fit_degree: degree of polynomial fit (default: 2)
+        min_points: minimum number of points required for fitting
+        r2_threshold: minimum R² value for accepting a fit
+        fit_color: color of fitted curves
+        fit_style: line style of fitted curves
+        fit_width: line width of fitted curves
+        fit_alpha: transparency of fitted curves
+    
+    Returns:
+        contours: contour plot object
+        cbar: colorbar object (if include_cbar=True)
+        fit_results: dict of fitting results if fit_contours=True
+    """
+    # Create regular grid for smoothing
+    xi = np.linspace(np.min(x), np.max(x), resolution)
+    yi = np.linspace(np.min(y), np.max(y), resolution)
+    xi, yi = np.meshgrid(xi, yi)
+    
+    # Interpolate scattered data to regular grid
+    zi = griddata((x, y), z, (xi, yi), method='cubic')
+    
+    # Apply smoothing
+    zi = gaussian_filter(zi, sigma=smooth_factor, mode='nearest')
+    
+    # Define contour levels
+    if zlim is not None:
+        levels = np.linspace(zlim[0], zlim[1], contour_levels)
+    else:
+        levels = np.linspace(np.nanmin(z), np.nanmax(z), contour_levels)
+    
+    # Create contour plot
+    contour_func = ax.contourf if filled else ax.contour
+    contours = contour_func(
+        xi, yi, zi,
+        levels=levels,
+        cmap=cmap,
+        zorder=0,
+        extend=contour_extend,
+        alpha=alpha,
+        linewidths=0.5
+    )
+    
+    # Initialize fit results
+    fit_results = {
+        'levels': levels,
+        'coefficients': [],
+        'r2_scores': [],
+        'n_points': []
+    }
+    
+    # Fit polynomials to contour lines if requested
+    if fit_contours:
+        # Get contour line data
+        contour_lines = ax.contour(
+            xi, yi, zi,
+            levels=levels,
+            colors='k',
+            linewidths=0.5,
+            alpha=0.3,
+            zorder=1
+        )
+        
+        # Fit polynomial to each contour line
+        x_fit = np.linspace(np.min(x), np.max(x), 200)
+        
+        for i, collection in enumerate(contour_lines.collections):
+            level = levels[i]
+            paths = collection.get_paths()
+            
+            best_fit = None
+            best_r2 = -np.inf
+            best_x = None
+            best_y = None
+            
+            # Try fitting each path segment
+            for path in paths:
+                vertices = path.vertices
+                x_data = vertices[:, 0]
+                y_data = vertices[:, 1]
+                
+                # Skip if too few points
+                if len(x_data) < min_points:
+                    continue
+                
+                try:
+                    # Sort points by x-coordinate
+                    sort_idx = np.argsort(x_data)
+                    x_data = x_data[sort_idx]
+                    y_data = y_data[sort_idx]
+                    
+                    # Fit polynomial
+                    coeffs = fit_polynomial(x_data, y_data, degree=fit_degree)
+                    y_fit = eval_polynomial(x_data, coeffs)
+                    
+                    # Calculate R² score
+                    r2 = r2_score(y_data, y_fit)
+                    
+                    # Update best fit if this one is better
+                    if r2 > best_r2:
+                        best_r2 = r2
+                        best_fit = coeffs
+                        best_x = x_data
+                        best_y = y_data
+                
+                except Exception as e:
+                    continue
+            
+            # Store and plot the best fit if it meets the threshold
+            if best_fit is not None and best_r2 >= r2_threshold:
+                fit_results['coefficients'].append(best_fit)
+                fit_results['r2_scores'].append(best_r2)
+                fit_results['n_points'].append(len(best_x))
+                
+                # Plot fitted curve
+                y_fit = eval_polynomial(x_fit, best_fit)
+                ax.plot(x_fit, y_fit, fit_style, color=fit_color, 
+                       linewidth=fit_width, alpha=fit_alpha,
+                       label=f'Level {level:.2f}, R²={best_r2:.2f}')
+            else:
+                fit_results['coefficients'].append(None)
+                fit_results['r2_scores'].append(None)
+                fit_results['n_points'].append(None)
+    
+    # Add colorbar if requested
+    cbar = None
+    if include_cbar:
+        cbar = fig.colorbar(
+            contours,
+            ax=ax,
+            location='right',
+            ticks=zticks if zticks is not None else None
+        )
+        if label_var is not None:
+            cbar.set_label(col_dict[label_var][1])
+    
+    # Add contour labels along the contour lines if requested
+    if labels_on_plot == True:
+        ax.clabel(contours)
+    
+    # Add single contour line if requested
+    if contour_line is not None:
+        # Set default text location to center if not specified
+        if contour_text_loc[0] is None:
+            text_x = (np.max(x) + np.min(x)) / 2
+            text_y = (np.max(y) + np.min(y)) / 2
+        else:
+            text_x, text_y = contour_text_loc
+        
+        # Draw contour line
+        single_contour = ax.contour(
+            xi, yi, zi,
+            levels=[contour_line],
+            colors=contour_line_color,
+            linestyles='--',
+            linewidths=0.7,
+            zorder=1
+        )
+        
+        # Add contour label
+        contour_text = (f'{contour_label} = {contour_line}{contour_unit}' 
+                       if contour_label else f'{contour_line}{contour_unit}')
+        ax.text(text_x, text_y, contour_text, color=contour_line_color)
+    
+    return contours, cbar
+
+###############################################################
+
+
 
 def draw_hline(ax, hliney):
     ax.plot((0, 1400), (hliney, hliney), c='gray', ls='--', lw=0.7, zorder=0)
@@ -362,8 +614,6 @@ def draw_surface_fit(fig, ax, xx, yy, zz):
     model_y_data = np.linspace(min(yy), max(yy), 50)
     X, Y = np.meshgrid(model_x_data, model_y_data)
     Z = surf_function(np.array([X, Y]), *popt)
-    # rbf = Rbf(xx, yy, zz, function='cubic', smooth=0)
-    # Z = rbf(X, Y)
     
     for i in np.arange(len(X)):
         for j in np.arange(len(Y)):
@@ -409,7 +659,7 @@ def create_legend(ax):
                        )
     legend.get_frame().set_linewidth(mpl.rcParams['axes.linewidth'])
 
-def print_data_summary(x, y, z, z2):
+def print_data_summary(x, y, z, z2, z3):
     col_w = [10, 10, 10, 10]
     total_w = np.sum(col_w) + 3
     col_format = '{:<'+str(col_w[0])+'} {:<'+str(col_w[1])+'} {:<'+str(col_w[2])+'} {:<'+str(col_w[3])+'}'
@@ -422,44 +672,97 @@ def print_data_summary(x, y, z, z2):
         print(col_format.format('y', round(min(y), 2), round(np.mean(y), 2), round(max(y), 2)))
         print(col_format.format('z', round(min(z), 2), round(np.mean(z), 2), round(max(z), 2)))
         print(col_format.format('z2', round(min(z2), 2), round(np.mean(z2), 2), round(max(z2), 2)))
+        print(col_format.format('z3', round(min(z3), 2), round(np.mean(z3), 2), round(max(z3), 2)))
 
 def main():
     log_red = filter_logbook()
     marker_dict = define_point_formats()
     col_dict = define_collumn_labels()
     fig, axs = set_up_figure(col_dict)
-    x, y, z, z2 = plot_data(axs[0], log_red, marker_dict, col_dict)
+    x, y, z, z2, z3 = plot_data(axs[0], log_red, marker_dict, col_dict)
+    data = np.stack((x, y, z, z2, z3), axis=0)
     
     if pop_nans == True:
-        data = (x, y, z)
-        (x, y, z) = remove_nan_values(data)
+        data = remove_nan_values(data)
+    
+    if smooth_data == True:
+        pass
+    
+    x = data[0]
+    y = data[1]
+    z = data[2]
+    z2 = data[3]
+    z3 = data [4]
         
     if include_contours == True and projection == '2d':
-        cmap = plt.cm.get_cmap('Blues').copy()
-        cmap.set_under(color='w', alpha=0)
+        cmap = plt.get_cmap('Blues').copy()
+        cmap.set_under(color='w', alpha=1)
         zlim = [0, 150]
         contour_levels = 7
         zticks = [0, 50, 100, 150]
         z_mod = z2
-        z_mod[z2 == 0] = -1
-        draw_contours(fig, axs[0], col_dict, x, y, z_mod, zlim, contour_levels, zticks, label_var=plotz2, contour_extend=None, cmap=cmap, alpha=0.7)
+        print(z_mod)
+        z_mod[z2 == 0] = -50
+        draw_contours(fig,
+            axs[0],
+            col_dict,
+            x,
+            y,
+            z_mod,
+            zlim,
+            contour_levels,
+            zticks,
+            label_var=plotz2,
+            resolution=18,
+            contour_extend='max',
+            cmap=cmap,
+            alpha=0.7)
         
-        cmap = plt.cm.get_cmap('Reds').copy()
-        cmap.set_under(color='w', alpha=0)
+        cmap = plt.get_cmap('Reds').copy()
+        cmap.set_under(color='w', alpha=1)
         zlim = [0, 180]
         contour_levels = 7
         zticks = [0, 60, 120, 180]
         z_mod = z
         z_mod[z == 0] = -30
-        draw_contours(fig, axs[0], col_dict, x, y, z_mod, zlim, contour_levels, zticks, label_var=plotz, contour_extend=None, cmap=cmap, alpha=0.7)
-        
-        # cmap = plt.cm.get_cmap('Blues').copy()
-        # cmap.set_under(color='w', alpha=0)
-        # zlim = [0, 2]
-        # contour_levels = 3
-        # zticks = [0, 1, 2]
-        # draw_contours(fig, ax, col_dict, xx, yy, zz, zlim, contour_levels, zticks, label_var=plotz, contour_extend=None, cmap=cmap, alpha=0.4)
-        
+        draw_contours(fig,
+            axs[0],
+            col_dict,
+            x,
+            y,
+            z_mod,
+            zlim,
+            contour_levels,
+            zticks,
+            label_var=plotz,
+            resolution=18,
+            contour_extend=None,
+            cmap=cmap,
+            alpha=0.7)
+            
+        cmap = plt.get_cmap('Greys')
+        zlim = [0.05, 0.35]
+        contour_levels = 7
+        zticks = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35]
+        draw_contours(fig,
+            axs[0],
+            col_dict,
+            x,
+            y,
+            z3,
+            zlim,
+            contour_levels,
+            zticks,
+            label_var=plotz3,
+            resolution=18,
+            cmap=cmap,
+            alpha=1,
+            filled=False,
+            labels_on_plot=True,
+            include_cbar=False)
+    
+    axs[0].set_facecolor('grey')
+
     if include_hline != None and projection == '2d':
         draw_hline(axs[0], include_hline)
         
@@ -474,7 +777,7 @@ def main():
     if include_legend == True:
         create_legend(axs[0])
     
-    print_data_summary(x, y, z, z2)
+    print_data_summary(x, y, z, z2, z3)
     
     plt.show()
 

@@ -3,7 +3,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import glob, functools, os, sys, h5py
 from pathlib import Path
-from scipy.signal import medfilt, find_peaks
+from scipy.signal import medfilt, find_peaks, savgol_filter
+from scipy.stats import describe
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from tools import get_paths
@@ -13,27 +14,34 @@ __version__ = '1.0'
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-data_path = get_paths()['hdf5']
-group = 'KH/'
+# data_path = get_paths()['hdf5']
+data_path = r'E:/sim_segmented_300W_800mm_s/SLM_Al10SiMg_1st_layer_4mm_350W_800mms'
+# group = 'AMPM/'
+group = 'meas/'
+# time_label = 'Time'
 time_label = 'time'
-data_label = 'max_depth'
-general_filename = '*.hdf5'
+# data_label = 'Photodiode1Bits'
+data_label = 'sum(Q) (stats)'
+general_filename = 'absorption.hdf5'
 
 labels = {'area': ['Keyhole area', ' [μm\u00b2]'],
           'max_depth': ['Keyhole depth', '\n[μm]'],
           'max_length': ['Keyhole length', '\n[μm]'],
           'AR': ['Keyhole aspect ratio', ',\nd/l'],
           'fkw_angle': ['Keyhole front wall angle', '\n[°]'],
-          'Photodiode1Bits': ['Photodiode 1 intensity', '\n']
+          'Photodiode1Bits': ['Photodiode 1 intensity', '\n'],
+          'KH_depth_um': ['Keyhole depth', '\n[μm]'],
+          'EnergyAbsorbed_W': ['Laser absorption', '\n[W]'],
+          'sum(Q) (stats)': ['Laser absorption', '\n[W]']
           }
 
 plot_x_fraction = 0.25 # Set fraction of frequency range to plot on FFT inset
 plot_y_fraction = 1.05 # Set fraction of fft magnitude to plot on FFT inset
 med_filt_window = None # None or odd-valued int
-running_mean_window = 5 # None or odd-valued int
+running_mean_window = None # None or odd-valued int
+savgol_window = 5 # None or int
 plot_sum = False
 label_peaks = False
-sr = 40 # kHz
 mode = 'save'
 
 def main():
@@ -48,8 +56,18 @@ def main():
         # df = pd.read_csv(f, index_col=0)
         with h5py.File(f, 'r') as file:
             try:
-                t = np.array(file[group+time_label])[10:-10]#[500:-490]
-                x = np.array(file[group+data_label])[10:-10]#[500:-490]
+                # t = np.array(file[group+time_label])[10:-10]#[500:-490]
+                # t = np.array(file[group+time_label])[510:-510]
+                # t = np.array(file[group+time_label])
+                t = np.array(file[group+time_label])[116:-1]
+                # x = np.array(file[group+data_label])[10:-10]#[500:-490]
+                # x = np.array(file[group+data_label])[510:-510]
+                # x = np.array(file[group+data_label])
+                x = np.array(file[group+data_label])[116:-1]
+                print(describe(x))
+                delta_t = (t[-1]-t[0])/len(t) # s
+                sr = 0.001/delta_t # kHz
+                
             except KeyError:
                 print(f'Dataset \'{data_label}\' not found - skipping file')
                 continue
@@ -59,6 +77,8 @@ def main():
         if running_mean_window != None:
             x = np.convolve(x, np.ones(running_mean_window)/running_mean_window, mode='valid')
             t = t[:-running_mean_window+1]
+        if savgol_window != None:
+            x = savgol_filter(x, savgol_window, 1)
         
         N = len(t)
         X = np.fft.fft(x-np.mean(x))/1000
@@ -81,14 +101,15 @@ def main():
         ax2.set_xlabel('Frequency [kHz]')
         ax2.set_ylabel('FFT Amplitude')
         x_max = sr/2
+        # x_max = 20
         ax2.set_xlim(0, x_max)
         ax2.set_ylim(0, None)
-        ax2.set_xticks([0, 5, 10, 15, 20])
+        # ax2.set_xticks([0, 5, 10, 15, 20])
         
         if True:
             ax2_sub = ax2.inset_axes([0.4,0.45,0.55,0.45])
             ax2_sub.stem(freq, np.abs(X), markerfmt=' ', basefmt=' ')
-            x2_max = sr/2*plot_x_fraction
+            x2_max =x_max*plot_x_fraction
             y2_max = np.max(np.abs(X))*plot_y_fraction
             ax2_sub.set_xlim(0, x2_max)
             ax2_sub.set_ylim(0, y2_max)
@@ -96,6 +117,7 @@ def main():
         
         if mode == 'save':
             output_folder = f'{data_path}/FFT_{data_label}'
+            print('Figure saved to ', output_folder)
             if not os.path.exists(output_folder):
                     os.makedirs(output_folder)
             plt.savefig(str(Path(output_folder, f'{trackid}_{data_label}_fft.png')))
@@ -126,7 +148,7 @@ def main():
             if True:
                 ax1_sub = ax1.inset_axes([0.4,0.45,0.55,0.45])
                 ax1_sub.stem(freq, np.abs(X), markerfmt=' ', basefmt=' ')
-                x_max = sr/2*plot_x_fraction
+                x_max = x_max/2*plot_x_fraction
                 y_max = np.max(fft_sum)*plot_y_fraction
                 ax1_sub.set_xlim(0, x_max)
                 ax1_sub.set_ylim(0, None)

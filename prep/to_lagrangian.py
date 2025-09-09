@@ -18,15 +18,16 @@ print = functools.partial(print, flush=True)
 
 # Main inputs
 mode = 'save'   # 'preview' or 'save'
-input_dset_name = 'bs-p10-s37'
-output_dset_name = f'{input_dset_name}_lagrangian'  # Set fov_h = 220 for keyhole, fov_h = 350 for meltpool
+input_dset_name = 'bs-f40'
+output_dset_name = f'{input_dset_name}_lagrangian_long'  # Set fov_h = 220 for keyhole, fov_h = 350 for meltpool
 # output_dset_name = 'ffc_lagrangian'  # Set fov_h = 220 for keyhole, fov_h = 350 for meltpool
 
 # Read logbook for accessing scan speeds and laser onset frame numbers
 logbook = get_logbook()
 
 # Read folder path to hdf5 files
-filepath = get_paths()['hdf5']
+# filepath = get_paths()['hdf5']
+filepath = r'E:/ESRF ME1573 LTP 6 Al data HDF5/ffc'
 
 # Read .csv file containing substrate linear fits
 # File should have headers: 'trackid', 'm', 'c'
@@ -40,7 +41,7 @@ substrate_surface_measurements_fpath = Path(filepath,
 # Main batch processing loop
 def main():
     # Get list of hdf5 files
-    files = glob.glob(str(Path(filepath, '*.h*5')))
+    files = glob.glob(str(Path(filepath, '*06.h*5')))
     
     # Iterate through files
     for f in sorted(files):
@@ -73,26 +74,26 @@ def main():
                 
                 # Run Lagrangian cropping operation
                 # For 40 kHz video
-                dset_lagrangian = to_lagrangian(dset,
-                    scan_speed,
-                    framerate,
-                    substrate_surface_coords,
-                    fov_h = 350,
-                    shift_v = 100,
-                    fov_v = 230)
-
-                # For 504 kHz
                 # dset_lagrangian = to_lagrangian(dset,
                     # scan_speed,
                     # framerate,
                     # substrate_surface_coords,
-                    # track_l=256*0.0043,
-                    # fov_v=50,
-                    # fov_h=60,
-                    # shift_v=0,
-                    # shift_h=10,
-                    # laser_start_pos=0,
-                    # start_frame=50)
+                    # fov_h = 100,
+                    # shift_v = 100,
+                    # fov_v = 230)
+
+                # For 504 kHz
+                dset_lagrangian = to_lagrangian(dset,
+                    scan_speed,
+                    framerate,
+                    substrate_surface_coords,
+                    track_l=256*0.0043,
+                    fov_v=45,
+                    fov_h=120,
+                    shift_v=3,
+                    shift_h=25,
+                    laser_start_pos=0,
+                    start_frame=88)
                 
                 print('Output: shape: %s, dtype: %s'% (dset_lagrangian.shape, dset_lagrangian.dtype))
                 
@@ -139,6 +140,7 @@ def to_lagrangian(dset, scan_speed, framerate, substrate_surface_coords,
         
     # Calculate scan speed in pixels
     scan_speed_px = 1000 * scan_speed / (px_size * framerate)
+    print('Scan speed: ', scan_speed, ' mm/s')
     
     # Iterate through frames, cropping each so that the keyhole is in the same position relative to the new frame edges
     for i, frame in enumerate(dset[start_frame:]):

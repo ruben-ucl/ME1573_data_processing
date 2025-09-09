@@ -3,5 +3,6 @@
 desktop.ini
 data_path.txt
 ml/logs/
-ml/output/
+ml/outputs/
 ml/temp/
+ml/models/

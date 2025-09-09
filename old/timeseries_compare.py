@@ -47,8 +47,8 @@ def main():
         
         df1 = pd.read_csv(f1, index_col=0)
         df2 = pd.read_csv(f2, index_col=0)
-        t1 = df1['time'][:-running_mean_window+1]
-        t2 = df2['time'][:-running_mean_window+1]
+        t1 = df1['time']
+        t2 = df2['time']
         var1 = get_data(label1, df1)
         var2 = get_data(label2, df2)
         
@@ -60,33 +60,47 @@ def main():
             var1 = medfilt(var1, med_filt_window)
             var2 = medfilt(var2, med_filt_window)
         if running_mean_window != None:
+            t1 = t1[:-running_mean_window+1]
+            t2 = t2[:-running_mean_window+1]
             var1 = np.convolve(var1, np.ones(running_mean_window)/running_mean_window, mode='valid')
             var2 = np.convolve(var2, np.ones(running_mean_window)/running_mean_window, mode='valid')
         
-        
-        plt.rcParams.update({'font.size': 8})
         # fig = plt.figure(figsize=(6.3, 3.15), dpi=300, tight_layout=True)
-        fig = plt.figure(figsize=(4, 5), dpi=300, tight_layout=True)
-        fig.suptitle(f'{trackid}: {labels[label1][0]}, {labels[label2][0]}\n')
+        fig = plt.figure(figsize=(2.5, 2.5), dpi=300)
+        # fig.suptitle(f'{trackid}: {labels[label1][0]}, {labels[label2][0]}\n')
         
         ax1 = fig.add_subplot(111)
-        ax1.plot(t1, var1, '-', c='tab:blue', lw=1, marker='o', markersize=3.5, label=labels[label1][0])
+        ax1.plot(t1, var1, '-', c='tab:blue', lw=0.8, marker='o', markersize=2, label=labels[label1][0])
         # ax1.plot(t1, var1, '-', c='tab:blue', lw=0.8, markersize=2, label=labels[label1][0])
-        ax1.set_xlabel('Time [ms]', fontsize=10)
+        ax1.set_xlabel('Time [ms]')
         ax1.set_xlim(0.08, 0.2)
         ax1.set_ylim(0, 100)
-        ax1.set_ylabel(labels[label1][0]+labels[label1][1], c='tab:blue', fontsize=10)
-        ax1.legend(loc='lower left', bbox_to_anchor=(0.01, 0.1), framealpha=0)
+        ax1.set_ylabel(labels[label1][0]+labels[label1][1], c='tab:blue')
+        # ax1.legend(loc='lower left', bbox_to_anchor=(0.01, 0.1), framealpha=0)
+        ax1.legend(loc='lower left', bbox_to_anchor=(0.0, 0.1), framealpha=0, labels=['depth'], borderpad=0.2)
         
         ax2 = ax1.twinx()
         ax2.set_ylim(0, 80)
-        ax2.plot(t2, var2, '--', c= 'tab:red', lw=1, marker='x', markersize=4, label=labels[label2][0])
+        ax2.plot(t2, var2, '--', c= 'tab:red', lw=0.8, marker='x', markersize=2.5, label=labels[label2][0])
         # ax2.plot(t2, var2, '--', c= 'tab:red', lw=0.8, markersize=3, label=labels[label2][0])
-        ax2.set_ylabel(labels[label2][0]+labels[label2][1], c='tab:red', fontsize=10)
-        ax2.legend(loc='lower left', bbox_to_anchor=(0.01, 0.02), framealpha=0)
+        ax2.set_ylabel(labels[label2][0]+labels[label2][1], c='tab:red')
+        # ax2.legend(loc='lower left', bbox_to_anchor=(0.01, 0.02), framealpha=0)
+        ax2.legend(loc='lower left', bbox_to_anchor=(0.0, 0.0), framealpha=0, labels=['angle'], borderpad=0.2)
         
-        plt.show()
-        # plt.savefig(str(Path(path1, 'plots_smoothed', f'{trackid}_KH_{label1}_and_{label2}')))
+            # Font size settings
+        plt.rcParams.update({
+            'font.size': 8,           # Base font size (9pt)
+            'axes.titlesize': 10,     # Title slightly larger
+            'axes.labelsize': 8,      # Axis labels
+            'xtick.labelsize': 8,     # X-axis tick labels
+            'ytick.labelsize': 8,     # Y-axis tick labels
+            'legend.fontsize': 7,     # Legend text
+            })
+        
+        ax1.set_xticks([0.1, 0.15, 0.2])
+        
+        # plt.show()
+        fig.savefig(str(Path(path1, 'plots_smoothed', f'{trackid}_KH_{label1}_and_{label2}.png')), dpi=300, facecolor='white', bbox_inches='tight')
         plt.close()
 
 def get_data(label, df):

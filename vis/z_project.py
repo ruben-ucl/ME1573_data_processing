@@ -26,16 +26,17 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 
 # Input informaton
 # Read data folder path from .txt file
-filepath = get_paths()['hdf5']
+# filepath = get_paths()['hdf5']
+filepath = r'E:/ESRF ME1573 LTP 6 Al data HDF5/ffc'
     
-input_dset_name = 'bs-p5-s5_lagrangian'
+input_dset_name = 'bs-f40_lagrangian_long'
 
 frame_reduction_factor = 1                              # Set to 1 to use all frames
 filter_radius = None                                    # Median filter radius, set to None for no filter
 mode = 'save'                                           # Set to 'view' or 'save'
 proj_mode = 'mean'                                      # 'median', 'mean', 'min' or 'max'
-skip_frames_end = 80                                    # For Lagrangian videos use 45, set to 0 to use all frames
-skip_start_frames = 50
+skip_frames_end = 140                                    # For Lagrangian videos use 45, set to 0 to use all frames
+skip_start_frames = 270
 
 reduction_txt = f'_x{frame_reduction_factor}_stack_reduction' if frame_reduction_factor != 1 else ''
 folder_name = f'{input_dset_name}_z_projection_{proj_mode}{reduction_txt}'
@@ -82,12 +83,12 @@ def main():
             # Plot figure
             plt.rcParams.update({'font.size': 8})
             fig, ax = plt.subplots(figsize=(4, 2), dpi=600, tight_layout=True)
-            im = ax.imshow(output_im, cmap='viridis', vmin=0, vmax=255) # Keyhole default colour bar 110:140
+            im = ax.imshow(output_im, cmap='viridis', vmin=100, vmax=150) # Keyhole default colour bar 110:140
             scalebar = ScaleBar(dx=4.3, units='um', location='lower left', width_fraction=0.02, box_alpha=0)
             plt.gca().add_artist(scalebar)
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="3%", pad=0.05)
-            plt.colorbar(im, cax=cax, ticks=[0, 255])
+            plt.colorbar(im, cax=cax, ticks=[100, 150])
             cax.set_ylabel('Mean intensity')
             ax.get_xaxis().set_visible(False)
             ax.get_yaxis().set_visible(False)

@@ -8,8 +8,12 @@ Author:     Rubén Lambert-Garcia
 Version:    0.1
 """
 
+# Ensure UTF-8 encoding for all I/O operations
+import os
+os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+
 # Package imports
-import os, sys, h5py, keras, glob
+import sys, h5py, keras, glob
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gs
@@ -19,9 +23,11 @@ from contextlib import redirect_stdout
 from sklearn.model_selection import train_test_split
 from keras.utils import normalize
 from tensorflow.keras.models import Sequential
+from tensorflow.keras.utils import Sequence
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import CSVLogger
+from tensorflow.keras.callbacks import CSVLogger, EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout, BatchNormalization
+from tensorflow.keras.regularizers import l1, l2
 
 # Local imports
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
@@ -38,7 +44,7 @@ dset_names = ['AMPM/Time',
 # Settings
 sr = 100 # Sampling rate in kHz
 wl = 1  # Window length in ms
-wo = 0 # Window offset in ms
+wo = 0.8 # Window offset in ms
 bit_depth = 16 # Bit depth of greyscale training images
 img_channels = 1 # Colour channels in image (1 or 3)
 trim = 500 # Number of points to trim from start/end of data (default 500 for AMPM)
@@ -49,7 +55,7 @@ filter_log = True
 generate_signal_overview_plots = False
 show_figs = False
 save_figs = False
-generate_training_data = False
+generate_training_data = False  
 label_images = False
 train = True
 debug = False
@@ -128,7 +134,7 @@ def filter_logbook(log):
     if filter_log == False:
         log_red = log[L1]
     else:
-        log_red = log[AlSi10Mg & L1 & cw]
+        log_red = log[AlSi10Mg & L1 & cw & powder]
     
     track_list = log_red['trackid'].tolist()
     return track_list
@@ -366,38 +372,81 @@ def get_training_dataset(im_root_folder):
     
     return X_train, X_test, y_train, y_test
 
+# Augment dataset
+def data_augmentation_generator(X, y, batch_size=32):
+    """
+    Generate batches of augmented data
+    
+    Args:
+        X: Input data with shape (samples, sequence_length, channels)
+        y: Target labels (one-hot encoded)
+        batch_size: Number of samples per batch
+        
+    Yields:
+        Batches of augmented data
+    """
+    num_samples = X.shape[0]
+    
+    while True:
+        # Shuffle the data
+        indices = np.random.permutation(num_samples)
+        
+        for i in range(0, num_samples, batch_size):
+            batch_indices = indices[i:i+batch_size]
+            batch_X = X[batch_indices].copy()
+            batch_y = y[batch_indices].copy()
+            
+            # Apply augmentation
+            for j in range(len(batch_X)):
+                # Apply random augmentation with certain probability
+                if np.random.random() < 0.5:
+                    # Apply one or more augmentations
+                    augmentation_choice = np.random.random()
+                    
+                    if augmentation_choice < 0.5:
+                        # Add calibrated noise
+                        noise_level = np.random.uniform(0.01, 0.05)
+                        batch_X[j] += np.random.normal(0, noise_level, size=batch_X[j].shape)
+                        
+                    else:
+                        # Scale amplitude
+                        scale_factor = np.random.uniform(0.95, 1.05)
+                        batch_X[j] *= scale_factor
+            
+            yield batch_X, batch_y
+
 # Define ML model parameters
-def build_model(input_shape):
+def build_model_v1(input_shape):
     model = Sequential()
     
     # First convolutional block
     model.add(Conv1D(16, kernel_size=3, activation='relu', padding='same', input_shape=input_shape))
-    # model.add(BatchNormalization())
+    model.add(BatchNormalization())
     model.add(Conv1D(16, kernel_size=3, activation='relu', padding='same'))
     model.add(MaxPooling1D(pool_size=2))
-    model.add(Dropout(0.25))
+    model.add(Dropout(0.2))
     
     # Second convolutional block
     model.add(Conv1D(32, kernel_size=3, activation='relu', padding='same'))
-    # model.add(BatchNormalization())
+    model.add(BatchNormalization())
     model.add(Conv1D(32, kernel_size=3, activation='relu', padding='same'))
     model.add(MaxPooling1D(pool_size=2))
-    model.add(Dropout(0.25))
+    model.add(Dropout(0.2))
     
     # Third convolutional block
     model.add(Conv1D(64, kernel_size=3, activation='relu', padding='same'))
     model.add(BatchNormalization())
     model.add(Conv1D(64, kernel_size=3, activation='relu', padding='same'))
     model.add(MaxPooling1D(pool_size=2))
-    model.add(Dropout(0.25))
+    model.add(Dropout(0.2))
     
     # Flatten and dense layers
     model.add(Flatten())
     model.add(Dense(128, activation='relu'))
-    # model.add(BatchNormalization())
-    model.add(Dropout(0.5))
+    model.add(BatchNormalization())
+    model.add(Dropout(0.3))
     model.add(Dense(64, activation='relu'))
-    model.add(Dropout(0.5))
+    model.add(Dropout(0.3))
     
     # Output layer - adjust units and activation based on your task
     # For classification:
@@ -405,16 +454,106 @@ def build_model(input_shape):
     
     return model
 
+def build_model_v2(input_shape=(100, 2), num_classes=1):
+    """
+    Creates a CNN model adapted for small datasets of multi-channel 1D signals.
+    
+    Args:
+        input_shape: Tuple specifying input dimensions (sequence_length, channels)
+        num_classes: Number of signal classes to classify
+        
+    Returns:
+        Compiled Keras model
+    """
+    model = Sequential()
+    
+    # First convolutional block with strong regularization
+    model.add(Conv1D(filters=16, kernel_size=7, 
+                     activation='relu', 
+                     padding='same',
+                     kernel_regularizer=l2(0.001),
+                     input_shape=input_shape))
+    model.add(BatchNormalization())
+    model.add(MaxPooling1D(pool_size=2))
+    model.add(Dropout(0.1))
+    
+    # Second convolutional block
+    model.add(Conv1D(filters=32, kernel_size=5, 
+                     activation='relu', 
+                     padding='same',
+                     kernel_regularizer=l2(0.001)))
+    model.add(BatchNormalization())
+    model.add(MaxPooling1D(pool_size=2))
+    model.add(Dropout(0.1))
+    
+    # Flatten and dense layers
+    model.add(Flatten())
+    model.add(Dense(64, activation='relu', 
+                   kernel_regularizer=l2(0.001),
+                   activity_regularizer=l1(0.001)))
+    model.add(BatchNormalization())
+    model.add(Dropout(0.2))
+    
+    # Output layer
+    model.add(Dense(num_classes, activation='sigmoid' if num_classes==1 else 'softmax'))
+    
+    # Compile model with Adam optimizer
+    model.compile(optimizer='adam',
+                  loss='binary_crossentropy' if num_classes==1 else 'categorical_crossentropy',
+                  metrics=['accuracy'])
+    
+    return model
+
 # For automatic version numbering    
 def get_latest_version(model_dir):
+    """Get the latest version number from model files in directory."""
     model_list = sorted(glob.glob(str(Path(model_dir, 'PD_timeseries_classifier_*.h5'))))
     
-    try:
-        v_num = model_list[-1][-6:-3]
-    except IndexError:
-        v_num = '000'
+    if not model_list:
+        return '000'
+    
+    # Extract version numbers from filenames and find the highest
+    versions = []
+    for model_file in model_list:
+        filename = Path(model_file).stem
+        # Look for patterns like "_001", "_v001", "_123" at the end of filename
+        import re
+        version_match = re.search(r'[_v]?([0-9]{3})$', filename)
+        if version_match:
+            try:
+                version_num = int(version_match.group(1))
+                versions.append(version_num)
+            except ValueError:
+                continue
+    
+    if versions:
+        next_version = max(versions) + 1
+        return f'{next_version:03d}'
+    else:
+        return '001'  # Start from 001 if no valid versions found
+
+# Define callbacks for training
+def get_training_callbacks(model_dir, v_num):
+    """
+    Returns a list of callbacks for training the model
+    """
+    callbacks = [
+        #Use CSVlogger to record training process
+        CSVLogger(Path(model_dir, f'{v_num}_info', f'CWT_image_binary_classification_{v_num}_training_log.csv'),
+            append=True),
+            
+        # Stop training when validation loss stops improving
+        EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True),
         
-    return v_num
+        # Reduce learning rate when validation loss plateaus
+        ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-6),
+        
+        # Save best model during training
+        ModelCheckpoint(Path(model_dir, f'PD_timeseries_classifier_{v_num}.h5'),
+            save_best_only=True,
+            monitor='val_loss')
+    ]
+    return callbacks
 
 # Resize test and train datasets for Keras compatability
 def batch_resize(datasets, size):
@@ -440,12 +579,9 @@ def train_model(X_train, X_test, y_train, y_test, model, im_root_folder):
     # Create output folder for supporting file
     if not os.path.exists(Path(model_dir, f'{v_num}_info')):
         os.makedirs(Path(model_dir, f'{v_num}_info'))
-        
-    #Use CSVlogger to record training process
-    csv_logger = CSVLogger(Path(model_dir,
-        f'{v_num}_info', 
-        f'CWT_image_binary_classification_{v_num}_training_log.csv'),
-        append=True)
+    
+    # Get training callbacks
+    callbacks = get_training_callbacks(model_dir, v_num)
     
     # Learning rate
     learning_rate = 0.0001
@@ -458,18 +594,22 @@ def train_model(X_train, X_test, y_train, y_test, model, im_root_folder):
                   loss='binary_crossentropy',
                   metrics=['accuracy'])
                   
+    # Augment training data
+    batch_size = 8
+    train_generator = SignalDataGenerator(X_train, y_train, batch_size=batch_size, augment=True)
+    val_generator = SignalDataGenerator(X_test, y_test, batch_size=batch_size, augment=False)
+    
     # Model training
-    history = model.fit(X_train, 
-        y_train,
-        batch_size = 8,
+    history = model.fit(train_generator,
+        validation_data = val_generator,
+        steps_per_epoch = len(X_train) // batch_size,
         verbose = 1,
-        epochs = 100,
-        validation_data = (X_test, y_test),
+        epochs = 300,
         shuffle = False,
-        callbacks = [csv_logger])
+        callbacks = callbacks)
     
     # Save model
-    model.save(Path(model_dir, f'PD_timeseries_classifier_{v_num}.h5'))
+    # model.save(Path(model_dir, f'PD_timeseries_classifier_{v_num}.h5'))
     
     # Save model metadata
     with open(Path(model_dir, f'{v_num}_info', f'CWT_image_binary_classification_{v_num}_info.txt'), 'w') as f:
@@ -484,6 +624,51 @@ def train_model(X_train, X_test, y_train, y_test, model, im_root_folder):
             model.summary()
         
         f.write('\n\nNotes:')
+
+class SignalDataGenerator(Sequence):
+    def __init__(self, X, y, batch_size=32, augment=True):
+        self.X = X
+        self.y = y
+        self.batch_size = batch_size
+        self.augment = augment
+        self.indices = np.arange(len(self.X))
+        np.random.shuffle(self.indices)
+    
+    def __len__(self):
+        return int(np.ceil(len(self.X) / self.batch_size))
+    
+    def __getitem__(self, idx):
+        batch_indices = self.indices[idx * self.batch_size:(idx + 1) * self.batch_size]
+        batch_X = self.X[batch_indices].copy()
+        batch_y = self.y[batch_indices].copy()
+        
+        if self.augment:
+            # Apply augmentation
+            for i in range(len(batch_X)):
+                # Apply random augmentation with certain probability
+                if np.random.random() < 0.5:
+                    # Apply one or more augmentations
+                    augmentation_choice = np.random.random()
+                    
+                    if augmentation_choice < 0.5:
+                        # Add calibrated noise
+                        noise_level = np.random.uniform(0.01, 0.05)
+                        batch_X[i] += np.random.normal(0, noise_level, size=batch_X[i].shape)
+                        
+                        # clip <---------------------------------------------------------------------------
+                        
+                    else:
+                        # Scale amplitude
+                        scale_factor = np.random.uniform(0.95, 1.05)
+                        batch_X[i] *= scale_factor
+                        
+                        # clip <---------------------------------------------------------------------------
+        
+        return batch_X, batch_y
+    
+    def on_epoch_end(self):
+        # Shuffle indices at the end of each epoch
+        np.random.shuffle(self.indices)
 
 # Main loop iterates through files to compile training data
 def main():
@@ -602,7 +787,7 @@ def main():
         X_train, X_test = batch_resize([X_train, X_test], [-1, 100, 2])
         
         # Get model
-        model = build_model((100, 2))
+        model = build_model_v2((100, 2))
         
         # Train model
         train_model(X_train, X_test, y_train, y_test, model, im_root_folder)

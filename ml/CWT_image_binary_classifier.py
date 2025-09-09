@@ -3,10 +3,12 @@ Code by Dr Wei Li and Rubén Lambert-Garcia
 20th February 2025
 '''
 
+# Ensure UTF-8 encoding for all I/O operations
+import os
+os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
 
 # import libaries as needed
-
-import os, pywt, glob, sys, keras, cv2
+import pywt, glob, sys, keras, cv2
 from pathlib import Path
 import numpy as np
 from contextlib import redirect_stdout
@@ -27,7 +29,10 @@ from keras.models import load_model
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from tools import get_paths
 
-train_new = True # 'train' or 'evaluate'
+# Import centralized configuration
+from config import get_cwt_data_dir
+
+train_new = False # 'train' or 'evaluate'
 evaluate = True # Run model evaluation, bool
 draw_model_architecture = False # bool
 display_cam = True # bool
@@ -36,11 +41,11 @@ show_confusion = True # bool
 
 # Set image path and size
 
-image_directory = Path(r'E:\AlSi10Mg single layer ffc\CWT_ML_training_data\CWT_labelled_cw_powder_in-situ_ss_double_sliced')
+image_directory = Path(get_cwt_data_dir())
 model_dir = Path('ml', 'models')
-SIZE_X = 50 
+SIZE_X = 100 
 SIZE_Y = 256
-img_channels = 3
+img_channels = 1
 img_size = (SIZE_X, SIZE_Y)
 
 
@@ -75,7 +80,11 @@ def create_dataset():
     label = np.array(label)
 
     # Split the data set as needed
-    X_train, X_test, y_train, y_test = train_test_split(dataset, label, test_size = TS, random_state = 2)
+    X_train, X_test, y_train, y_test = train_test_split(dataset,
+        label,
+        test_size = TS,
+        random_state = 2,
+        stratify = label)
 
     #Data normalization (0,1) to help convergence
     X_train = normalize(X_train, axis=1)
@@ -386,14 +395,31 @@ def save_and_display_gradcam(img_path, heatmap, display=display_cam,
     return heatmap
 
 def get_latest_version(model_dir):
+    """Get the latest version number from model files in directory."""
     model_list = sorted(glob.glob(str(Path(model_dir, '*.h5'))))
     
-    try:
-        v_num = model_list[-1][-6:-3]
-    except IndexError:
-        v_num = '000'
-        
-    return v_num
+    if not model_list:
+        return '000'
+    
+    # Extract version numbers from filenames and find the highest
+    versions = []
+    for model_file in model_list:
+        filename = Path(model_file).stem
+        # Look for patterns like "_001", "_v001", "_123" at the end of filename
+        import re
+        version_match = re.search(r'[_v]?([0-9]{3})$', filename)
+        if version_match:
+            try:
+                version_num = int(version_match.group(1))
+                versions.append(version_num)
+            except ValueError:
+                continue
+    
+    if versions:
+        next_version = max(versions) + 1
+        return f'{next_version:03d}'
+    else:
+        return '001'  # Start from 001 if no valid versions found
 
 def main():
     # Load train and test dataset
