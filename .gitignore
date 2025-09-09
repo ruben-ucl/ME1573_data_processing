@@ -2,6 +2,6 @@
 *.bak
 desktop.ini
 data_path.txt
-/ml/logs
-/ml/output
-/ml/temp
+ml/logs/
+ml/output/
+ml/temp/
