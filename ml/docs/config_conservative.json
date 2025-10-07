@@ -1,0 +1,20 @@
+{
+  "comment": "Conservative configuration with strong regularization",
+  
+  "learning_rate": 0.0001,
+  "batch_size": 8,
+  "epochs": 100,
+  "k_folds": 5,
+  
+  "conv_filters": [32, 64, 128],
+  "dense_units": [256, 128],
+  "conv_dropout": 0.3,
+  "dense_dropout": [0.4, 0.3],
+  "l2_regularization": 0.01,
+  "use_batch_norm": true,
+  
+  "early_stopping_patience": 15,
+  "lr_reduction_patience": 7,
+  "lr_reduction_factor": 0.3,
+  "use_class_weights": true
+}

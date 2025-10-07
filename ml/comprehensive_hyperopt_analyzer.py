@@ -35,14 +35,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from scipy.interpolate import griddata
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.feature_selection import f_regression
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 warnings.filterwarnings('ignore')
 
-# Local imports
-from config import get_experiment_log_path, OUTPUTS_DIR
+# Local imports - will be conditionally aliased based on mode
+import config
 
 # Set plotting style
 plt.style.use('default')
@@ -54,10 +55,28 @@ class ComprehensiveHyperoptAnalyzer:
     Combines OFAT analysis, ANOVA decomposition, and visualization tools.
     """
     
-    def __init__(self, log_path=None, output_dir=None, target_metric='mean_val_accuracy', 
+    def __init__(self, mode='pd', log_path=None, output_dir=None, target_metric='mean_val_accuracy', 
                  min_experiments=3, verbose=False):
+        # Validate mode
+        if mode not in ['pd', 'cwt']:
+            raise ValueError(f"Mode must be 'pd' or 'cwt', got: {mode}")
+        
+        self.mode = mode
+        
+        # Set up conditional imports based on mode
+        if mode == 'cwt':
+            # CWT mode - use CWT-specific functions
+            get_experiment_log_path = config.get_cwt_experiment_log_path
+            OUTPUTS_DIR = config.CWT_LOGS_DIR
+        else:
+            # PD mode - use PD-specific functions  
+            get_experiment_log_path = config.get_pd_experiment_log_path
+            OUTPUTS_DIR = config.PD_LOGS_DIR
+        
+        # Set paths using the aliased functions
         self.log_path = Path(log_path) if log_path else get_experiment_log_path()
         self.output_dir = Path(output_dir) if output_dir else OUTPUTS_DIR / 'comprehensive_analysis'
+        
         self.target_metric = target_metric
         self.min_experiments = min_experiments
         self.verbose = verbose
@@ -75,6 +94,7 @@ class ComprehensiveHyperoptAnalyzer:
         # Analysis results
         self.ofat_results = {}
         self.anova_results = {}
+        self.interaction_results = {}
         self.sensitivity_indices = {}
         self.performance_stats = {}
         
@@ -89,8 +109,19 @@ class ComprehensiveHyperoptAnalyzer:
         if self.verbose:
             print(f"Loading experiment data from: {self.log_path}")
         
-        # Load data
-        self.df = pd.read_csv(self.log_path, encoding='utf-8')
+        # Load data with error handling for malformed CSV lines
+        try:
+            self.df = pd.read_csv(self.log_path, encoding='utf-8')
+        except pd.errors.ParserError as e:
+            print(f"CSV parsing error: {e}")
+            print("Attempting to load with error handling...")
+            # Try with error handling for malformed lines
+            try:
+                self.df = pd.read_csv(self.log_path, encoding='utf-8', error_bad_lines=False, warn_bad_lines=True)
+            except TypeError:
+                # For newer pandas versions
+                self.df = pd.read_csv(self.log_path, encoding='utf-8', on_bad_lines='skip')
+            print(f"Successfully loaded with {len(self.df)} valid lines")
         initial_count = len(self.df)
         
         # Data validation and cleaning
@@ -155,18 +186,37 @@ class ComprehensiveHyperoptAnalyzer:
     
     def identify_analysis_parameters(self):
         """Identify parameters suitable for analysis."""
-        # Core ML parameters
+        # Core ML parameters (common to both PD and CWT)
         candidate_params = [
             'learning_rate', 'batch_size', 'epochs', 'k_folds',
             'conv_filters', 'dense_units', 'dropout_rates', 'l2_reg', 'l2_regularization',
             'batch_norm', 'use_batch_norm', 'optimizer', 'early_stopping_patience',
             'lr_reduction_patience', 'class_weights', 'use_class_weights',
-            # Augmentation parameters
-            'augment_fraction', 'time_shift_range', 'stretch_probability', 
-            'stretch_scale', 'noise_probability', 'noise_std',
-            'amplitude_scale_probability', 'amplitude_scale',
-            'rotation_range', 'width_shift_range', 'height_shift_range'
+            'conv_dropout', 'dense_dropout', 'lr_reduction_factor'
         ]
+        
+        # Add mode-specific parameters
+        if self.mode == 'cwt':
+            # CWT-specific parameters
+            candidate_params.extend([
+                'img_width', 'img_height', 'img_channels',
+                'conv_kernel_size', 'pool_size', 'pool_layers',
+                # CWT augmentation parameters
+                'augment_fraction', 'time_shift_probability', 'time_shift_range',
+                'noise_probability', 'noise_std', 'brightness_probability', 'brightness_range',
+                'contrast_probability', 'contrast_range',
+                # CWT analysis parameters
+                'run_gradcam', 'gradcam_layer', 'save_gradcam_images', 'gradcam_threshold'
+            ])
+        else:
+            # PD-specific parameters
+            candidate_params.extend([
+                'img_width',  # PD also has img_width
+                # PD augmentation parameters
+                'augment_fraction', 'time_shift_range', 'stretch_probability', 
+                'stretch_scale', 'noise_probability', 'noise_std',
+                'amplitude_scale_probability', 'amplitude_scale'
+            ])
         
         # Find available parameters with sufficient variation
         available_params = []
@@ -195,11 +245,16 @@ class ComprehensiveHyperoptAnalyzer:
             values = self.df[param].copy()
             
             # Handle different parameter types
-            if param in ['learning_rate', 'l2_reg', 'l2_regularization', 'augment_fraction']:
-                # Numeric parameters
+            if param in ['learning_rate', 'l2_reg', 'l2_regularization', 'augment_fraction', 
+                         'conv_dropout', 'dense_dropout', 'noise_std', 'brightness_range', 'contrast_range',
+                         'time_shift_range', 'width_shift_range', 'lr_reduction_factor',
+                         'time_shift_probability', 'noise_probability', 'brightness_probability', 'contrast_probability',
+                         'stretch_probability', 'amplitude_scale_probability', 'stretch_scale', 'amplitude_scale']:
+                # Numeric parameters (float)
                 X[param] = pd.to_numeric(values, errors='coerce')
                 
-            elif param in ['batch_size', 'epochs', 'k_folds', 'early_stopping_patience', 'lr_reduction_patience']:
+            elif param in ['batch_size', 'epochs', 'k_folds', 'early_stopping_patience', 'lr_reduction_patience',
+                           'img_width', 'img_height', 'img_channels']:
                 # Integer parameters
                 X[param] = pd.to_numeric(values, errors='coerce')
                 
@@ -215,7 +270,7 @@ class ComprehensiveHyperoptAnalyzer:
                 X[param] = le.fit_transform(values_str)
                 self.encoders[param] = le
                 
-            elif param in ['conv_filters', 'dense_units', 'dropout_rates']:
+            elif param in ['conv_filters', 'dense_units', 'dropout_rates', 'conv_kernel_size', 'pool_size', 'pool_layers']:
                 # List parameters - convert to meaningful features
                 features = self._process_list_parameter(values, param)
                 X = pd.concat([X, features], axis=1)
@@ -318,6 +373,65 @@ class ComprehensiveHyperoptAnalyzer:
                     features[f'{param_name}_first'].append(0.2)
                     features[f'{param_name}_mean'].append(0.25)
                     features[f'{param_name}_max'].append(0.3)
+            
+            for feature_name, feature_values in features.items():
+                processed_df[feature_name] = feature_values
+                
+        elif param_name == 'conv_kernel_size':
+            features = {f'{param_name}_width': [], f'{param_name}_height': []}
+            
+            for val in values:
+                try:
+                    if isinstance(val, str):
+                        kernel = ast.literal_eval(val)
+                    else:
+                        kernel = val if isinstance(val, list) else [3, 3]
+                    
+                    features[f'{param_name}_width'].append(kernel[0] if len(kernel) > 0 else 3)
+                    features[f'{param_name}_height'].append(kernel[1] if len(kernel) > 1 else kernel[0] if len(kernel) > 0 else 3)
+                except:
+                    features[f'{param_name}_width'].append(3)
+                    features[f'{param_name}_height'].append(3)
+            
+            for feature_name, feature_values in features.items():
+                processed_df[feature_name] = feature_values
+                
+        elif param_name == 'pool_size':
+            features = {f'{param_name}_width': [], f'{param_name}_height': []}
+            
+            for val in values:
+                try:
+                    if isinstance(val, str):
+                        pool = ast.literal_eval(val)
+                    else:
+                        pool = val if isinstance(val, list) else [2, 2]
+                    
+                    features[f'{param_name}_width'].append(pool[0] if len(pool) > 0 else 2)
+                    features[f'{param_name}_height'].append(pool[1] if len(pool) > 1 else pool[0] if len(pool) > 0 else 2)
+                except:
+                    features[f'{param_name}_width'].append(2)
+                    features[f'{param_name}_height'].append(2)
+            
+            for feature_name, feature_values in features.items():
+                processed_df[feature_name] = feature_values
+                
+        elif param_name == 'pool_layers':
+            features = {f'{param_name}_count': [], f'{param_name}_first': [], f'{param_name}_last': []}
+            
+            for val in values:
+                try:
+                    if isinstance(val, str):
+                        layers = ast.literal_eval(val)
+                    else:
+                        layers = val if isinstance(val, list) else [2, 5]
+                    
+                    features[f'{param_name}_count'].append(len(layers))
+                    features[f'{param_name}_first'].append(layers[0] if len(layers) > 0 else 2)
+                    features[f'{param_name}_last'].append(layers[-1] if len(layers) > 0 else 5)
+                except:
+                    features[f'{param_name}_count'].append(2)
+                    features[f'{param_name}_first'].append(2)
+                    features[f'{param_name}_last'].append(5)
             
             for feature_name, feature_values in features.items():
                 processed_df[feature_name] = feature_values
@@ -486,6 +600,121 @@ class ComprehensiveHyperoptAnalyzer:
         if self.verbose:
             print("ANOVA analysis completed!")
             print(f"Performance range: {self.performance_stats['min_performance']:.4f} - {self.performance_stats['max_performance']:.4f}")
+    
+    def perform_interaction_analysis(self, max_interactions=10):
+        """Perform pairwise interaction effects analysis."""
+        if self.verbose:
+            print("Performing interaction effects analysis...")
+        
+        if len(self.parameter_names) < 2:
+            print("Need at least 2 parameters for interaction analysis")
+            return
+        
+        # Focus on top parameters to limit computational cost
+        if hasattr(self, 'anova_results') and self.anova_results:
+            # Sort parameters by importance
+            sorted_params = sorted(self.anova_results.items(), 
+                                 key=lambda x: x[1]['normalized_importance'], reverse=True)
+            top_params = [param for param, _ in sorted_params[:min(6, len(sorted_params))]]
+        else:
+            # Use first few parameters if ANOVA not available
+            top_params = self.parameter_names[:min(6, len(self.parameter_names))]
+        
+        interaction_effects = {}
+        
+        # Analyze all pairwise combinations of top parameters
+        param_pairs = list(combinations(top_params, 2))[:max_interactions]
+        
+        if self.verbose:
+            print(f"Analyzing {len(param_pairs)} parameter interactions...")
+        
+        # Use Random Forest for interaction detection
+        from sklearn.ensemble import RandomForestRegressor
+        
+        for param1, param2 in param_pairs:
+            try:
+                # Get parameter indices
+                idx1 = self.parameter_names.index(param1)
+                idx2 = self.parameter_names.index(param2)
+                
+                # Extract the two parameters and target
+                X_pair = self.X_processed[:, [idx1, idx2]]
+                y = self.y
+                
+                if len(np.unique(X_pair[:, 0])) < 2 or len(np.unique(X_pair[:, 1])) < 2:
+                    continue  # Skip if no variation
+                
+                # Fit model with interaction term
+                # Create interaction feature
+                X_interaction = np.column_stack([
+                    X_pair[:, 0],  # param1
+                    X_pair[:, 1],  # param2
+                    X_pair[:, 0] * X_pair[:, 1]  # interaction term
+                ])
+                
+                # Fit full model (with interaction)
+                rf_full = RandomForestRegressor(n_estimators=100, random_state=42)
+                rf_full.fit(X_interaction, y)
+                full_score = rf_full.score(X_interaction, y)
+                
+                # Fit additive model (no interaction)
+                rf_additive = RandomForestRegressor(n_estimators=100, random_state=42)
+                rf_additive.fit(X_pair, y)
+                additive_score = rf_additive.score(X_pair, y)
+                
+                # Interaction strength = improvement from adding interaction term
+                interaction_strength = max(0, full_score - additive_score)
+                
+                # Statistical significance test using permutation
+                n_permutations = 50
+                permuted_improvements = []
+                
+                for _ in range(n_permutations):
+                    # Permute target to break any real relationship
+                    y_perm = np.random.permutation(y)
+                    
+                    rf_full_perm = RandomForestRegressor(n_estimators=50, random_state=42)
+                    rf_additive_perm = RandomForestRegressor(n_estimators=50, random_state=42)
+                    
+                    rf_full_perm.fit(X_interaction, y_perm)
+                    rf_additive_perm.fit(X_pair, y_perm)
+                    
+                    full_perm = rf_full_perm.score(X_interaction, y_perm)
+                    additive_perm = rf_additive_perm.score(X_pair, y_perm)
+                    
+                    permuted_improvements.append(max(0, full_perm - additive_perm))
+                
+                # Calculate p-value
+                p_value = np.mean(np.array(permuted_improvements) >= interaction_strength)
+                
+                # Calculate correlation between parameters
+                param_correlation = np.corrcoef(X_pair[:, 0], X_pair[:, 1])[0, 1]
+                
+                interaction_effects[f"{param1}_x_{param2}"] = {
+                    'param1': param1,
+                    'param2': param2,
+                    'interaction_strength': interaction_strength,
+                    'p_value': p_value,
+                    'significant': p_value < 0.05,
+                    'param_correlation': param_correlation,
+                    'full_r2': full_score,
+                    'additive_r2': additive_score,
+                    'sample_size': len(y)
+                }
+                
+            except Exception as e:
+                if self.verbose:
+                    print(f"Warning: Could not analyze interaction {param1} x {param2}: {e}")
+                continue
+        
+        # Sort interactions by strength
+        self.interaction_results = dict(sorted(interaction_effects.items(), 
+                                             key=lambda x: x[1]['interaction_strength'], reverse=True))
+        
+        if self.verbose:
+            print(f"Interaction analysis completed! Found {len(self.interaction_results)} interactions")
+            significant_interactions = sum(1 for result in self.interaction_results.values() if result['significant'])
+            print(f"Significant interactions (p < 0.05): {significant_interactions}")
     
     def plot_ofat_analysis(self):
         """Create OFAT sensitivity plots."""
@@ -787,6 +1016,321 @@ class ComprehensiveHyperoptAnalyzer:
         if self.verbose:
             print(f"ANOVA plots saved: {plot_path}")
     
+    def plot_interaction_analysis(self):
+        """Create interaction effects plots."""
+        if not self.interaction_results:
+            return
+        
+        if self.verbose:
+            print("Creating interaction effects plots...")
+        
+        # Filter significant interactions for plotting
+        significant_interactions = {k: v for k, v in self.interaction_results.items() if v['significant']}
+        all_interactions = self.interaction_results
+        
+        if not all_interactions:
+            if self.verbose:
+                print("No interactions to plot")
+            return
+        
+        # Create figure with subplots
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        
+        # 1. Interaction strength ranking
+        interactions = list(all_interactions.keys())
+        strengths = [all_interactions[k]['interaction_strength'] for k in interactions]
+        p_values = [all_interactions[k]['p_value'] for k in interactions]
+        
+        # Color by significance
+        colors = ['red' if p < 0.05 else 'blue' for p in p_values]
+        
+        y_pos = np.arange(len(interactions))
+        bars = axes[0, 0].barh(y_pos, strengths, color=colors, alpha=0.7)
+        axes[0, 0].set_yticks(y_pos)
+        axes[0, 0].set_yticklabels([k.replace('_x_', ' × ') for k in interactions])
+        axes[0, 0].set_xlabel('Interaction Strength (R² improvement)')
+        axes[0, 0].set_title('Parameter Interaction Effects')
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        # Add significance indicators
+        for i, (bar, p_val) in enumerate(zip(bars, p_values)):
+            if p_val < 0.05:
+                axes[0, 0].text(bar.get_width() + 0.001, bar.get_y() + bar.get_height()/2, 
+                               f'p={p_val:.3f}', va='center', fontsize=8)
+        
+        # Legend
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor='red', alpha=0.7, label='Significant (p < 0.05)'),
+                          Patch(facecolor='blue', alpha=0.7, label='Not significant')]
+        axes[0, 0].legend(handles=legend_elements, loc='lower right')
+        
+        # 2. Interaction strength vs significance
+        axes[0, 1].scatter(strengths, [-np.log10(p) for p in p_values], 
+                          c=colors, alpha=0.7, s=60)
+        axes[0, 1].axhline(y=-np.log10(0.05), color='red', linestyle='--', 
+                          alpha=0.7, label='p = 0.05 threshold')
+        axes[0, 1].set_xlabel('Interaction Strength')
+        axes[0, 1].set_ylabel('-log₁₀(p-value)')
+        axes[0, 1].set_title('Interaction Strength vs Statistical Significance')
+        axes[0, 1].grid(True, alpha=0.3)
+        axes[0, 1].legend()
+        
+        # Add labels for significant interactions
+        for i, (strength, p_val, interaction) in enumerate(zip(strengths, p_values, interactions)):
+            if p_val < 0.05 and strength > np.median(strengths):
+                axes[0, 1].annotate(interaction.replace('_x_', ' × '), 
+                                  (strength, -np.log10(p_val)), 
+                                  xytext=(5, 5), textcoords='offset points',
+                                  fontsize=8, alpha=0.8)
+        
+        # 3. Parameter correlation heatmap
+        if len(all_interactions) > 0:
+            # Extract unique parameters involved in interactions
+            all_params = set()
+            for result in all_interactions.values():
+                all_params.add(result['param1'])
+                all_params.add(result['param2'])
+            all_params = sorted(list(all_params))
+            
+            # Create correlation matrix
+            n_params = len(all_params)
+            if n_params > 1:
+                corr_matrix = np.eye(n_params)
+                
+                for result in all_interactions.values():
+                    p1_idx = all_params.index(result['param1'])
+                    p2_idx = all_params.index(result['param2'])
+                    corr = result['param_correlation']
+                    corr_matrix[p1_idx, p2_idx] = corr
+                    corr_matrix[p2_idx, p1_idx] = corr
+                
+                im = axes[1, 0].imshow(corr_matrix, cmap='RdBu_r', vmin=-1, vmax=1)
+                axes[1, 0].set_xticks(range(n_params))
+                axes[1, 0].set_yticks(range(n_params))
+                axes[1, 0].set_xticklabels([p.replace('_', ' ') for p in all_params], rotation=45)
+                axes[1, 0].set_yticklabels([p.replace('_', ' ') for p in all_params])
+                axes[1, 0].set_title('Parameter Correlation Matrix')
+                
+                # Add correlation values to cells
+                for i in range(n_params):
+                    for j in range(n_params):
+                        text = axes[1, 0].text(j, i, f'{corr_matrix[i, j]:.2f}',
+                                             ha="center", va="center", 
+                                             color="white" if abs(corr_matrix[i, j]) > 0.5 else "black",
+                                             fontsize=8)
+                
+                plt.colorbar(im, ax=axes[1, 0], shrink=0.8)
+        
+        # 4. Sample size distribution for interactions
+        sample_sizes = [all_interactions[k]['sample_size'] for k in interactions]
+        axes[1, 1].hist(sample_sizes, bins=min(10, len(set(sample_sizes))), alpha=0.7, edgecolor='black')
+        axes[1, 1].axvline(x=np.mean(sample_sizes), color='red', linestyle='--', 
+                          label=f'Mean: {np.mean(sample_sizes):.0f}')
+        axes[1, 1].set_xlabel('Sample Size')
+        axes[1, 1].set_ylabel('Number of Interactions')
+        axes[1, 1].set_title('Sample Size Distribution')
+        axes[1, 1].legend()
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plot_path = self.output_dir / 'interaction_effects_analysis.png'
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        if self.verbose:
+            print(f"Interaction plots saved: {plot_path}")
+
+    def plot_pairwise_surfaces(self, top_n=4):
+        """Create pairwise surface plots for the top N most significant parameters."""
+        if not self.anova_results:
+            print("Warning: No ANOVA results available for surface plots")
+            return
+        
+        if self.verbose:
+            print("Creating pairwise parameter surface plots...")
+        
+        # Get top N parameters by importance
+        sorted_params = sorted(self.anova_results.items(), 
+                             key=lambda x: x[1]['normalized_importance'], reverse=True)
+        top_params = [param for param, _ in sorted_params[:top_n]]
+        
+        if len(top_params) < 2:
+            print(f"Warning: Only {len(top_params)} parameters available, need at least 2 for surface plots")
+            return
+        
+        # Get parameter data for top parameters from processed data
+        param_data = {}
+        for param in top_params:
+            if param in self.parameter_names:
+                # Get data from processed feature matrix
+                param_idx = self.parameter_names.index(param)
+                param_data[param] = self.X_processed[:, param_idx]
+            elif param in self.df.columns:
+                # Fallback to original dataframe for unprocessed parameters
+                param_data[param] = self.df[param].values
+            else:
+                # Handle processed parameter names (from feature engineering)
+                processed_names = [col for col in self.df.columns if param in col]
+                if processed_names:
+                    param_data[param] = self.df[processed_names[0]].values
+                else:
+                    print(f"Warning: Parameter {param} not found in data")
+                    continue
+        
+        # Filter to parameters we actually have data for
+        available_params = list(param_data.keys())
+        if len(available_params) < 2:
+            print(f"Warning: Only {len(available_params)} parameters have data available")
+            return
+        
+        # Create pairwise combinations
+        pairs = list(combinations(available_params, 2))
+        n_pairs = len(pairs)
+        
+        if n_pairs == 0:
+            return
+        
+        # Set up subplot grid
+        n_cols = min(3, n_pairs)
+        n_rows = (n_pairs + n_cols - 1) // n_cols
+        
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 5*n_rows))
+        # Ensure axes is always 2D array for consistent indexing
+        if n_pairs == 1:
+            axes = np.array([[axes]])
+        elif n_rows == 1:
+            axes = axes.reshape(1, -1)
+        elif n_cols == 1:
+            axes = axes.reshape(-1, 1)
+        
+        target_values = self.df[self.target_metric].values
+        
+        for idx, (param1, param2) in enumerate(pairs):
+            row = idx // n_cols
+            col = idx % n_cols
+            ax = axes[row, col]
+            
+            x_data = param_data[param1]
+            y_data = param_data[param2]
+            
+            # Create surface plot using griddata interpolation
+            
+            # Create grid for interpolation
+            x_min, x_max = x_data.min(), x_data.max()
+            y_min, y_max = y_data.min(), y_data.max()
+            
+            # Add small margins to avoid edge effects
+            x_margin = (x_max - x_min) * 0.1
+            y_margin = (y_max - y_min) * 0.1
+            
+            xi = np.linspace(x_min - x_margin, x_max + x_margin, 50)
+            yi = np.linspace(y_min - y_margin, y_max + y_margin, 50)
+            xi_grid, yi_grid = np.meshgrid(xi, yi)
+            
+            # Interpolate surface
+            try:
+                zi = griddata((x_data, y_data), target_values, (xi_grid, yi_grid), method='cubic') # 'linear', 'nearest' or 'cubic'
+                
+                # Create contour plot with surface
+                # levels = np.linspace(target_values.min(), target_values.max(), 20)
+                levels = np.linspace(0.5, 1.0, 11)
+                contour = ax.contourf(xi_grid, yi_grid, zi, levels=levels, cmap='viridis', alpha=0.8)
+                
+                # Add contour lines
+                contour_lines = ax.contour(xi_grid, yi_grid, zi, levels=10, colors='white', alpha=0.6, linewidths=0.5)
+                
+                # Overlay actual data points
+                scatter = ax.scatter(x_data, y_data, c=target_values, cmap='viridis', 
+                                   s=30, edgecolors='white', linewidths=0.5, alpha=0.9)
+                
+                # Add colorbar
+                cbar = plt.colorbar(contour, ax=ax, shrink=0.8, ticks=[0.5, 0.6, 0.7, 0.8, 0.9, 1.0], extend='min')
+                cbar.set_label(self.target_metric.replace('_', ' ').title(), rotation=270, labelpad=15)
+                
+                # Find and mark best point
+                best_idx = np.argmax(target_values)
+                ax.scatter(x_data[best_idx], y_data[best_idx], c='red', s=100, 
+                          marker='*', edgecolors='white', linewidths=1, zorder=10,
+                          label=f'Best: {target_values[best_idx]:.4f}')
+                
+                # Formatting
+                ax.set_xlabel(param1.replace('_', ' ').title())
+                ax.set_ylabel(param2.replace('_', ' ').title())
+                ax.set_title(f'{param1} vs {param2}\nSurface Plot')
+                ax.legend(loc='upper right', fontsize=8)
+                ax.grid(True, alpha=0.3)
+                
+            except Exception as e:
+                # Fallback to simple scatter plot if interpolation fails
+                print(f"Warning: Surface interpolation failed for {param1} vs {param2}: {e}")
+                scatter = ax.scatter(x_data, y_data, c=target_values, cmap='viridis', s=50)
+                ax.set_xlabel(param1.replace('_', ' ').title())
+                ax.set_ylabel(param2.replace('_', ' ').title())
+                ax.set_title(f'{param1} vs {param2}\nScatter Plot')
+                plt.colorbar(scatter, ax=ax, shrink=0.8)
+        
+        # Hide empty subplots
+        if n_pairs < n_rows * n_cols:
+            for idx in range(n_pairs, n_rows * n_cols):
+                row = idx // n_cols
+                col = idx % n_cols
+                axes[row, col].set_visible(False)
+        
+        plt.tight_layout()
+        
+        # Save plot
+        plot_path = self.output_dir / f'pairwise_surface_plots_top{top_n}.png'
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        if self.verbose:
+            print(f"Pairwise surface plots saved: {plot_path}")
+            print(f"Generated {n_pairs} surface plots for parameters: {', '.join(available_params)}")
+    
+    def _analyze_parameter_coverage(self):
+        """Analyze current parameter coverage and provide DoE recommendations."""
+        coverage_analysis = {
+            'low_sample_params': [],
+            'balanced_params': [],
+            'recommended_sample_size': 0,
+            'current_coverage_score': 0.0
+        }
+        
+        # Analyze each parameter's coverage
+        for param in self.parameter_names:
+            param_idx = self.parameter_names.index(param)
+            unique_values = len(np.unique(self.X_processed[:, param_idx]))
+            
+            if unique_values < 3:
+                coverage_analysis['low_sample_params'].append((param, unique_values))
+            elif unique_values >= 5:
+                coverage_analysis['balanced_params'].append((param, unique_values))
+        
+        # Calculate recommended sample size based on DoE best practices
+        n_params = len(self.parameter_names)
+        
+        # Base sample size calculation
+        if hasattr(self, 'interaction_results') and self.interaction_results:
+            significant_interactions = sum(1 for result in self.interaction_results.values() if result['significant'])
+            if significant_interactions > 0:
+                # RSM design: 2^k + 2k + center points
+                base_size = 2**min(n_params, 5) + 2*n_params + 5  # Limit factorial for large k
+                coverage_analysis['recommended_sample_size'] = min(base_size, 200)  # Cap at reasonable size
+            else:
+                # Fractional factorial: 2^(k-1) with center points
+                base_size = 2**(min(n_params-1, 6)) + 5
+                coverage_analysis['recommended_sample_size'] = min(base_size, 150)
+        else:
+            # LHS: 5-10 times the number of parameters
+            coverage_analysis['recommended_sample_size'] = min(10 * n_params, 100)
+        
+        # Calculate current coverage score
+        well_sampled = len(coverage_analysis['balanced_params'])
+        total_params = len(self.parameter_names)
+        coverage_analysis['current_coverage_score'] = well_sampled / total_params if total_params > 0 else 0.0
+        
+        return coverage_analysis
+    
     def plot_optimization_timeline(self):
         """Plot optimization progress over time."""
         if 'timestamp' not in self.df.columns:
@@ -950,6 +1494,63 @@ class ComprehensiveHyperoptAnalyzer:
                     avg_range = np.mean([group['performance_range'] for group in groups])
                     report_lines.append(f"- **{param}**: {len(groups)} sweep(s), {total_experiments} experiments, avg range = {avg_range:.4f}\n")
         
+        # Interaction effects results
+        if hasattr(self, 'interaction_results') and self.interaction_results:
+            report_lines.append("\n## Interaction Effects Analysis\n\n")
+            
+            significant_interactions = {k: v for k, v in self.interaction_results.items() if v['significant']}
+            total_interactions = len(self.interaction_results)
+            significant_count = len(significant_interactions)
+            
+            report_lines.append(f"**Total Interactions Analyzed:** {total_interactions}\n")
+            report_lines.append(f"**Significant Interactions (p < 0.05):** {significant_count}\n\n")
+            
+            if significant_interactions:
+                report_lines.append("### Significant Parameter Interactions\n\n")
+                
+                # Sort by interaction strength
+                sorted_interactions = sorted(significant_interactions.items(), 
+                                           key=lambda x: x[1]['interaction_strength'], reverse=True)
+                
+                for i, (interaction, results) in enumerate(sorted_interactions[:5], 1):  # Top 5
+                    param1, param2 = results['param1'], results['param2']
+                    strength = results['interaction_strength']
+                    p_value = results['p_value']
+                    correlation = results['param_correlation']
+                    
+                    report_lines.append(f"{i}. **{param1} × {param2}**:\n")
+                    report_lines.append(f"   - Interaction strength: {strength:.4f}\n")
+                    report_lines.append(f"   - Statistical significance: p = {p_value:.4f}\n")
+                    report_lines.append(f"   - Parameter correlation: {correlation:.3f}\n\n")
+                
+                # Analysis of interaction patterns
+                high_strength_interactions = [k for k, v in significant_interactions.items() 
+                                            if v['interaction_strength'] > np.median([r['interaction_strength'] for r in significant_interactions.values()])]
+                
+                if high_strength_interactions:
+                    report_lines.append("### Key Findings\n\n")
+                    report_lines.append(f"- **{len(high_strength_interactions)} interactions show strong effects** (above median strength)\n")
+                    
+                    # Identify most frequently interacting parameters
+                    param_interaction_count = defaultdict(int)
+                    for interaction_name in high_strength_interactions:
+                        result = significant_interactions[interaction_name]
+                        param_interaction_count[result['param1']] += 1
+                        param_interaction_count[result['param2']] += 1
+                    
+                    if param_interaction_count:
+                        most_interactive = max(param_interaction_count.items(), key=lambda x: x[1])
+                        report_lines.append(f"- **{most_interactive[0]}** appears in {most_interactive[1]} significant interactions\n")
+                    
+                    # Check for highly correlated parameters
+                    high_corr_pairs = [(k, v) for k, v in significant_interactions.items() 
+                                     if abs(v['param_correlation']) > 0.7]
+                    if high_corr_pairs:
+                        report_lines.append(f"- **{len(high_corr_pairs)} parameter pairs show high correlation** (|r| > 0.7), indicating potential confounding\n")
+            else:
+                report_lines.append("*No statistically significant interactions detected.*\n")
+                report_lines.append("This suggests parameters act mostly independently.\n")
+        
         # Data quality assessment
         report_lines.append("\n## Data Quality Assessment\n\n")
         report_lines.append(f"- **Experiments after validation:** {len(self.df)}\n")
@@ -976,6 +1577,50 @@ class ComprehensiveHyperoptAnalyzer:
         if len(self.ofat_results) > 0:
             report_lines.append("3. **OFAT analysis available**: Use parameter sweep insights for targeted optimization\n")
         
+        # DoE recommendations for improved sampling
+        report_lines.append("\n### Design of Experiments (DoE) Recommendations\n\n")
+        
+        # Analyze current parameter coverage
+        param_coverage_analysis = self._analyze_parameter_coverage()
+        
+        if hasattr(self, 'interaction_results') and self.interaction_results:
+            significant_interactions = {k: v for k, v in self.interaction_results.items() if v['significant']}
+            if significant_interactions:
+                report_lines.append("**Recommended Strategy: Response Surface Methodology (RSM)**\n")
+                report_lines.append("- Significant interactions detected, requiring systematic exploration\n")
+                report_lines.append("- Use Central Composite Design (CCD) or Box-Behnken Design\n")
+                top_interaction_params = set()
+                for result in list(significant_interactions.values())[:3]:  # Top 3 interactions
+                    top_interaction_params.add(result['param1'])
+                    top_interaction_params.add(result['param2'])
+                report_lines.append(f"- Focus on: {', '.join(sorted(top_interaction_params))}\n")
+            else:
+                report_lines.append("**Recommended Strategy: Orthogonal Factorial Design**\n")
+                report_lines.append("- No significant interactions, main effects dominate\n")
+                report_lines.append("- Use fractional factorial design for efficiency\n")
+        else:
+            report_lines.append("**Recommended Strategy: Latin Hypercube Sampling (LHS)**\n")
+            report_lines.append("- Broad parameter space exploration needed\n")
+        
+        # Identify parameters with insufficient samples
+        low_sample_params = param_coverage_analysis['low_sample_params']
+        if low_sample_params:
+            report_lines.append(f"\n**Priority Parameters for Additional Sampling:**\n")
+            for param, count in low_sample_params:
+                report_lines.append(f"- **{param}**: Only {count} unique values (recommend ≥5 levels)\n")
+        
+        # Architecture-specific recommendations
+        has_architecture_params = any(param in ['conv_filters', 'dense_units'] for param in self.parameter_names)
+        if has_architecture_params:
+            report_lines.append(f"\n**Architecture Sampling Strategy:**\n")
+            report_lines.append("- Use progressive complexity: start simple, increase systematically\n")
+            report_lines.append("- Ensure balanced representation across network sizes\n")
+            report_lines.append("- Consider computational constraints in design\n")
+        
+        report_lines.append(f"\n**Target Sample Size:** {param_coverage_analysis['recommended_sample_size']} experiments\n")
+        report_lines.append("- Based on parameter count and interaction complexity\n")
+        report_lines.append("- Ensures adequate power for ANOVA (≥5 replicates per factor level)\n")
+        
         # Save report
         report_path = self.output_dir / 'comprehensive_analysis_report.md'
         with open(report_path, 'w', encoding='utf-8') as f:
@@ -996,11 +1641,14 @@ class ComprehensiveHyperoptAnalyzer:
         # Perform analyses
         self.perform_ofat_analysis()
         self.perform_anova_analysis()
+        self.perform_interaction_analysis()
         
         # Generate visualizations
         self.plot_ofat_analysis()
         self.plot_architecture_analysis()
         self.plot_anova_analysis()
+        self.plot_interaction_analysis()
+        self.plot_pairwise_surfaces(top_n=4)
         self.plot_optimization_timeline()
         
         # Generate report
@@ -1033,6 +1681,8 @@ class ComprehensiveHyperoptAnalyzer:
 
 def main():
     parser = argparse.ArgumentParser(description='Comprehensive hyperparameter optimization analysis')
+    parser.add_argument('--mode', type=str, choices=['pd', 'cwt'], default='pd',
+                       help='Analysis mode: pd (PD signal) or cwt (CWT image) (default: pd)')
     parser.add_argument('--log_path', type=str, 
                        help='Path to experiment log CSV file')
     parser.add_argument('--output_dir', type=str,
@@ -1049,6 +1699,7 @@ def main():
     try:
         # Initialize comprehensive analyzer
         analyzer = ComprehensiveHyperoptAnalyzer(
+            mode=args.mode,
             log_path=args.log_path,
             output_dir=args.output_dir,
             target_metric=args.target_metric,

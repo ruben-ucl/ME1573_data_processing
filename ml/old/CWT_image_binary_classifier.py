@@ -30,7 +30,7 @@ sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from tools import get_paths
 
 # Import centralized configuration
-from config import get_cwt_data_dir
+from config import get_default_cwt_data_dir
 
 train_new = False # 'train' or 'evaluate'
 evaluate = True # Run model evaluation, bool
@@ -41,7 +41,7 @@ show_confusion = True # bool
 
 # Set image path and size
 
-image_directory = Path(get_cwt_data_dir())
+image_directory = Path(get_default_cwt_data_dir())
 model_dir = Path('ml', 'models')
 SIZE_X = 100 
 SIZE_Y = 256

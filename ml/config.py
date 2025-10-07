@@ -13,19 +13,29 @@ PROJECT_ROOT = Path(__file__).parent.parent  # Go up to ME1573_data_processing
 ML_ROOT = Path(__file__).parent  # Current ml/ directory
 
 # Data directories - Update these paths as needed
-DEFAULT_DATA_DIR = r"E:\AlSi10Mg single layer ffc\Photodiode_1ms_window_plots\window_plots_16bit"
-CWT_DATA_DIR = r'E:\AlSi10Mg single layer ffc\CWT_labelled_windows\cmor1_5-1_0\1.0_ms\781-50000_Hz_256_steps\grey'
+PD_DATA_DIR = r"E:\AlSi10Mg single layer ffc\Photodiode_1ms_window_plots\window_plots_16bit"
 
-# Output directories (relative to ML_ROOT)
-OUTPUTS_DIR = ML_ROOT / "outputs"
-LOGS_DIR = ML_ROOT / "logs"
-HYPEROPT_RESULTS_DIR = LOGS_DIR / "hyperopt_results"
-MODELS_DIR = ML_ROOT / "models"
+# Multi-channel CWT data configuration
+CWT_DATA_DIR_DICT = {
+    "PD1_cmor1.5-1.0": r'E:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD1\cmor1_5-1_0\1.0_ms\781-50000_Hz_256_steps\grey',
+    "PD1_mexh": r'E:\AlSi10Mg single layer ffc\CWT_labelled_windows\mexh\PD1\1.0_ms\781-50000_Hz_256_steps\grey',
+    "PD1_gaus2": r'E:\AlSi10Mg single layer ffc\CWT_labelled_windows\gaus2\PD1\1.0_ms\781-50000_Hz_256_steps\grey',
+    "PD1_fbsp": r'E:\AlSi10Mg single layer ffc\CWT_labelled_windows\fbsp\PD1\1.0_ms\781-50000_Hz_256_steps\grey',
+    "PD1_shan": r'E:\AlSi10Mg single layer ffc\CWT_labelled_windows\shan\PD1\1.0_ms\781-50000_Hz_256_steps\grey',
+    "PD1_morl": r'E:\AlSi10Mg single layer ffc\CWT_labelled_windows\morl\PD1\1.0_ms\781-50000_Hz_256_steps\grey',
+    "PD1_cgau8": r'E:\AlSi10Mg single layer ffc\CWT_labelled_windows\cgau8\PD1\1.0_ms\781-50000_Hz_256_steps\grey'
+}
+default_channel = "PD1_cmor1.5-1.0"
 
-# CWT-specific directories
+# PD output directories (relative to ML_ROOT)
+PD_OUTPUTS_DIR = ML_ROOT / "outputs" / "pd_raw"
+PD_LOGS_DIR = ML_ROOT / "logs" / "pd_raw"
+PD_HYPEROPT_RESULTS_DIR = PD_LOGS_DIR / "hyperopt_results"
+
+# CWT output directories
+CWT_OUTPUTS_DIR = ML_ROOT / "outputs" / "cwt"
 CWT_LOGS_DIR = ML_ROOT / "logs" / "cwt"
 CWT_HYPEROPT_RESULTS_DIR = CWT_LOGS_DIR / "hyperopt_results"
-CWT_MODELS_DIR = ML_ROOT / "models" / "cwt"
 
 # File patterns
 TIFF_PATTERN = "*.tiff"
@@ -34,127 +44,110 @@ CONFIG_PATTERN = "config_*.json"
 # Ensure essential directories exist
 def ensure_directories():
     """Create essential directories if they don't exist."""
-    for directory in [OUTPUTS_DIR, LOGS_DIR, HYPEROPT_RESULTS_DIR, MODELS_DIR]:
+    for directory in [PD_OUTPUTS_DIR, PD_LOGS_DIR, PD_HYPEROPT_RESULTS_DIR]:
         directory.mkdir(parents=True, exist_ok=True)
 
 def ensure_cwt_directories():
     """Create CWT-specific directories if they don't exist."""
-    for directory in [CWT_LOGS_DIR, CWT_HYPEROPT_RESULTS_DIR, CWT_MODELS_DIR]:
+    for directory in [CWT_OUTPUTS_DIR, CWT_LOGS_DIR, CWT_HYPEROPT_RESULTS_DIR]:
         directory.mkdir(parents=True, exist_ok=True)
 
+# !TODO remove this deprecated helper function
 def get_data_dir():
     """
     Get the data directory path. 
     Checks for environment variable first, then falls back to default.
     """
-    return os.environ.get('ML_DATA_DIR', DEFAULT_DATA_DIR)
+    return os.environ.get('ML_DATA_DIR', PD_DATA_DIR)
 
-def get_cwt_data_dir():
+def get_default_cwt_data_dir():
     """
-    Get the CWT data directory path.
-    Checks for environment variable first, then falls back to default.
+    Get the default CWT data directory path from CWT_DATA_DIR_DICT.
+    Uses default_channel as the key, with environment variable override.
     """
-    return os.environ.get('ML_CWT_DATA_DIR', CWT_DATA_DIR)
+    default_path = CWT_DATA_DIR_DICT.get(default_channel)
+    if not default_path:
+        raise ValueError(f"Default channel '{default_channel}' not found in CWT_DATA_DIR_DICT")
+    return os.environ.get('ML_CWT_DATA_DIR', default_path)
 
-def get_experiment_log_path():
-    """Get the path to the unified experiment log."""
-    return LOGS_DIR / "experiment_log.csv"
+
+def get_pd_experiment_log_path():
+    """Get the path to the PD signal experiment log."""
+    return PD_LOGS_DIR / "experiment_log.csv"
 
 def get_cwt_experiment_log_path():
     """Get the path to the CWT-specific experiment log."""
     return CWT_LOGS_DIR / "cwt_experiment_log.csv"
 
-def get_timing_database_path():
-    """Get the path to the timing database for hyperparameter tuning."""
-    return HYPEROPT_RESULTS_DIR / "timing_database.json"
+def get_pd_timing_database_path():
+    """Get the path to the PD signal timing database for hyperparameter tuning."""
+    return PD_HYPEROPT_RESULTS_DIR / "timing_database.json"
 
-def get_config_template():
-    """Get the default configuration template."""
-    return {
+def get_cwt_timing_database_path():
+    """Get the path to the CWT timing database for hyperparameter tuning."""
+    return CWT_HYPEROPT_RESULTS_DIR / "timing_database.json"
+
+def get_pd_config_template():
+    """Get the default PD signal configuration template."""
+    from hyperparameter_registry import get_default_config
+    
+    # Get hyperparameters from registry
+    config = get_default_config('pd_signal')
+    
+    # Add non-hyperparameter fields specific to PD signal
+    config.update({
         'data_dir': get_data_dir(),
         'img_width': 100,
-        'output_root': str(OUTPUTS_DIR),
-        'k_folds': 5,
-        'epochs': 50,
-        'learning_rate': 0.001,
-        'batch_size': 16,
-        'conv_filters': [16, 32, 64],
-        'dense_units': [128, 64],
-        'conv_dropout': 0.2,
-        'dense_dropout': [0.3, 0.2],
-        'l2_regularization': 0.001,
-        'use_batch_norm': True,
-        'early_stopping_patience': 10,
-        'lr_reduction_patience': 5,
-        'lr_reduction_factor': 0.5,
-        'use_class_weights': True,
-        
-        # Data augmentation parameters
-        'time_shift_range': 5,
-        'stretch_probability': 0.3,
-        'stretch_scale': 0.1,
-        'noise_probability': 0.5,
-        'noise_std': 0.02,
-        'amplitude_scale_probability': 0.5,
-        'amplitude_scale': 0.1,
-        'augment_fraction': 0.5,
-    }
+        'output_root': str(PD_OUTPUTS_DIR),
+    })
+    
+    return config
 
-def get_cwt_config_template():
-    """Get the default CWT configuration template."""
-    return {
-        'cwt_data_dir': get_cwt_data_dir(),
+def get_cwt_config_template(multi_channel=False):
+    """Get the default CWT configuration template.
+    
+    Args:
+        multi_channel (bool): If True, use multi-channel configuration from CWT_DATA_DIR_DICT
+    """
+    from hyperparameter_registry import get_default_config
+    
+    # Get hyperparameters from registry
+    config = get_default_config('cwt_image')
+    
+    # Handle multi-channel configuration
+    if multi_channel:
+        cwt_data_channels = CWT_DATA_DIR_DICT
+        img_channels = len(CWT_DATA_DIR_DICT)
+        cwt_data_dir = None
+    else:
+        # Single-channel mode: use only the default channel
+        cwt_data_channels = {default_channel: CWT_DATA_DIR_DICT[default_channel]}
+        img_channels = 1
+        cwt_data_dir = get_default_cwt_data_dir()
+    
+    # Add non-hyperparameter fields specific to CWT image
+    config.update({
+        'cwt_data_dir': cwt_data_dir,
+        'cwt_data_channels': cwt_data_channels,
         'img_width': 100,
         'img_height': 256,
-        'img_channels': 1,
-        'output_root': str(OUTPUTS_DIR),
-        'k_folds': 5,
-        'epochs': 50,
-        'learning_rate': 0.001,
-        'batch_size': 16,
-        'optimizer': 'adam',
-        
-        # CNN architecture parameters
-        'conv_filters': [16, 16, 32, 32, 64, 64],
-        'conv_kernel_size': [3, 3],
-        'pool_size': [2, 2],
-        'pool_layers': [2, 5],  # Which conv layers to add pooling after
-        'dense_units': [128],
-        'conv_dropout': 0.0,
-        'dense_dropout': 0.5,
-        'l2_regularization': 0.001,
-        'use_batch_norm': False,
-        
-        # Training parameters
-        'early_stopping_patience': 10,
-        'lr_reduction_patience': 5,
-        'lr_reduction_factor': 0.5,
-        'use_class_weights': True,
-        
-        # Data augmentation parameters for CWT images
-        'rotation_range': 0.0,
-        'width_shift_range': 0.0,
-        'height_shift_range': 0.0,
-        'horizontal_flip': False,
-        'vertical_flip': False,
-        'noise_std': 0.0,
-        'brightness_range': 0.0,
-        'contrast_range': 0.0,
-        'augment_fraction': 0.0,
-        
-        # Analysis parameters
+        'img_channels': img_channels,
+        'output_root': str(CWT_OUTPUTS_DIR),
         'run_gradcam': True,
-        'gradcam_layer': 'auto',  # Auto-detect last conv layer
-        'save_gradcam_images': False,
-        'gradcam_threshold': 0.7,
-    }
+        'gradcam_layer': 'auto',
+        'save_gradcam_images': True,
+        'gradcam_threshold': 0.5,
+    })
+    
+    return config
 
-def load_config(config_path=None, **overrides):
+def load_config(config_path=None, classifier_type='pd_signal', **overrides):
     """
     Load configuration from file with command line overrides.
     
     Args:
         config_path: Path to JSON config file (optional)
+        classifier_type: Type of classifier ('pd_signal' or 'cwt_image')
         **overrides: Command line arguments to override config values
     
     Returns:
@@ -162,8 +155,11 @@ def load_config(config_path=None, **overrides):
     """
     import json
     
-    # Start with default configuration
-    config = get_config_template()
+    # Start with appropriate default configuration
+    if classifier_type == 'cwt_image':
+        config = get_cwt_config_template()
+    else:
+        config = get_pd_config_template()
     
     # Load from file if provided
     if config_path and Path(config_path).exists():
@@ -230,18 +226,21 @@ def parse_version(version_str):
     except (ValueError, AttributeError, IndexError):
         return None
 
-def get_next_version_from_log(log_path=None):
+def get_next_version_from_log(log_path=None, classifier_type='pd_signal'):
     """Get next version number based on experiment log entries."""
     import pandas as pd
     
     if log_path is None:
-        log_path = get_experiment_log_path()
+        if classifier_type == 'cwt_image':
+            log_path = get_cwt_experiment_log_path()
+        else:
+            log_path = get_pd_experiment_log_path()
     
     if not Path(log_path).exists():
         return 1
     
     try:
-        df = pd.read_csv(log_path, encoding='utf-8')
+        df = pd.read_csv(log_path, encoding='utf-8', on_bad_lines='skip')
         if 'version' not in df.columns or len(df) == 0:
             return 1
         
@@ -291,10 +290,778 @@ def convert_numpy_types(obj):
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
     elif isinstance(obj, dict):
-        return {key: convert_numpy_types(value) for key, value in obj.items()}
+        return {convert_numpy_types(key): convert_numpy_types(value) for key, value in obj.items()}
     elif isinstance(obj, list):
         return [convert_numpy_types(item) for item in obj]
     return obj
 
-# Initialize directories when module is imported
+# ========================================================================================
+# CONSOLIDATED EXPERIMENT MANAGEMENT FUNCTIONS
+# ========================================================================================
+
+def log_experiment_results(classifier_type, version, start_time, end_time, config, fold_results, 
+                          X=None, y=None, class_counts=None, model_complexity=0, source='manual', 
+                          hyperopt_run_id=None, config_file=None, config_number_in_run=None, 
+                          test_results=None, data_info=None):
+    """
+    Unified experiment logging function for both PD and CWT classifiers.
+    
+    Args:
+        classifier_type: 'pd_signal' or 'cwt_image'
+        version: Experiment version string (e.g., 'v001')
+        start_time: Experiment start datetime
+        end_time: Experiment end datetime
+        config: Configuration dictionary
+        fold_results: List of fold result dictionaries or results dict for PD
+        X: Input data (optional)
+        y: Target data (optional)
+        class_counts: Class distribution dictionary (optional)
+        model_complexity: Model parameter count (optional)
+        source: 'manual' or 'hyperopt'
+        hyperopt_run_id: Hyperopt run ID (optional)
+        config_file: Config file path (optional)  
+        config_number_in_run: Config number in hyperopt run (optional)
+        test_results: Test results dictionary (optional)
+        data_info: Data info dictionary for PD compatibility (optional)
+    
+    Returns:
+        dict: The log entry that was written
+    """
+    import datetime
+    import json
+    import numpy as np
+    import pandas as pd
+    from pathlib import Path
+    
+    # Calculate aggregate metrics based on classifier type
+    if classifier_type == 'cwt_image':
+        # CWT case - fold_results is a list of fold dictionaries
+        val_accuracies = [r['val_accuracy'] for r in fold_results]
+        val_losses = [r['val_loss'] for r in fold_results]
+        train_accuracies = [r['train_accuracy'] for r in fold_results]
+        precisions = [r['precision'] for r in fold_results]
+        recalls = [r['recall'] for r in fold_results]
+        f1_scores = [r['f1_score'] for r in fold_results]
+        
+        # Calculate data statistics if not provided
+        if not data_info and X is not None and y is not None:
+            data_info = calculate_data_statistics(classifier_type, X, y, class_counts)
+            
+    elif classifier_type == 'pd_signal':
+        # PD case - fold_results is the results dict, data_info is required
+        val_accuracies = fold_results['fold_accuracies']  
+        val_losses = fold_results['fold_losses']
+        train_accuracies = []  # Not available in PD results
+        precisions = []  # Not available in PD results  
+        recalls = []  # Not available in PD results
+        f1_scores = []  # Not available in PD results
+        
+        if not data_info:
+            raise ValueError("data_info is required for PD classifier logging")
+    else:
+        raise ValueError(f"Unknown classifier_type: {classifier_type}")
+    
+    # Base log entry with common fields
+    log_entry = {
+        'version': format_version(version) if not version.startswith('v') else version,
+        'timestamp': start_time.strftime('%Y-%m-%d %H:%M:%S'),
+        'source': source,
+        
+        # Data information
+        'total_samples': int(data_info.get('total_samples', len(X) if X is not None else 0)),
+        'num_classes': int(data_info.get('num_classes', len(np.unique(y)) if y is not None else 0)),
+        'class_distribution': json.dumps(convert_numpy_types(data_info.get('class_distribution', class_counts or {}))),
+        
+        # Training configuration
+        'k_folds': config['k_folds'],
+        'epochs': config['epochs'],
+        'batch_size': config['batch_size'],
+        'learning_rate': config['learning_rate'],
+        'optimizer': config.get('optimizer_type', config.get('optimizer', 'adam')),
+        
+        # Architecture configuration
+        'conv_filters': json.dumps(convert_numpy_types(config['conv_filters'])),
+        'dense_units': json.dumps(convert_numpy_types(config['dense_units'])),
+        'conv_dropout': config['conv_dropout'],
+        'l2_regularization': config['l2_regularization'],
+        'use_batch_norm': config.get('use_batch_norm', True),
+        'use_class_weights': config.get('use_class_weights', False),
+        
+        # Training parameters
+        'early_stopping_patience': config['early_stopping_patience'],
+        'lr_reduction_patience': config['lr_reduction_patience'],
+        'lr_reduction_factor': config.get('lr_reduction_factor', 0.5),
+        
+        # Performance metrics - validation
+        'mean_val_accuracy': float(np.mean(val_accuracies)),
+        'std_val_accuracy': float(np.std(val_accuracies)),
+        'best_fold_val_accuracy': float(np.max(val_accuracies)) if classifier_type == 'cwt_image' else fold_results.get('best_accuracy', float(np.max(val_accuracies))),
+        'mean_val_loss': float(np.mean(val_losses)),
+        'std_val_loss': float(np.std(val_losses)),
+        
+        # Training time
+        'duration_minutes': (end_time - start_time).total_seconds() / 60 if classifier_type == 'cwt_image' else None,
+        'total_training_time_minutes': fold_results.get('training_time_minutes', (end_time - start_time).total_seconds() / 60) if classifier_type == 'pd_signal' else (end_time - start_time).total_seconds() / 60,
+        
+        # Hyperopt tracking
+        'hyperopt_run_id': hyperopt_run_id or '',
+        'config_file': config_file or '', 
+        'config_number_in_run': float(config_number_in_run) if config_number_in_run is not None else (config_number_in_run if classifier_type == 'pd_signal' else ''),
+        
+        # Model complexity
+        'model_complexity': model_complexity,
+    }
+    
+    # Add classifier-specific fields
+    if classifier_type == 'cwt_image':
+        # Handle multi-channel logging
+        try:
+            channels_dict, channel_labels, channel_paths = resolve_cwt_data_channels(config)
+            cwt_data_dir_value = config.get('cwt_data_dir', channel_paths[0] if channel_paths else '')
+            channel_names_value = ','.join(channel_labels)
+        except:
+            # Fallback for backward compatibility
+            cwt_data_dir_value = config.get('cwt_data_dir', '')
+            channel_names_value = default_channel
+        
+        log_entry.update({
+            # CWT-specific data info
+            'cwt_data_dir': cwt_data_dir_value,
+            'channel_names': channel_names_value,
+            'img_width': config['img_width'],
+            'img_height': config['img_height'], 
+            'img_channels': config['img_channels'],
+            'imbalance_ratio': max(class_counts.values()) / min(class_counts.values()) if class_counts and len(class_counts) > 1 else None,
+            
+            # CWT-specific architecture
+            'conv_kernel_size': str(config['conv_kernel_size']),
+            'pool_size': str(config['pool_size']),
+            'pool_layers': str(config.get('pool_layers', [])),
+            'dense_dropout': str(config['dense_dropout']) if isinstance(config['dense_dropout'], list) else str([config['dense_dropout']]),
+            
+            # CWT-specific augmentation
+            'augment_fraction': config.get('augment_fraction', 0.0),
+            'time_shift_probability': config.get('time_shift_probability', 0.0),
+            'time_shift_range': config.get('time_shift_range', 0.0),
+            'brightness_probability': config.get('brightness_probability', 0.0),
+            'brightness_range': config.get('brightness_range', 0.0),
+            'contrast_probability': config.get('contrast_probability', 0.0),
+            'contrast_range': config.get('contrast_range', 0.0),
+            'noise_probability': config.get('noise_probability', 0.0),
+            'noise_std': config.get('noise_std', 0.0),
+            
+            # CWT-specific results
+            'mean_train_accuracy': float(np.mean(train_accuracies)),
+            'std_train_accuracy': float(np.std(train_accuracies)),
+            'mean_precision': float(np.mean(precisions)),
+            'std_precision': float(np.std(precisions)),
+            'mean_recall': float(np.mean(recalls)),
+            'std_recall': float(np.std(recalls)),
+            'mean_f1_score': float(np.mean(f1_scores)),
+            'std_f1_score': float(np.std(f1_scores)),
+            'mean_epochs_trained': float(np.mean([r['total_epochs'] for r in fold_results])),
+            'mean_best_epoch': float(np.mean([r['best_epoch'] for r in fold_results])),
+            
+            # CWT-specific analysis
+            'run_gradcam': config.get('run_gradcam', False),
+            'gradcam_layer': config.get('gradcam_layer', 'auto'),
+            
+            # CWT fold results as strings
+            'fold_val_accuracies': str([round(acc, 4) for acc in val_accuracies]),
+            'fold_train_accuracies': str([round(acc, 4) for acc in train_accuracies]),
+            'fold_val_losses': str([round(loss, 4) for loss in val_losses]),
+            'fold_precisions': str([round(p, 4) for p in precisions]),
+            'fold_recalls': str([round(r, 4) for r in recalls]),
+            'fold_f1_scores': str([round(f1, 4) for f1 in f1_scores]),
+        })
+        
+    elif classifier_type == 'pd_signal':
+        log_entry.update({
+            # PD-specific data info
+            'data_dir': data_info['data_dir'],
+            'img_width': data_info['img_width'],
+            
+            # PD-specific architecture (uses different field names)
+            'dropout_rates': json.dumps(convert_numpy_types([config['conv_dropout'], config['dense_dropout']])),
+            'l2_reg': config['l2_regularization'],  # Different field name
+            'batch_norm': config.get('use_batch_norm', True),  # Different field name
+            'class_weights': config.get('use_class_weights', False),  # Different field name
+            
+            # PD-specific augmentation
+            'augment_fraction': config.get('augment_fraction', 0.0),
+            'time_shift_probability': config.get('time_shift_probability', 0.0), # Probability of applying time shift augmentation
+            'time_shift_range': config.get('time_shift_range', 0.0),
+            'stretch_probability': config.get('stretch_probability', 0.0),
+            'stretch_scale': config.get('stretch_scale', 0.0),
+            'noise_probability': config.get('noise_probability', 0.0),
+            'noise_std': config.get('noise_std', 0.0),
+            'amplitude_scale_probability': config.get('amplitude_scale_probability', 0.0),
+            'amplitude_scale': config.get('amplitude_scale', 0.0),
+            
+            # PD-specific augmentation metrics
+            'augmented_samples_per_fold': fold_results.get('augmented_samples_per_fold', 0.0),
+            'total_augmented_samples_created': fold_results.get('total_augmented_samples_created', 0),
+            'augmentation_ratio': fold_results.get('augmentation_ratio', 0.0),
+            
+            # PD-specific results (uses different field names)
+            'mean_val_accuracy': fold_results['mean_accuracy'],  # Different source field
+            'std_val_accuracy': fold_results['std_accuracy'],    # Different source field
+            'mean_val_loss': fold_results['mean_loss'],          # Different source field
+            'std_val_loss': fold_results['std_loss'],            # Different source field
+            'best_fold_accuracy': fold_results['best_accuracy'], # Different field name
+            'best_fold_number': fold_results['best_fold'],       # Different field name
+            'per_fold_accuracies': json.dumps(fold_results['fold_accuracies']),  # Different field name
+            'per_fold_losses': json.dumps(fold_results['fold_losses']),          # Different field name
+            
+            # PD-specific training info
+            'convergence_issues': fold_results.get('convergence_issues', ''),
+            'notes': fold_results.get('notes', ''),
+            
+            # Test results (PD-specific)
+            'test_accuracy': test_results.get('test_accuracy') if test_results else None,
+            'test_precision': test_results.get('test_precision') if test_results else None,
+            'test_recall': test_results.get('test_recall') if test_results else None,
+            'test_f1_score': test_results.get('test_f1_score') if test_results else None,
+            'test_roc_auc': test_results.get('test_roc_auc') if test_results else None,
+            'test_samples': test_results.get('test_samples') if test_results else None
+        })
+    
+    # Convert numpy types for JSON serialization
+    log_entry = convert_numpy_types(log_entry)
+    
+    # Write to appropriate experiment log
+    if classifier_type == 'cwt_image':
+        log_path = get_cwt_experiment_log_path()
+    else:
+        log_path = get_pd_experiment_log_path()
+    
+    # Ensure log directory exists
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Write to CSV log
+    log_df = pd.DataFrame([log_entry])
+    
+    if log_path.exists():
+        # Always use concat and overwrite to handle schema changes properly
+        try:
+            existing_df = pd.read_csv(log_path, encoding='utf-8')
+            
+            # Check if columns match - if not, align them
+            existing_columns = set(existing_df.columns)
+            new_columns = set(log_df.columns)
+            
+            if existing_columns != new_columns:
+                # Add missing columns to existing data with default values
+                for col in new_columns - existing_columns:
+                    existing_df[col] = '' if log_df[col].dtype == 'object' else 0
+                
+                # Add missing columns to new data with default values  
+                for col in existing_columns - new_columns:
+                    log_df[col] = '' if existing_df[col].dtype == 'object' else 0
+                
+                # Reorder columns to match new schema
+                all_columns = list(log_df.columns)
+                existing_df = existing_df[all_columns]
+            
+            combined_df = pd.concat([existing_df, log_df], ignore_index=True)
+            combined_df.to_csv(log_path, index=False, encoding='utf-8')
+        except Exception as e:
+            print(f"Warning: Could not update experiment log schema: {e}")
+            # Fallback: append to end (may cause column misalignment)
+            log_df.to_csv(log_path, mode='a', header=False, index=False, encoding='utf-8')
+    else:
+        log_df.to_csv(log_path, index=False, encoding='utf-8')
+    
+    return log_entry
+
+def calculate_data_statistics(classifier_type, X, y, class_counts=None):
+    """Calculate data statistics for experiment logging."""
+    import numpy as np
+    
+    if class_counts is None and y is not None:
+        unique_labels, counts = np.unique(y, return_counts=True)
+        class_counts = dict(zip(unique_labels, counts))
+    
+    stats = {
+        'total_samples': len(X) if X is not None else 0,
+        'num_classes': len(np.unique(y)) if y is not None else 0,
+        'class_distribution': class_counts or {},
+    }
+    
+    if classifier_type == 'cwt_image':
+        stats['imbalance_ratio'] = max(class_counts.values()) / min(class_counts.values()) if class_counts and len(class_counts) > 1 else 1.0
+        if X is not None and len(X.shape) >= 3:
+            stats['img_width'] = X.shape[2] if len(X.shape) == 4 else X.shape[1]
+            stats['img_height'] = X.shape[1] if len(X.shape) == 4 else X.shape[2]
+    
+    return stats
+
+def extract_experiment_result(classifier_type, version, config_number_in_run=None, config_file_path=None, run_id=None):
+    """
+    Unified function to extract experiment results from log files.
+    
+    Args:
+        classifier_type: 'pd_signal' or 'cwt_image'
+        version: Experiment version to find (e.g., 'v001')
+        config_number_in_run: Config number in hyperopt run (optional)
+        config_file_path: Config file path (optional)
+        run_id: Hyperopt run ID (optional)
+    
+    Returns:
+        dict: Extracted experiment results or None if not found
+    """
+    import pandas as pd
+    import datetime
+    
+    try:
+        # Get appropriate experiment log path
+        if classifier_type == 'cwt_image':
+            log_path = get_cwt_experiment_log_path()
+        elif classifier_type == 'pd_signal':
+            log_path = get_pd_experiment_log_path()
+        else:
+            raise ValueError(f"Unknown classifier_type: {classifier_type}")
+        
+        if not log_path.exists():
+            return None
+            
+        df = pd.read_csv(log_path, encoding='utf-8')
+        if df.empty:
+            return None
+        
+        # Find entry by version (most reliable identifier)
+        version_to_find = version if version.startswith('v') else format_version(version)
+        matching_entries = df[df['version'] == version_to_find]
+        
+        if matching_entries.empty:
+            return None
+        
+        latest_entry = matching_entries.iloc[-1]
+        
+        # Base result structure common to both classifiers
+        result = {
+            'config_number_in_run': config_number_in_run,
+            'timestamp': datetime.datetime.now().isoformat(),
+            'version': version_to_find,
+            'config_file': config_file_path,
+            'hyperopt_run_id': run_id,
+            'mean_val_accuracy': latest_entry.get('mean_val_accuracy', 0.0),
+            'std_val_accuracy': latest_entry.get('std_val_accuracy', 0.0),
+            'training_time_minutes': latest_entry.get('duration_minutes', latest_entry.get('total_training_time_minutes', 0.0)),
+            'learning_rate': latest_entry.get('learning_rate', 0.0),
+            'batch_size': latest_entry.get('batch_size', 0),
+            'epochs': latest_entry.get('epochs', 0),
+            'k_folds': latest_entry.get('k_folds', 0),
+            'conv_filters': str(latest_entry.get('conv_filters', '[]')),
+            'dense_units': str(latest_entry.get('dense_units', '[]')),
+            'conv_dropout': latest_entry.get('conv_dropout', 0.0),
+            'l2_regularization': latest_entry.get('l2_regularization', latest_entry.get('l2_reg', 0.0)),
+            'model_complexity': latest_entry.get('model_complexity', 0)
+        }
+        
+        # Add classifier-specific fields
+        if classifier_type == 'cwt_image':
+            result.update({
+                'best_val_accuracy': latest_entry.get('best_fold_val_accuracy', 0.0),
+                'mean_precision': latest_entry.get('mean_precision', 0.0),
+                'std_precision': latest_entry.get('std_precision', 0.0), 
+                'mean_recall': latest_entry.get('mean_recall', 0.0),
+                'std_recall': latest_entry.get('std_recall', 0.0),
+                'mean_f1_score': latest_entry.get('mean_f1_score', 0.0),
+                'std_f1_score': latest_entry.get('std_f1_score', 0.0),
+                'dense_dropout': str(latest_entry.get('dense_dropout', '[0.0]'))
+            })
+        elif classifier_type == 'pd_signal':
+            result.update({
+                'best_val_accuracy': latest_entry.get('best_fold_accuracy', latest_entry.get('best_fold_val_accuracy', 0.0)),
+                'mean_precision': 0.0,  # Not available in PD logs
+                'std_precision': 0.0,   # Not available in PD logs
+                'mean_recall': 0.0,     # Not available in PD logs
+                'std_recall': 0.0,      # Not available in PD logs
+                'mean_f1_score': 0.0,   # Not available in PD logs
+                'std_f1_score': 0.0,    # Not available in PD logs
+                'dense_dropout': str(latest_entry.get('dropout_rates', '[0.0, [0.0]]'))
+            })
+        
+        return result
+        
+    except Exception as e:
+        print(f"Failed to extract results from experiment log: {e}")
+        return None
+
+def create_experiment_summary_files(classifier_type, output_dir, version, config, data_info, 
+                                   experiment_results, source='manual', start_time=None):
+    """
+    Unified function to create experiment summary JSON and TXT files.
+    
+    Args:
+        classifier_type: 'pd_signal' or 'cwt_image'
+        output_dir: Output directory path
+        version: Experiment version string
+        config: Configuration dictionary
+        data_info: Data information dictionary
+        experiment_results: Experiment results dictionary
+        source: 'manual' or 'hyperopt'
+        start_time: Experiment start time (optional)
+    """
+    import json
+    import datetime
+    from pathlib import Path
+    
+    output_dir = Path(output_dir)
+    
+    # Create logs subdirectory
+    logs_dir = output_dir / 'logs'
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Prepare experiment summary data
+    experiment_summary = {
+        'experiment_version': version,
+        'timestamp': datetime.datetime.now().isoformat(),
+        'configuration': config,
+        'data_info': data_info,
+        'results': experiment_results,
+        'source': source
+    }
+    
+    # Save JSON summary
+    summary_filename = logs_dir / f'experiment_summary_{version}.json'
+    with open(summary_filename, 'w') as f:
+        json.dump(experiment_summary, f, indent=2, default=str)
+    
+    # Create human-readable TXT summary
+    current_time = start_time.strftime('%Y-%m-%d %H:%M:%S') if start_time else datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Base configuration section (common fields)
+    config_section = f"""Configuration:
+- Learning Rate: {config['learning_rate']}
+- Batch Size: {config['batch_size']}
+- Epochs: {config['epochs']}
+- K-Folds: {config['k_folds']}
+- Conv Filters: {config['conv_filters']}
+- Dense Units: {config['dense_units']}
+- Conv Dropout: {config['conv_dropout']}
+- L2 Regularization: {config['l2_regularization']}"""
+
+    # Base data information section
+    data_section = f"""Data Information:
+- Total Samples: {data_info['total_samples']}
+- Number of Classes: {data_info['num_classes']}
+- Class Distribution: {data_info['class_distribution']}"""
+
+    # Base results section
+    results_section = f"""Results:
+- Mean Validation Accuracy: {experiment_results['mean_accuracy']:.4f} ± {experiment_results['std_accuracy']:.4f}
+- Best Fold Accuracy: {experiment_results['best_accuracy']:.4f} (Fold {experiment_results['best_fold']})
+- Mean Validation Loss: {experiment_results['mean_loss']:.4f} ± {experiment_results['std_loss']:.4f}
+- Training Time: {experiment_results.get('training_time_minutes', 0):.1f} minutes"""
+
+    # Per-fold results section
+    per_fold_section = f"""Per-Fold Results:
+{chr(10).join([f"Fold {i+1}: Accuracy={acc:.4f}, Loss={loss:.4f}" for i, (acc, loss) in enumerate(zip(experiment_results['fold_accuracies'], experiment_results['fold_losses']))])}"""
+
+    # Add classifier-specific content
+    if classifier_type == 'cwt_image':
+        config_section += f"""
+- Dense Dropout: {config['dense_dropout']}
+- Use Batch Norm: {config.get('use_batch_norm', False)}
+- Augmentation Fraction: {config['augment_fraction']}"""
+        
+        data_section += f"""
+- Image Size: {data_info.get('img_width', 'N/A')}x{data_info.get('img_height', 'N/A')}
+- Imbalance Ratio: {data_info.get('imbalance_ratio', 1.0):.3f}"""
+        
+        # Add precision, recall, F1 if available
+        if 'mean_precision' in experiment_results:
+            results_section += f"""
+- Mean Precision: {experiment_results['mean_precision']:.4f}
+- Mean Recall: {experiment_results['mean_recall']:.4f}
+- Mean F1 Score: {experiment_results['mean_f1_score']:.4f}"""
+            
+            # Enhanced per-fold results for CWT
+            per_fold_section = f"""Per-Fold Results:
+{chr(10).join([f"Fold {i+1}: Acc={acc:.4f}, Loss={loss:.4f}, P={prec:.3f}, R={rec:.3f}, F1={f1:.3f}" 
+               for i, (acc, loss, prec, rec, f1) in enumerate(zip(
+                   experiment_results['fold_accuracies'], 
+                   experiment_results['fold_losses'],
+                   experiment_results.get('fold_precisions', [0]*len(experiment_results['fold_accuracies'])),
+                   experiment_results.get('fold_recalls', [0]*len(experiment_results['fold_accuracies'])),
+                   experiment_results.get('fold_f1_scores', [0]*len(experiment_results['fold_accuracies']))
+               ))])}"""
+        
+    elif classifier_type == 'pd_signal':
+        config_section += f"""
+- Dense Dropout: {config['dense_dropout']}
+- Use Batch Norm: {config.get('use_batch_norm', True)}
+- Augmentation: {config.get('augment_fraction', 0.0)}"""
+    
+    # Combine all sections
+    readable_summary = f"""Experiment Version {version} Summary
+=====================================
+Timestamp: {current_time}
+Source: {source}
+
+{config_section}
+
+{data_section}
+
+{results_section}
+
+{per_fold_section}
+"""
+    
+    # Save TXT summary
+    readable_summary_filename = logs_dir / f'experiment_summary_{version}.txt'
+    with open(readable_summary_filename, 'w') as f:
+        f.write(readable_summary)
+    
+    return summary_filename, readable_summary_filename
+
+def save_fold_plots(classifier_type, y_true, y_pred, history, fold, output_dir, concise=False):
+    """
+    Unified function to save confusion matrix and training history plots per fold.
+    
+    Args:
+        classifier_type: 'pd_signal' or 'cwt_image'  
+        y_true: True labels
+        y_pred: Predicted labels
+        history: Training history object
+        fold: Fold number
+        output_dir: Output directory path
+        concise: Whether to use concise output
+    """
+    from sklearn.metrics import confusion_matrix
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+    
+    output_dir = Path(output_dir)
+    
+    # Create plots subdirectory
+    plots_dir = output_dir / 'plots'
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Save confusion matrix plot
+    cm = confusion_matrix(y_true, y_pred)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
+    
+    # Add colorbar
+    plt.colorbar(im)
+    
+    # Add text annotations
+    thresh = cm.max() / 2.
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(j, i, format(cm[i, j], 'd'),
+                   ha="center", va="center",
+                   color="white" if cm[i, j] > thresh else "black")
+    
+    ax.set_xlabel('Predicted Label')
+    ax.set_ylabel('True Label')
+    ax.set_title(f'Confusion Matrix - Fold {fold}')
+    
+    # Set class labels based on classifier type
+    ax.set_xticks([0, 1])
+    ax.set_yticks([0, 1])
+    if classifier_type == 'pd_signal':
+        ax.set_xticklabels(['Conduct', 'Keyhole'])
+        ax.set_yticklabels(['Conduct', 'Keyhole'])
+    else:  # cwt_image
+        ax.set_xticklabels(['Class 0', 'Class 1'])
+        ax.set_yticklabels(['Class 0', 'Class 1'])
+    
+    cm_filename = plots_dir / f'confusion_matrix_fold_{fold}.png'
+    plt.savefig(cm_filename, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    if not concise:
+        print(f"Confusion matrix plot saved: {cm_filename}")
+    
+    # Save training history plot
+    if history:
+        plt.figure(figsize=(12, 4))
+        
+        # Plot training & validation accuracy
+        plt.subplot(1, 2, 1)
+        plt.plot(history.history['accuracy'], label='Training Accuracy')
+        plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+        plt.title(f'Model Accuracy - Fold {fold}')
+        plt.xlabel('Epoch')
+        plt.ylabel('Accuracy')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot training & validation loss
+        plt.subplot(1, 2, 2)
+        plt.plot(history.history['loss'], label='Training Loss')
+        plt.plot(history.history['val_loss'], label='Validation Loss')
+        plt.title(f'Model Loss - Fold {fold}')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        history_filename = plots_dir / f'training_history_fold_{fold}.png'
+        plt.savefig(history_filename, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        if not concise:
+            print(f"Training history plot saved: {history_filename}")
+
+# -------------------------
+# Multi-Channel CWT Support
+# -------------------------
+
+def resolve_cwt_data_channels(config):
+    """
+    Resolve CWT data channels from config.
+    
+    Args:
+        config: Configuration dictionary
+        
+    Returns:
+        dict: Dictionary of {'label': 'path'} for each channel
+        list: List of channel labels in order
+        list: List of directory paths in order
+    """
+    if 'cwt_data_channels' in config and config['cwt_data_channels'] is not None:
+        # Multi-channel mode
+        channels = config['cwt_data_channels']
+        if not isinstance(channels, dict):
+            raise ValueError("cwt_data_channels must be a dictionary of {'label': 'path'}")
+        
+        # Validate channel count matches img_channels
+        if len(channels) != config.get('img_channels', 1):
+            raise ValueError(f"Number of channels ({len(channels)}) doesn't match img_channels ({config.get('img_channels', 1)})")
+        
+        # Return ordered data for consistent channel ordering
+        channel_labels = list(channels.keys())
+        channel_paths = list(channels.values())
+        
+        return channels, channel_labels, channel_paths
+    
+    elif 'cwt_data_dir' in config:
+        # Single-channel mode (backward compatibility)
+        single_path = config['cwt_data_dir']
+        channels = {default_channel: single_path}
+        return channels, [default_channel], [single_path]
+    
+    else:
+        raise ValueError("Neither 'cwt_data_dir' nor 'cwt_data_channels' found in config")
+
+# Environment variable support removed - multi-channel paths are now hardcoded in CWT_DATA_DIR_DICT
+
+def validate_multichannel_structure(channel_paths, verbose=False):
+    """
+    Validate that all channel directories exist and have compatible class structure.
+    
+    Args:
+        channel_paths: List of directory paths
+        verbose: Print validation details
+        
+    Raises:
+        FileNotFoundError: If any directory doesn't exist
+        ValueError: If class structures don't match
+    """
+    if verbose:
+        print(f"Validating {len(channel_paths)} channel directories...")
+    
+    reference_classes = None
+    
+    for i, path in enumerate(channel_paths):
+        path_obj = Path(path)
+        
+        # Check directory exists
+        if not path_obj.exists():
+            raise FileNotFoundError(f"Channel {i+1} directory not found: {path}")
+        
+        if not path_obj.is_dir():
+            raise NotADirectoryError(f"Channel {i+1} path is not a directory: {path}")
+        
+        # Find class directories
+        class_dirs = [d for d in path_obj.iterdir() if d.is_dir() and d.name.isdigit()]
+        class_names = sorted([d.name for d in class_dirs], key=int)
+        
+        if not class_names:
+            raise ValueError(f"Channel {i+1} has no class directories: {path}")
+        
+        # Validate class structure consistency
+        if reference_classes is None:
+            reference_classes = class_names
+            if verbose:
+                print(f"  Reference classes from channel 1: {reference_classes}")
+        else:
+            if class_names != reference_classes:
+                raise ValueError(f"Channel {i+1} class structure {class_names} doesn't match reference {reference_classes}")
+        
+        if verbose:
+            print(f"  Channel {i+1}: ✓ {len(class_names)} classes")
+    
+    if verbose:
+        print("  All channels validated successfully!")
+
+def generate_channel_ablation_configs(base_config, study_name="channel_ablation"):
+    """
+    Generate configurations for channel ablation study.
+    
+    Tests:
+    - All channels together
+    - Each channel individually  
+    - Each pair of channels (for 3+ channels)
+    
+    Args:
+        base_config: Base configuration with cwt_data_channels
+        study_name: Name prefix for the study
+        
+    Returns:
+        list: List of configurations for ablation study
+    """
+    if 'cwt_data_channels' not in base_config or base_config['cwt_data_channels'] is None:
+        raise ValueError("Base config must contain cwt_data_channels for ablation study")
+    
+    all_channels = base_config['cwt_data_channels']
+    channel_labels = list(all_channels.keys())
+    num_channels = len(channel_labels)
+    
+    if num_channels < 2:
+        raise ValueError("Need at least 2 channels for ablation study")
+    
+    configs = []
+    
+    # 1. All channels together (baseline)
+    config_all = base_config.copy()
+    config_all['ablation_study'] = f"{study_name}_all_channels"
+    config_all['ablation_channels'] = channel_labels
+    configs.append(config_all)
+    
+    # 2. Each channel individually
+    for label in channel_labels:
+        config_single = base_config.copy()
+        config_single['cwt_data_channels'] = {label: all_channels[label]}
+        config_single['img_channels'] = 1
+        config_single['ablation_study'] = f"{study_name}_only_{label}"
+        config_single['ablation_channels'] = [label]
+        configs.append(config_single)
+    
+    # 3. Each pair of channels (for 3+ channels)
+    if num_channels >= 3:
+        from itertools import combinations
+        for pair in combinations(channel_labels, 2):
+            config_pair = base_config.copy()
+            config_pair['cwt_data_channels'] = {label: all_channels[label] for label in pair}
+            config_pair['img_channels'] = 2
+            config_pair['ablation_study'] = f"{study_name}_pair_{'_'.join(pair)}"
+            config_pair['ablation_channels'] = list(pair)
+            configs.append(config_pair)
+    
+    return configs
+
+# Channel analysis functions moved to dedicated script: ml/channel_analysis.py
+# Use: from channel_analysis import analyze_channel_contributions
+
+# Initialize directories when module is imported  
 ensure_directories()

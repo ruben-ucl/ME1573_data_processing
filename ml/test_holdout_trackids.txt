@@ -1,0 +1,21 @@
+# Test Holdout Trackids - Generated from Experiment Logbook
+# This file contains trackids selected for test set holdout
+# All images matching trackid*.png will be excluded from training
+#
+# HOLDOUT STATISTICS:
+# Total available trackids (filtered): 51
+# Selected trackids for holdout: 7 (13.7%)
+# Holdout images: 517
+# Estimated holdout percentage: TBD during training
+#
+# SELECTION CRITERIA:
+# - Material: AlSi10Mg (substrate and powder)
+# - Laser mode: Continuous wave (CW)
+# - Layer: 1
+# - Duty cycle: 1.0
+#
+# SELECTION METHOD:
+# - One representative trackid from each melting regime
+# - Additional trackids from largest regime if needed for target count
+#
+# DATA DIRECTORIES SEARCHED:

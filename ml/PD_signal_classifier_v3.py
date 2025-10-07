@@ -20,8 +20,10 @@ from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras import layers, models, callbacks
 
 from config import (
-    get_data_dir, get_experiment_log_path, load_config, format_version,
-    OUTPUTS_DIR, normalize_path, ensure_path_exists, convert_numpy_types
+    get_data_dir, get_pd_experiment_log_path, load_config, format_version,
+    PD_OUTPUTS_DIR, normalize_path, ensure_path_exists, convert_numpy_types,
+    # Consolidated functions
+    log_experiment_results, create_experiment_summary_files, save_fold_plots
 )
 from data_utils import normalize_image
 
@@ -375,14 +377,14 @@ def get_next_version_number(output_root):
     """Get the next version number based on completed experiments in the log."""
     # Use centralized version management from config
     from config import get_next_version_from_log
-    return get_next_version_from_log()
+    return get_next_version_from_log(classifier_type='pd_signal')
 
 
 def create_experiment_log_entry(version, hyperparams, data_info, results, output_root, source='manual', 
                                hyperopt_run_id=None, config_file=None, config_number_in_run=None, test_results=None):
     """Create or update the experiment tracking CSV with enhanced traceability."""
     # Use centralized experiment log path
-    log_file = str(get_experiment_log_path())
+    log_file = str(get_pd_experiment_log_path())
     
     # Create logs directory using centralized path (ensures correct location)
     log_file_path = Path(log_file)
@@ -481,7 +483,7 @@ def create_experiment_log_entry(version, hyperparams, data_info, results, output
 
 def update_experiment_log_with_test_results(version, test_results):
     """Update existing experiment log entry with test results."""
-    log_file = str(get_experiment_log_path())
+    log_file = str(get_pd_experiment_log_path())
     
     if not Path(log_file).exists():
         raise FileNotFoundError(f"Experiment log not found: {log_file}")
@@ -1188,6 +1190,7 @@ def main():
     # Load configuration using consolidated function
     config = load_config(
         config_path=args.config,
+        classifier_type='pd_signal',
         learning_rate=args.learning_rate,
         batch_size=args.batch_size,
         epochs=args.epochs,

@@ -1,0 +1,20 @@
+{
+  "comment": "High learning rate configuration for fast initial testing",
+  
+  "learning_rate": 0.005,
+  "batch_size": 16,
+  "epochs": 30,
+  "k_folds": 5,
+  
+  "conv_filters": [16, 32],
+  "dense_units": [64],
+  "conv_dropout": 0.1,
+  "dense_dropout": [0.2],
+  "l2_regularization": 0.0,
+  "use_batch_norm": true,
+  
+  "early_stopping_patience": 8,
+  "lr_reduction_patience": 3,
+  "lr_reduction_factor": 0.5,
+  "use_class_weights": true
+}

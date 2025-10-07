@@ -20,6 +20,7 @@ import json
 import subprocess
 import sys
 import time
+from abc import ABC, abstractmethod
 from itertools import product
 from pathlib import Path
 
@@ -27,39 +28,369 @@ import numpy as np
 import pandas as pd
 
 from config import (
-    get_data_dir, get_timing_database_path, get_experiment_log_path,
-    get_config_template, HYPEROPT_RESULTS_DIR, normalize_path, format_version,
-    convert_numpy_types, get_next_version_from_log
+    get_data_dir, get_pd_timing_database_path, get_pd_experiment_log_path,
+    get_pd_config_template, PD_HYPEROPT_RESULTS_DIR, normalize_path, format_version,
+    convert_numpy_types, get_next_version_from_log,
+    # CWT-specific imports
+    get_default_cwt_data_dir, get_cwt_experiment_log_path, get_cwt_config_template,
+    get_cwt_timing_database_path, CWT_LOGS_DIR, CWT_HYPEROPT_RESULTS_DIR,
+    # Consolidated functions
+    extract_experiment_result
 )
 
-class HyperparameterTuner:
-    """Manages hyperparameter optimization experiments."""
+# ========================================================================================
+# CLASSIFIER STRATEGY INTERFACE
+# ========================================================================================
+
+class ClassifierStrategy(ABC):
+    """Abstract base class for classifier-specific hyperparameter optimization strategies."""
     
-    def __init__(self, base_config=None, output_root=None, verbose=False, concise=False):
-        self.base_config = base_config or get_config_template()
-        # Use centralized configuration for output directory
-        self.base_output_root = Path(output_root) if output_root else HYPEROPT_RESULTS_DIR
-        self.results = []
-        self.failed_configs = []
+    @abstractmethod
+    def get_parameter_space(self, categories=None, tiers=None):
+        """Return the hyperparameter search space for this classifier.
         
-        # Store verbosity settings
+        Args:
+            categories (list, optional): Filter by parameter categories
+            tiers (list, optional): Filter by priority tiers
+        """
+        pass
+    
+    @abstractmethod
+    def get_config_template(self):
+        """Return the default configuration template for this classifier."""
+        pass
+        
+    @abstractmethod
+    def get_experiment_log_path(self):
+        """Return the path to the experiment log for this classifier."""
+        pass
+    
+    @abstractmethod
+    def parse_experiment_log_row(self, row, tuner):
+        """Parse a row from the experiment log into a config dict."""
+        pass
+    
+    @abstractmethod
+    def get_execution_command(self, config_file_path):
+        """Return the command to execute the classifier with given config."""
+        pass
+    
+    @abstractmethod
+    def get_config_signature_params(self):
+        """Return the list of parameters to include in config signature for deduplication."""
+        pass
+    
+    @abstractmethod
+    def normalize_config(self, config):
+        """Normalize configuration parameters for this classifier."""
+        pass
+    
+    @abstractmethod  
+    def get_timing_database_path(self):
+        """Return the path to the timing database for this classifier."""
+        pass
+    
+    @abstractmethod
+    def get_quick_grid_parameters(self):
+        """Return 3-level parameter grids for the top 3 highest impact parameters."""
+        pass
+
+# ========================================================================================
+# PD SIGNAL CLASSIFIER STRATEGY
+# ========================================================================================
+
+class PDSignalStrategy(ClassifierStrategy):
+    """Strategy for PD Signal Classifier optimization."""
+    
+    def get_parameter_space(self, categories=None, tiers=None):
+        """Get hyperparameter search space from registry."""
+        from hyperparameter_registry import get_search_space
+        return get_search_space('pd_signal', categories=categories, tiers=tiers)
+    
+    def get_config_template(self):
+        return get_pd_config_template()
+    
+    def get_experiment_log_path(self):
+        return get_pd_experiment_log_path()
+        
+    def parse_experiment_log_row(self, row, tuner):
+        """Parse a row from the PD signal experiment log."""
+        # Parse dropout rates from combined format [conv_dropout, dense_dropout]
+        dropout_rates = tuner._safe_parse_list(row.get('dropout_rates'), [])
+        conv_dropout = dropout_rates[0] if len(dropout_rates) > 0 else 0.2
+        dense_dropout = dropout_rates[1] if len(dropout_rates) > 1 else [0.3, 0.2]
+        
+        return {
+            # Core training parameters
+            'learning_rate': row.get('learning_rate'),
+            'batch_size': int(row.get('batch_size', 0)) if pd.notna(row.get('batch_size')) else None,
+            'epochs': int(row.get('epochs', 0)) if pd.notna(row.get('epochs')) else None,
+            'k_folds': int(row.get('k_folds', 0)) if pd.notna(row.get('k_folds')) else None,
+            # Architecture parameters
+            'conv_filters': tuner._safe_parse_list(row.get('conv_filters')),
+            'dense_units': tuner._safe_parse_list(row.get('dense_units')),
+            # Regularization parameters
+            'conv_dropout': conv_dropout,
+            'dense_dropout': dense_dropout,
+            'l2_regularization': row.get('l2_reg'),
+            'early_stopping_patience': int(row.get('early_stopping_patience', 0)) if pd.notna(row.get('early_stopping_patience')) else None,
+            'use_class_weights': row.get('class_weights'),
+            # Data augmentation parameters
+            'augment_fraction': row.get('augment_fraction'),
+            'time_shift_probability': int(row.get('time_shift_probability', 0)),
+            'time_shift_range': int(row.get('time_shift_range', 0)) if pd.notna(row.get('time_shift_range')) else None,
+            'stretch_probability': row.get('stretch_probability'),
+            'stretch_scale': row.get('stretch_scale'),
+            'noise_probability': row.get('noise_probability'),
+            'noise_std': row.get('noise_std'),
+            'amplitude_scale_probability': row.get('amplitude_scale_probability'),
+            'amplitude_scale': row.get('amplitude_scale')
+        }
+    
+    def get_execution_command(self, config_file_path):
+        return [
+            sys.executable, 
+            str(Path(__file__).parent / 'PD_signal_classifier_v3.py'), 
+            '--config', str(config_file_path),
+            '--source', 'hyperopt',
+        ]
+    
+    def get_config_signature_params(self):
+        """Return parameters for config signature generation."""
+        return [
+            # Core training parameters
+            'learning_rate', 'batch_size', 'epochs', 'k_folds',
+            # Architecture parameters
+            'conv_filters', 'dense_units',
+            # Regularization parameters  
+            'conv_dropout', 'dense_dropout', 'l2_regularization', 'early_stopping_patience', 'use_class_weights',
+            # Data augmentation parameters 
+            'augment_fraction', 'time_shift_probability', 'time_shift_range', 'stretch_probability', 'stretch_scale',
+            'noise_probability', 'noise_std', 'amplitude_scale_probability', 'amplitude_scale'
+        ]
+    
+    def normalize_config(self, config):
+        """Normalize configuration for PD signal classifier."""
+        # PD signal classifier expects these exact parameter names - no transformation needed
+        return config
+    
+    def get_timing_database_path(self):
+        return get_pd_timing_database_path()
+    
+    def get_quick_grid_parameters(self):
+        """Return 3-level grids for top 3 impact parameters: learning_rate, batch_size, dropout_rates."""
+        return {
+            'learning_rate': [0.0005, 0.001, 0.002],          # Conservative, default, aggressive
+            'batch_size': [8, 16, 32],                        # Small, medium, large
+            'dropout_rates': [[0.1, 0.1], [0.2, 0.2], [0.3, 0.3]]  # Light, medium, heavy regularization
+        }
+
+# ========================================================================================
+# CWT IMAGE CLASSIFIER STRATEGY  
+# ========================================================================================
+
+class CWTImageStrategy(ClassifierStrategy):
+    """Strategy for CWT Image Classifier optimization."""
+    
+    def __init__(self, multi_channel=False):
+        self.multi_channel = multi_channel
+    
+    def get_parameter_space(self, categories=None, tiers=None):
+        """Get hyperparameter search space from registry."""
+        from hyperparameter_registry import get_search_space
+        return get_search_space('cwt_image', categories=categories, tiers=tiers)
+    
+    def get_config_template(self):
+        return get_cwt_config_template(multi_channel=self.multi_channel)
+    
+    def get_experiment_log_path(self):
+        return get_cwt_experiment_log_path()
+        
+    def parse_experiment_log_row(self, row, tuner):
+        """Parse a row from the CWT experiment log."""
+        return {
+            # Core training parameters
+            'learning_rate': row.get('learning_rate'),
+            'batch_size': int(row.get('batch_size', 0)) if pd.notna(row.get('batch_size')) else None,
+            'epochs': int(row.get('epochs', 0)) if pd.notna(row.get('epochs')) else None,
+            'k_folds': int(row.get('k_folds', 0)) if pd.notna(row.get('k_folds')) else None,
+            # Architecture parameters
+            'conv_filters': tuner._safe_parse_list(row.get('conv_filters')),
+            'dense_units': tuner._safe_parse_list(row.get('dense_units')),
+            # Regularization parameters (CWT uses separate columns)
+            'conv_dropout': row.get('conv_dropout'),
+            'dense_dropout': tuner._safe_parse_list(row.get('dense_dropout'), [0.5]),  # Always expect list format
+            'l2_regularization': row.get('l2_regularization'),
+            'early_stopping_patience': int(row.get('early_stopping_patience', 0)) if pd.notna(row.get('early_stopping_patience')) else None,
+            'use_class_weights': row.get('use_class_weights'),
+            # CWT-specific parameters
+            'img_width': int(row.get('img_width', 0)) if pd.notna(row.get('img_width')) else None,
+            'img_height': int(row.get('img_height', 0)) if pd.notna(row.get('img_height')) else None,
+            'img_channels': int(row.get('img_channels', 0)) if pd.notna(row.get('img_channels')) else None,
+            # CWT-suitable augmentation parameters
+            'augment_fraction': row.get('augment_fraction'),
+            'time_shift_probability': row.get('time_shift_probability'),
+            'time_shift_range': row.get('time_shift_range'),
+            'noise_probability': row.get('noise_probability'),
+            'noise_std': row.get('noise_std'),
+            'brightness_probability': row.get('brightness_probability'),
+            'brightness_range': row.get('brightness_range'),
+            'contrast_probability': row.get('contrast_probability'),
+            'contrast_range': row.get('contrast_range')
+        }
+    
+    def get_execution_command(self, config_file_path):
+        return [
+            sys.executable,
+            str(Path(__file__).parent / 'CWT_image_classifier_v3.py'),
+            '--config', str(config_file_path)
+        ]
+    
+    def get_config_signature_params(self):
+        """Return parameters for config signature generation."""
+        return [
+            # Core training parameters
+            'learning_rate', 'batch_size', 'epochs', 'k_folds',
+            # Architecture parameters
+            'conv_filters', 'dense_units',
+            # Regularization parameters
+            'conv_dropout', 'dense_dropout', 'l2_regularization', 'early_stopping_patience', 'use_class_weights',
+            # Image-specific parameters
+            'img_width', 'img_height', 'img_channels',
+            # CWT-suitable augmentation parameters (critical for deduplication)
+            'augment_fraction', 'time_shift_range', 'noise_std',
+            'brightness_range', 'contrast_range'
+        ]
+    
+    def normalize_config(self, config):
+        """Normalize configuration for CWT image classifier with multi-channel support."""
+        normalized = config.copy()
+        
+        # Handle multi-channel data directory configuration
+        from config import resolve_cwt_data_channels
+        try:
+            # If config has multi-channel data, ensure consistency
+            if 'cwt_data_channels' in normalized and normalized['cwt_data_channels'] is not None:
+                channels_dict, channel_labels, channel_paths = resolve_cwt_data_channels(normalized)
+                # Ensure img_channels matches directory count
+                normalized['img_channels'] = len(channel_paths)
+                # Keep cwt_data_dir for backward compatibility (use first path)
+                normalized['cwt_data_dir'] = channel_paths[0]
+            elif 'cwt_data_dir' in normalized:
+                # Single-channel mode - ensure consistency
+                normalized['img_channels'] = 1
+                # Clear multi-channel config if present
+                normalized['cwt_data_channels'] = None
+        except:
+            # Fallback for any configuration issues
+            pass
+        
+        # Convert data_dir to cwt_data_dir if present (hyperopt compatibility)
+        if 'data_dir' in normalized:
+            normalized['cwt_data_dir'] = normalized.pop('data_dir')
+            
+        # Ensure dense_dropout is a single value, not list
+        if 'dense_dropout' in normalized and isinstance(normalized['dense_dropout'], list):
+            normalized['dense_dropout'] = normalized['dense_dropout'][0]  # Use first value
+            
+        return normalized
+    
+    def get_timing_database_path(self):
+        return get_cwt_timing_database_path()
+    
+    def get_quick_grid_parameters(self):
+        """Return 3-level grids for top 3 impact parameters: learning_rate, batch_size, dense_dropout."""
+        return {
+            'learning_rate': [0.0005, 0.001, 0.002],     # Conservative, default, aggressive
+            'batch_size': [16, 32, 64],                  # Small, medium, large (CWT needs larger batches)
+            'dense_dropout': [0.2, 0.4, 0.6]            # Light, medium, heavy regularization (single value for CWT)
+        }
+
+# ========================================================================================
+# STRATEGY FACTORY
+# ========================================================================================
+
+def get_classifier_strategy(classifier_type, multi_channel=False):
+    """Factory function to create classifier strategies."""
+    strategies = {
+        'pd_signal': PDSignalStrategy(),
+        'cwt_image': CWTImageStrategy(multi_channel=multi_channel)
+    }
+    
+    if classifier_type not in strategies:
+        raise ValueError(f"Unknown classifier type: {classifier_type}. Available: {list(strategies.keys())}")
+    
+    return strategies[classifier_type]
+
+class HyperparameterTuner:
+    """Manages hyperparameter optimization experiments with classifier-agnostic optimization."""
+    
+    def __init__(self, classifier_type='pd_signal', base_config=None, output_root=None, verbose=False, concise=False, multi_channel=False, base_version=None):
+        # Initialize classifier strategy
+        self.classifier_type = classifier_type
+        self.multi_channel = multi_channel
         self.verbose = verbose
         self.concise = concise
+        self.strategy = get_classifier_strategy(classifier_type, multi_channel=multi_channel)
+        
+        # Determine base configuration
+        if base_config:
+            # Explicit base_config provided
+            self.base_config = base_config
+        elif base_version:
+            # Load config from specific version
+            version_config = self._find_config_by_version(base_version)
+            if version_config:
+                # Merge version config with template to ensure all required fields are present
+                template_config = self.strategy.get_config_template()
+                template_config.update(version_config)
+                self.base_config = template_config
+                if verbose:
+                    accuracy = version_config.get('mean_val_accuracy')
+                    accuracy_str = f"{accuracy:.4f}" if accuracy is not None else "unknown"
+                    print(f"Using base configuration from {version_config.get('version', f'v{base_version}')} (accuracy: {accuracy_str})")
+            else:
+                if verbose:
+                    print(f"Warning: Could not find version {base_version}, using default template")
+                self.base_config = self.strategy.get_config_template()
+        else:
+            # Use default template
+            self.base_config = self.strategy.get_config_template()
+        
+        # Use centralized configuration for output directory
+        if output_root:
+            self.base_output_root = Path(output_root)
+        elif classifier_type == 'cwt_image':
+            self.base_output_root = CWT_HYPEROPT_RESULTS_DIR
+        else:
+            self.base_output_root = PD_HYPEROPT_RESULTS_DIR
+        
+        # Initialise progress tracking lists
+        self.results = []
+        self.failed_configs = []
         
         # Create base output directory
         self.base_output_root.mkdir(parents=True, exist_ok=True)
         
+        # Ensure classifier-specific directories exist
+        if self.classifier_type == 'cwt_image':
+            from config import ensure_cwt_directories
+            ensure_cwt_directories()
+        else:
+            from config import ensure_directories
+            ensure_directories()
+        
         # Will be set when run_optimization is called
         self.output_root = None
-        self.progress_file = None
         self.results_file = None
+        self.run_info_file = None
         
         # Timing and progress tracking
         self.total_configs = 0
         
-        # Time estimation
-        self.timing_db_file = str(get_timing_database_path())
-        self.timing_data = self.load_timing_database()
+        # Simple time estimation (replaces complex timing system)
+        from simple_timing_estimator import create_simple_estimator
+        self.timing_estimator = create_simple_estimator(classifier_type)
         
         # Cache for experiment log to avoid repeated file reads
         self._experiment_log_cache = None
@@ -90,33 +421,8 @@ class HyperparameterTuner:
     
     def _config_signature(self, config):
         """Create a unique signature for a configuration to enable deduplication."""
-        # Key hyperparameters that define a unique experiment
-        # Based on all parameters in search space and experiment log
-        key_params = [
-            # Core training parameters
-            'learning_rate',
-            'batch_size', 
-            'epochs',
-            'k_folds',
-            # Architecture parameters
-            'conv_filters',
-            'dense_units',
-            # Regularization parameters  
-            'conv_dropout',
-            'dense_dropout',
-            'l2_regularization',
-            'early_stopping_patience',
-            'use_class_weights',
-            # Data augmentation parameters (critical for deduplication)
-            'augment_fraction',
-            'time_shift_range',
-            'stretch_probability',
-            'stretch_scale',
-            'noise_probability',
-            'noise_std',
-            'amplitude_scale_probability',
-            'amplitude_scale'
-        ]
+        # Use strategy to get classifier-specific parameters for signature
+        key_params = self.strategy.get_config_signature_params()
         
         signature_parts = []
         for param in key_params:
@@ -142,7 +448,7 @@ class HyperparameterTuner:
     
     def _load_previous_configs(self):
         """Load configurations from previous experiments to avoid duplication."""
-        log_file = get_experiment_log_path()
+        log_file = self.strategy.get_experiment_log_path()
         
         if not Path(log_file).exists():
             return set()
@@ -152,37 +458,8 @@ class HyperparameterTuner:
             previous_signatures = set()
             
             for _, row in df.iterrows():
-                # Parse dropout rates from combined format [conv_dropout, dense_dropout]
-                dropout_rates = self._safe_parse_list(row.get('dropout_rates'), [])
-                conv_dropout = dropout_rates[0] if len(dropout_rates) > 0 else 0.2
-                dense_dropout = dropout_rates[1] if len(dropout_rates) > 1 else [0.3, 0.2]
-                
-                # Reconstruct config from log entry
-                config = {
-                    # Core training parameters
-                    'learning_rate': row.get('learning_rate'),
-                    'batch_size': int(row.get('batch_size', 0)) if pd.notna(row.get('batch_size')) else None,
-                    'epochs': int(row.get('epochs', 0)) if pd.notna(row.get('epochs')) else None,
-                    'k_folds': int(row.get('k_folds', 0)) if pd.notna(row.get('k_folds')) else None,
-                    # Architecture parameters
-                    'conv_filters': self._safe_parse_list(row.get('conv_filters')),
-                    'dense_units': self._safe_parse_list(row.get('dense_units')),
-                    # Regularization parameters
-                    'conv_dropout': conv_dropout,
-                    'dense_dropout': dense_dropout,
-                    'l2_regularization': row.get('l2_reg'),
-                    'early_stopping_patience': int(row.get('early_stopping_patience', 0)) if pd.notna(row.get('early_stopping_patience')) else None,
-                    'use_class_weights': row.get('class_weights'),
-                    # Data augmentation parameters
-                    'augment_fraction': row.get('augment_fraction'),
-                    'time_shift_range': int(row.get('time_shift_range', 0)) if pd.notna(row.get('time_shift_range')) else None,
-                    'stretch_probability': row.get('stretch_probability'),
-                    'stretch_scale': row.get('stretch_scale'),
-                    'noise_probability': row.get('noise_probability'),
-                    'noise_std': row.get('noise_std'),
-                    'amplitude_scale_probability': row.get('amplitude_scale_probability'),
-                    'amplitude_scale': row.get('amplitude_scale')
-                }
+                # Use strategy to parse experiment log row
+                config = self.strategy.parse_experiment_log_row(row, self)
                 
                 signature = self._config_signature(config)
                 previous_signatures.add(signature)
@@ -194,9 +471,9 @@ class HyperparameterTuner:
                 print(f"Warning: Could not load previous configs for deduplication: {e}")
             return set()
     
-    def _deduplicate_configs(self, configs, skip_deduplication=False):
+    def _deduplicate_configs(self, configs, deduplication=True):
         """Remove configurations that have been tried before."""
-        if skip_deduplication:
+        if not deduplication:
             return configs
         
         previous_signatures = self._load_previous_configs()
@@ -234,22 +511,78 @@ class HyperparameterTuner:
     def _get_duplicate_indices(self, configs):
         """Get indices of configurations that have been tried before."""
         previous_signatures = self._load_previous_configs()
-        
         if not previous_signatures:
             return set()
         
-        duplicate_indices = set()
+        return {i for i, config in enumerate(configs) 
+                if self._config_signature(config) in previous_signatures}
+    
+    def _find_config_by_version(self, version_number):
+        """Find configuration from previous experiments by version number.
         
-        for i, config in enumerate(configs):
-            signature = self._config_signature(config)
-            if signature in previous_signatures:
-                duplicate_indices.add(i)
+        Args:
+            version_number (int): Version number to find (e.g., 115 for v115)
+            
+        Returns:
+            dict: Configuration dictionary or None if not found
+        """
+        log_file = self.strategy.get_experiment_log_path()
         
-        return duplicate_indices
+        if not Path(log_file).exists():
+            return None
+        
+        try:
+            df = pd.read_csv(log_file, encoding='utf-8')
+            if df.empty:
+                return None
+            
+            # Look for version in format "v115" or just "115"
+            version_patterns = [f'v{version_number:03d}', f'v{version_number}', str(version_number)]
+            
+            matching_row = None
+            for pattern in version_patterns:
+                matches = df[df['version'].astype(str) == pattern]
+                if not matches.empty:
+                    matching_row = matches.iloc[0]  # Take first match
+                    break
+            
+            if matching_row is None:
+                return None
+            
+            return self._extract_config_from_row(matching_row)
+            
+        except Exception as e:
+            if self.verbose:
+                print(f"Warning: Could not find config for version {version_number}: {e}")
+            return None
+    
+    def _extract_config_from_row(self, row):
+        """Extract configuration dictionary from a dataframe row."""
+        # Parse dropout rates from combined format [conv_dropout, dense_dropout]
+        dropout_rates = self._safe_parse_list(row.get('dropout_rates'), [])
+        conv_dropout = dropout_rates[0] if len(dropout_rates) > 0 else 0.2
+        dense_dropout = dropout_rates[1] if len(dropout_rates) > 1 else [0.3, 0.2]
+        
+        # Extract configuration from the row
+        config = {
+            'learning_rate': row.get('learning_rate'),
+            'batch_size': int(row.get('batch_size', 0)) if pd.notna(row.get('batch_size')) else None,
+            'conv_dropout': conv_dropout,
+            'dense_dropout': dense_dropout,
+            'l2_regularization': row.get('l2_reg'),
+            'conv_filters': self._safe_parse_list(row.get('conv_filters')),
+            'dense_units': self._safe_parse_list(row.get('dense_units')),
+            'early_stopping_patience': int(row.get('early_stopping_patience', 0)) if pd.notna(row.get('early_stopping_patience')) else None,
+            'use_class_weights': row.get('class_weights'),
+            'mean_val_accuracy': row.get('mean_val_accuracy'),
+            'version': row.get('version')
+        }
+        
+        return config
     
     def _find_best_previous_config(self):
         """Find the best performing configuration from previous experiments."""
-        log_file = get_experiment_log_path()
+        log_file = self.strategy.get_experiment_log_path()
         
         if not Path(log_file).exists():
             return None
@@ -263,30 +596,13 @@ class HyperparameterTuner:
             best_idx = df['mean_val_accuracy'].idxmax()
             best_row = df.iloc[best_idx]
             
-            # Parse dropout rates from combined format [conv_dropout, dense_dropout]
-            dropout_rates = self._safe_parse_list(best_row.get('dropout_rates'), [])
-            conv_dropout = dropout_rates[0] if len(dropout_rates) > 0 else 0.2
-            dense_dropout = dropout_rates[1] if len(dropout_rates) > 1 else [0.3, 0.2]
+            config = self._extract_config_from_row(best_row)
             
-            # Extract configuration from the best row
-            best_config = {
-                'learning_rate': best_row.get('learning_rate'),
-                'batch_size': int(best_row.get('batch_size', 0)) if pd.notna(best_row.get('batch_size')) else None,
-                'conv_dropout': conv_dropout,
-                'dense_dropout': dense_dropout,
-                'l2_regularization': best_row.get('l2_reg'),
-                'conv_filters': self._safe_parse_list(best_row.get('conv_filters')),
-                'dense_units': self._safe_parse_list(best_row.get('dense_units')),
-                'early_stopping_patience': int(best_row.get('early_stopping_patience', 0)) if pd.notna(best_row.get('early_stopping_patience')) else None,
-                'use_class_weights': best_row.get('class_weights'),
-                'mean_val_accuracy': best_row.get('mean_val_accuracy'),
-                'version': best_row.get('version')
-            }
+            # Brief mention when found (detailed display happens in smart mode)
+            if self.verbose:
+                print(f"Best previous config found: {config.get('version', 'unknown')} with accuracy {config['mean_val_accuracy']:.4f}")
             
-            if not self.concise:
-                print(f"Best previous config found: {best_config.get('version', 'unknown')} with accuracy {best_config['mean_val_accuracy']:.4f}")
-            
-            return best_config
+            return config
             
         except Exception as e:
             if self.verbose:
@@ -295,10 +611,17 @@ class HyperparameterTuner:
     
     def _get_neighboring_values(self, param_name, current_value, search_space, radius=1):
         """Get neighboring values around the current best value within search radius."""
+        
+        if self.verbose:
+            print(f'\nSmart search called for {param_name} = {current_value}')
+        
         if param_name not in search_space:
             return []
         
         value_list = search_space[param_name]
+        
+        if self.verbose:
+            print(f'Available values: {value_list}')
         
         # Handle special cases for complex data types
         if isinstance(current_value, list):
@@ -340,58 +663,23 @@ class HyperparameterTuner:
                 direction = "higher" if offset > 0 else "lower"
                 print(f"  Note: No {direction} value available for {param_name} (reached boundary)")
         
+        if self.verbose:
+            print(f'Found neighbours: {neighbors}')
+        
         return neighbors
     
-    def define_search_space(self):
+    def define_search_space(self, categories=None, tiers=None):
         """
-        Define hyperparameter search space based on ML best practices.
+        Define hyperparameter search space using classifier strategy.
         
-        Values are chosen based on:
-        - Learning rates: Log scale from 1e-4 to 1e-2
-        - Batch sizes: Powers of 2, typical range
-        - Dropout: Standard values that work well (separated for better smart search)
-        - Architecture: Conservative variations
-        - L2 reg: Log scale, including no regularization
+        Args:
+            categories (list, optional): Filter by parameter categories
+            tiers (list, optional): Filter by priority tiers
+        
+        Returns:
+            dict: Classifier-specific parameter space
         """
-        
-        return {
-            # Tier 1: Highest Impact (test thoroughly)
-            'learning_rate': [0.0001, 0.0005, 0.001, 0.002, 0.005],
-            'batch_size': [8, 16, 32],
-            
-            # Tier 2: High Impact (test key values) - separated for better smart search
-            'conv_dropout': [0.1, 0.2, 0.3],
-            'dense_dropout': [[0.2, 0.1], [0.2, 0.2], [0.3, 0.2], [0.3, 0.3], [0.4, 0.3]],
-            'l2_regularization': [0.0, 0.0001, 0.001, 0.01],
-            
-            # Tier 3: Architecture variations (test a few key combinations)
-            'conv_filters': [
-                [16, 32],           # Simplest model
-                [32, 64],           # Simple model
-                [16, 32, 64],       # Default model  
-                [32, 64, 128],      # More complex model
-            ],
-            'dense_units': [
-                [64],               # Single dense layer
-                [128],              # Large single dense layer
-                [128, 64],          # Default
-                [256, 128],         # Larger capacity
-            ],
-            
-            # Tier 4: Training control (test a few values)
-            'early_stopping_patience': [8, 12],
-            'use_class_weights': [True, False],
-            
-            # Tier 5: Augmentation parameters (for smart-augmentation mode)
-            'augment_fraction': [0.0, 0.25, 0.5, 0.75, 1.0],
-            'time_shift_range': [2, 5, 10],
-            'stretch_probability': [0.0, 0.25, 0.5, 0.75, 1.0],
-            'stretch_scale': [0.005, 0.1, 0.15, 0.2],
-            'noise_probability': [0.0, 0.25, 0.5, 0.75, 1.0],
-            'noise_std': [0.01, 0.02, 0.03, 0.05],
-            'amplitude_scale_probability': [0.0, 0.25, 0.5, 0.75, 1.0],
-            'amplitude_scale': [0.005, 0.1, 0.15, 0.2],
-        }
+        return self.strategy.get_parameter_space(categories=categories, tiers=tiers)
     
     def generate_test_configs(self):
         """Generate minimal configurations for testing (2 configs, 2 folds, 2 epochs)."""
@@ -422,83 +710,21 @@ class HyperparameterTuner:
             print(f"Generated {len(configs)} test configurations")
         return configs
     
-    def generate_quick_configs(self):
-        """Generate a smaller set of configurations for quick testing (~15-20 configs)."""
-        configs = []
-        base = self.base_config.copy()
-        
-        # 1. Learning rate sweep (5 configs)
-        if self.verbose:
-            print("Generating learning rate configurations...")
-        for lr in [0.0005, 0.001, 0.002, 0.005, 0.0001]:
-            config = base.copy()
-            config['learning_rate'] = lr
-            configs.append(config)
-        
-        # 2. Batch size variations (3 configs)
-        if self.verbose:
-            print("Generating batch size configurations...")
-        for bs in [8, 16, 32]:
-            config = base.copy()
-            config['learning_rate'] = 0.001  # Use default
-            config['batch_size'] = bs
-            configs.append(config)
-        
-        # 3. Key dropout combinations (4 configs)
-        if self.verbose:
-            print("Generating dropout configurations...")
-        dropout_combos = [
-            (0.1, [0.2, 0.1]),
-            (0.2, [0.3, 0.2]), 
-            (0.3, [0.4, 0.3]),
-            (0.2, [0.2, 0.2])
-        ]
-        for conv_drop, dense_drop in dropout_combos:
-            config = base.copy()
-            config['learning_rate'] = 0.001
-            config['batch_size'] = 16
-            config['conv_dropout'] = conv_drop
-            config['dense_dropout'] = dense_drop
-            configs.append(config)
-        
-        # 4. Regularization comparison (3 configs)
-        if self.verbose:
-            print("Generating regularization configurations...")
-        for l2_reg in [0.0, 0.001, 0.01]:
-            config = base.copy()
-            config['learning_rate'] = 0.001
-            config['batch_size'] = 16
-            config['l2_regularization'] = l2_reg
-            configs.append(config)
-        
-        # 5. Class weighting comparison (2 configs) 
-        if self.verbose:
-            print("Generating class weighting configurations...")
-        for use_weights in [True, False]:
-            config = base.copy()
-            config['learning_rate'] = 0.001
-            config['batch_size'] = 16
-            config['use_class_weights'] = use_weights
-            configs.append(config)
-        
-        if not self.concise:
-            print(f"Generated {len(configs)} quick configurations")
-        return configs
     
-    def generate_full_configs(self):
-        """Generate full hyperparameter grid (warning: can be large!)."""
-        return self._generate_configs_from_space(self.define_search_space())
     
-    def generate_smart_configs(self, search_radius=1, grid_search=False, ignore_params=None, max_grid_size=100, mode='all'):
+    
+    def generate_smart_configs(self, search_radius=1, grid_search=False, ignore_params=None, max_grid_size=100, categories=None, priority_tiers=None, best_config='auto'):
         """
-        Generate smart configurations using focused parameter optimization modes.
+        Generate smart configurations using registry-based parameter filtering.
         
         Args:
             search_radius: Number of neighboring values to test (±1 or ±2)
             grid_search: If True, do full grid search within smart space; if False, use OFAT
             ignore_params: List of parameters to ignore (use best previous value)
             max_grid_size: Maximum number of configs before limiting parameters
-            mode: Parameter mode to focus on ('all', 'training', 'architecture', 'regularization', 'augmentation')
+            categories: List of parameter categories to include (training, regularization, architecture, training_control, augmentation)
+            priority_tiers: List of priority tiers to include (1-5, where 1 is highest priority)
+            best_config: Best configuration to search around ('auto' to find automatically)
         """
         if ignore_params is None:
             ignore_params = []
@@ -506,60 +732,61 @@ class HyperparameterTuner:
         configs = []
         
         # Try to find the best previous configuration
-        best_config = self._find_best_previous_config()
-        search_space = self.define_search_space()
+        if best_config == 'auto':
+            best_config = self._find_best_previous_config()
         
         if best_config is None:
-            if not self.concise:
-                print(f"No previous experiments found - using default smart search ({mode} mode)")
-            return self._generate_default_smart_configs(mode=mode)
+            return [self.base_config]
         
-        mode_str = "grid search" if grid_search else "OFAT"
-        if not self.concise:
-            print(f"\nAdaptive Smart Mode - {mode.title()} Focus ({mode_str}): Building search around best config {best_config.get('version', 'unknown')}")
-            print(f"Best accuracy: {best_config['mean_val_accuracy']:.4f}")
-            print(f"Search radius: ±{search_radius}")
-            if ignore_params:
-                print(f"Ignoring parameters: {', '.join(ignore_params)}")
+        # Get filtered search space from registry based on categories and priority tiers
+        search_space = self.define_search_space(categories=categories, tiers=priority_tiers)
+        
+        if not search_space:
+            if not self.concise:
+                print("No parameters match the specified categories/priority filters. Using base config.")
+            return [self.base_config]
         
         # Use the best config as the base for all new configurations
         base_config = self.base_config.copy()
         
-        # Define parameter groups
-        parameter_groups = self._get_parameter_groups()
-        
-        # Update base config with best known values for all parameters
-        all_params = set()
-        for group_params in parameter_groups.values():
-            all_params.update(group_params)
-        
-        for param in all_params:
+        # Update base config with best known values for all parameters in search space
+        for param in search_space.keys():
             if best_config.get(param) is not None:
                 base_config[param] = best_config[param]
         
-        # Select parameters to optimize based on mode
-        if mode == 'all':
-            param_priority = self._get_all_params_priority()
-        else:
-            param_priority = parameter_groups.get(mode, [])
-            if not param_priority:
-                raise ValueError(f"Unknown mode: {mode}. Valid modes: {list(parameter_groups.keys()) + ['all']}")
+        # Get parameter list from search space (registry handles priority ordering)
+        param_priority = list(search_space.keys())
         
         # Remove ignored parameters
         param_priority = [p for p in param_priority if p not in ignore_params]
         
+        if not param_priority:
+            if not self.concise:
+                print("All parameters were ignored. Using base config.")
+            return [self.base_config]
+        
         if not self.concise:
-            print(f"Focusing on {len(param_priority)} parameters: {', '.join(param_priority)}")
+            filter_info = []
+            if categories:
+                filter_info.append(f"categories: {categories}")
+            if priority_tiers:
+                filter_info.append(f"tiers: {priority_tiers}")
+            filter_desc = f" ({', '.join(filter_info)})" if filter_info else ""
+            print(f"Focusing on {len(param_priority)} parameters{filter_desc}: {', '.join(param_priority)}\n")
         
         # Build search space around best values
         smart_search_space = {}
         for param_name in param_priority:
             if param_name not in search_space:
+                if self.verbose:
+                    print(f'\n{param_name} not in search space')
                 continue
                 
             current_value = best_config.get(param_name)
             if current_value is None:
-                continue
+                if self.verbose:
+                    print(f'\n{param_name} no current value found, starting from 0.0')
+                current_value = 0.0
             
             # Get neighboring values within search radius
             neighbors = self._get_neighboring_values(param_name, current_value, search_space, search_radius)
@@ -571,8 +798,8 @@ class HyperparameterTuner:
         
         if not smart_search_space:
             if not self.concise:
-                print("Warning: No neighboring values found - using default smart search")
-            return self._generate_default_smart_configs(mode=mode)
+                print("Warning: No neighboring values found - update the search space")
+            return set()
         
         if grid_search:
             # Calculate grid size before generating
@@ -625,436 +852,90 @@ class HyperparameterTuner:
             
         return configs
     
-    def _get_parameter_groups(self):
-        """Define parameter groups for focused optimization modes."""
-        return {
-            'training': [
-                'learning_rate',           # Most critical for convergence
-                'batch_size',              # Affects gradient quality and memory
-                'epochs',                  # Training duration
-                'early_stopping_patience'  # Training control
-            ],
-            'architecture': [
-                'conv_filters',    # CNN layer sizes
-                'dense_units'      # Dense layer sizes
-            ],
-            'regularization': [
-                'conv_dropout',        # Dropout after conv layers
-                'dense_dropout',       # Dropout after dense layers
-                'l2_regularization',   # Weight decay
-                'use_class_weights'    # Class imbalance handling
-            ],
-            'augmentation': [
-                'augment_fraction',                # How much training data to augment
-                'time_shift_range',                # Time series shifting
-                'stretch_probability',             # Time warping probability
-                'stretch_scale',                   # Time warping magnitude
-                'noise_probability',               # Noise injection probability
-                'noise_std',                       # Noise magnitude
-                'amplitude_scale_probability',     # Amplitude scaling probability
-                'amplitude_scale'                  # Amplitude scaling magnitude
-            ]
-        }
     
-    def _get_all_params_priority(self):
-        """Get all parameters in priority order for 'all' mode."""
-        return [
-            # Training dynamics (highest priority)
-            'learning_rate',
-            'batch_size', 
-            
-            # Regularization (high priority)
-            'conv_dropout',
-            'dense_dropout',
-            'l2_regularization',
-            
-            # Architecture (medium priority) 
-            'conv_filters',
-            'dense_units',
-            
-            # Training control (lower priority)
-            'early_stopping_patience',
-            'use_class_weights',
-            
-            # Augmentation (specialized focus)
-            'augment_fraction',
-            'time_shift_range',
-            'stretch_probability',
-            'stretch_scale', 
-            'noise_probability',
-            'noise_std',
-            'amplitude_scale_probability',
-            'amplitude_scale'
-        ]
     
-    def _generate_default_smart_configs(self, mode='all'):
-        """Fallback to original smart config generation when no previous results exist."""
-        configs = []
-        base = self.base_config.copy()
-        
-        # Use a subset of the original smart config logic
-        search_space = self.define_search_space()
-        
-        # Test key parameters with reasonable defaults
-        if self.verbose:
-            print("Generating default smart configurations...")
-        
-        # Learning rate sweep
-        for lr in search_space['learning_rate'][:3]:  # Test first 3 values
-            config = base.copy()
-            config['learning_rate'] = lr
-            configs.append(config)
-        
-        # Batch size variations
-        for bs in search_space['batch_size']:
-            config = base.copy()
-            config['batch_size'] = bs
-            configs.append(config)
-            
-        # Key dropout combinations (limit to 2 for efficiency)
-        for conv_drop in search_space['conv_dropout'][:2]:
-            for dense_drop in search_space['dense_dropout'][:2]:
-                config = base.copy()
-                config['conv_dropout'] = conv_drop
-                config['dense_dropout'] = dense_drop
-                configs.append(config)
-        
-        # L2 regularization
-        for l2_reg in search_space['l2_regularization'][:3]:
-            config = base.copy()
-            config['l2_regularization'] = l2_reg
-            configs.append(config)
-        
-        # Class weighting
-        for use_weights in search_space['use_class_weights']:
-            config = base.copy()
-            config['use_class_weights'] = use_weights
-            configs.append(config)
-            
-        if not self.concise:
-            print(f"Generated {len(configs)} default smart configurations")
-        return configs
     
-    def generate_medium_configs(self):
+    def generate_channel_ablation_configs(self, study_name=None):
         """
-        Generate medium-sized configuration set using systematic OFAT approach.
-        This is the original 'smart' mode logic - balanced thoroughness with efficiency.
-        Tests ~25-30 configurations across all key hyperparameters.
-        """
-        configs = []
-        base = self.base_config.copy()
+        Generate configurations for channel ablation study (CWT only).
         
-        # 1. Learning rate sweep with default other params
-        if self.verbose:
-            print("Generating learning rate configurations...")
-        for lr in [0.0001, 0.0005, 0.001, 0.002, 0.005]:
-            config = base.copy()
-            config['learning_rate'] = lr
-            configs.append(config)
-        
-        # 2. Batch size variations with best LR from above (we'll assume 0.001 is good)
-        if self.verbose:
-            print("Generating batch size configurations...")
-        for bs in [8, 16, 32]:
-            config = base.copy()
-            config['learning_rate'] = 0.001  # Use reasonable default
-            config['batch_size'] = bs
-            configs.append(config)
-        
-        # 3. Dropout variations
-        if self.verbose:
-            print("Generating dropout configurations...")
-        for conv_drop in [0.1, 0.2, 0.3]:
-            for dense_drop in [[0.2, 0.1], [0.3, 0.2], [0.4, 0.3]]:
-                config = base.copy()
-                config['learning_rate'] = 0.001
-                config['batch_size'] = 16
-                config['conv_dropout'] = conv_drop
-                config['dense_dropout'] = dense_drop
-                configs.append(config)
-        
-        # 4. Architecture variations
-        if self.verbose:
-            print("Generating architecture configurations...")
-        architectures = [
-            ([16, 32], [64]),
-            ([16, 32, 64], [128, 64]),  # Default
-            ([32, 64, 128], [256, 128])
-        ]
-        for conv_filters, dense_units in architectures:
-            config = base.copy()
-            config['learning_rate'] = 0.001
-            config['batch_size'] = 16
-            config['conv_filters'] = conv_filters
-            config['dense_units'] = dense_units
-            configs.append(config)
-        
-        # 5. Regularization sweep
-        if self.verbose:
-            print("Generating regularization configurations...")
-        for l2_reg in [0.0, 0.0001, 0.001, 0.01]:
-            config = base.copy()
-            config['learning_rate'] = 0.001
-            config['batch_size'] = 16
-            config['l2_regularization'] = l2_reg
-            configs.append(config)
-        
-        # 6. Class weighting comparison
-        if self.verbose:
-            print("Generating class weighting configurations...")
-        for use_weights in [True, False]:
-            config = base.copy()
-            config['learning_rate'] = 0.001
-            config['batch_size'] = 16
-            config['use_class_weights'] = use_weights
-            configs.append(config)
-        
-        if not self.concise:
-            print(f"Generated {len(configs)} medium configurations")
-        return configs
-    
-    def generate_augmentation_configs(self, use_grid_search=False):
-        """Generate configurations focused on optimizing data augmentation parameters.
+        Tests:
+        - All channels together
+        - Each channel individually  
+        - Each pair of channels (for 3+ channels)
         
         Args:
-            use_grid_search (bool): If True, use full grid search (many configs).
-                                  If False, use OFAT approach (fewer configs, default).
+            study_name: Name prefix for the study (auto-generated if None)
+            
+        Returns:
+            list: List of configurations for ablation study
         """
+        if self.classifier_type != 'cwt_image':
+            raise ValueError("Channel ablation is only supported for CWT image classifier")
+        
+        # Get base configuration
+        base_config = self.base_config
+        
+        # Check if multi-channel configuration exists
+        from config import resolve_cwt_data_channels
+        try:
+            channels_dict, channel_labels, channel_paths = resolve_cwt_data_channels(base_config)
+        except Exception as e:
+            error_msg = ("Channel ablation requires multi-channel data. Use --multi-channel flag to enable.\n"
+                       "Multi-channel paths are configured in config.py (CWT_DATA_DIR_DICT).\n"
+                       f"Error: {e}")
+            raise ValueError(error_msg)
+        
+        if len(channel_labels) < 2:
+            raise ValueError(f"Need at least 2 channels for ablation study. Found {len(channel_labels)}: {channel_labels}")
+        
+        # Auto-generate study name if not provided
+        if study_name is None:
+            study_name = f"ablation_{len(channel_labels)}ch"
+        
+        if not self.concise:
+            print(f"Generating channel ablation study: {study_name}")
+            print(f"Channels: {channel_labels}")
+        
         configs = []
-        base = self.base_config.copy()
         
-        # Fix model architecture and training parameters at good defaults
-        # Use parameters from v023 (the best performing config from backfill)
-        base['learning_rate'] = 0.001
-        base['batch_size'] = 16
-        base['conv_filters'] = [32, 64, 128]
-        base['dense_units'] = [128, 64]
-        base['conv_dropout'] = 0.2
-        base['dense_dropout'] = [0.3, 0.2]
-        base['l2_regularization'] = 0.001
-        base['use_batch_norm'] = True
-        base['epochs'] = 50
-        base['k_folds'] = 5
-        base['early_stopping_patience'] = 10
-        base['lr_reduction_patience'] = 5
-        base['lr_reduction_factor'] = 0.5
-        base['use_class_weights'] = True
+        # 1. All channels together (baseline)
+        config_all = base_config.copy()
+        config_all['ablation_study'] = f"{study_name}_all_channels"
+        config_all['ablation_channels'] = channel_labels
+        configs.append(config_all)
         
-        # Define augmentation parameter search space
-        augmentation_space = {
-            'time_shift_range': [2, 5, 10],
-            'stretch_probability': [0.0, 0.25, 0.75, 1.0],
-            'stretch_scale': [0.1, 0.2],
-            'noise_probability': [0.0, 0.25, 0.75, 1.0],
-            'noise_std': [0.01, 0.02, 0.03, 0.05],
-            'amplitude_scale_probability': [0.0, 0.25, 0.75, 1.0],
-            'amplitude_scale': [0.1, 0.2],
-            'augment_fraction': [0.5, 1.0]
-        }
+        # 2. Each channel individually
+        for label in channel_labels:
+            config_single = base_config.copy()
+            config_single['cwt_data_channels'] = {label: channels_dict[label]}
+            config_single['img_channels'] = 1
+            config_single['ablation_study'] = f"{study_name}_only_{label}"
+            config_single['ablation_channels'] = [label]
+            configs.append(config_single)
         
-        if use_grid_search:
-            # Grid search mode: test all combinations
-            if not self.concise:
-                print("Generating grid search augmentation optimization configurations...")
-                print("Fixed parameters: architecture, learning rate, batch size, regularization")
-                print("Varying: augment_fraction, time_shift_range, stretch_probability,")
-                print("         stretch_scale, noise_probability, noise_std,")
-                print("         amplitude_scale_probability, amplitude_scale")
-            
-            configs = self._generate_grid_configs_from_space(augmentation_space, base)
-            
-            if not self.concise:
-                print(f"Generated {len(configs)} grid search augmentation configurations")
-        else:
-            # OFAT mode: test each parameter individually (default)
-            if not self.concise:
-                print("Generating OFAT augmentation optimization configurations...")
-                print("Fixed parameters: architecture, learning rate, batch size, regularization")
-                print("Strategy: One Factor At a Time (OFAT) parameter impact analysis")
-            
-            configs = self._generate_augmentation_ofat(base, augmentation_space)
-            
-            if not self.concise:
-                print(f"Generated {len(configs)} OFAT augmentation configurations")
+        # 3. Each pair of channels (for 3+ channels)
+        if len(channel_labels) >= 3:
+            from itertools import combinations
+            for pair in combinations(channel_labels, 2):
+                config_pair = base_config.copy()
+                config_pair['cwt_data_channels'] = {label: channels_dict[label] for label in pair}
+                config_pair['img_channels'] = 2
+                config_pair['ablation_study'] = f"{study_name}_pair_{'_'.join(pair)}"
+                config_pair['ablation_channels'] = list(pair)
+                configs.append(config_pair)
+        
+        if not self.concise:
+            print(f"Generated {len(configs)} ablation configurations:")
+            print(f"  - 1 baseline (all channels)")
+            print(f"  - {len(channel_labels)} individual channels")
+            if len(channel_labels) >= 3:
+                pair_count = len(list(combinations(channel_labels, 2)))
+                print(f"  - {pair_count} channel pairs")
         
         return configs
     
-    def _generate_augmentation_ofat(self, base, augmentation_space):
-        """Generate OFAT (One Factor At a Time) augmentation configurations.
-        
-        Tests each parameter individually while keeping others at baseline values.
-        Much faster than grid search with ~20-25 configs instead of 2000+.
-        """
-        configs = []
-        
-        # Baseline values for OFAT (different from search space extremes)
-        baseline_values = {
-            'augment_fraction': 0.5,
-            'time_shift_range': 5,
-            'stretch_probability': 0.3,
-            'stretch_scale': 0.1,
-            'noise_probability': 0.5,
-            'noise_std': 0.02,
-            'amplitude_scale_probability': 0.5,
-            'amplitude_scale': 0.1
-        }
-        
-        # Baseline configuration (no augmentation)
-        baseline = base.copy()
-        baseline['augment_fraction'] = 0.0
-        configs.append(baseline)
-        
-        # Test each parameter at extreme values while keeping others at baseline
-        for param, test_values in augmentation_space.items():
-            for value in test_values:
-                # Skip baseline value for augment_fraction (already added as no-aug baseline)
-                if param == 'augment_fraction' and value == 0.0:
-                    continue
-                    
-                config = base.copy()
-                # Set all parameters to baseline values
-                config.update(baseline_values)
-                # Vary only the current parameter
-                config[param] = value
-                configs.append(config)
-        
-        return configs
     
-    def generate_anova_improvement_configs(self):
-        """
-        Generate targeted configurations to improve ANOVA analysis quality.
-        
-        Based on comprehensive analysis, focuses on parameters with high importance
-        but high uncertainty, and adds balanced sampling for better statistical power.
-        
-        Returns ~80 configurations across 2 phases:
-        - Phase 1 (50 configs): High-impact parameter sweeps  
-        - Phase 2 (30 configs): Interaction effects and architecture balance
-        """
-        if not self.concise:
-            print("Generating ANOVA improvement configurations...")
-            print("Targeting parameters with high importance but high uncertainty")
-        
-        configs = []
-        base = self.base_config.copy()
-        
-        # Use best known architecture as baseline
-        best_config = self._find_best_previous_config()
-        if best_config:
-            # Use best values for stable parameters
-            for param in ['epochs', 'k_folds', 'dropout_rates_max', 'conv_filters_progression']:
-                if best_config.get(param) is not None:
-                    base[param] = best_config[param]
-        
-        # Phase 1: High-impact parameter sweeps (50 configs)
-        if not self.concise:
-            print("Phase 1: High-impact parameter systematic sweeps...")
-        
-        # Learning rate: 25 configs - highest importance (33.9%) but high uncertainty
-        learning_rates = [0.0005, 0.0008, 0.001, 0.0015, 0.002, 0.003, 0.004, 0.005]
-        for lr in learning_rates:
-            for batch_size in [16, 32]:  # Two common batch sizes
-                config = base.copy()
-                config['learning_rate'] = lr
-                config['batch_size'] = batch_size
-                configs.append(config)
-                
-        # Additional batch size sweep: 10 configs - second highest importance (20.5%)
-        batch_sizes = [8, 12, 20, 24, 48, 64]
-        for bs in batch_sizes:
-            config = base.copy()
-            config['batch_size'] = bs
-            # Use mid-range learning rate for consistency
-            config['learning_rate'] = 0.002
-            configs.append(config)
-        
-        # Augment fraction sweep: 9 configs - third highest importance (8.8%) but very high uncertainty
-        augment_fractions = [0.0, 0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 0.9, 1.0]
-        for af in augment_fractions:
-            config = base.copy()
-            config['augment_fraction'] = af
-            configs.append(config)
-        
-        # Dropout and regularization sweep: 6 configs - moderate importance but need better coverage
-        dropout_configs = [
-            {'dropout_rates_mean': 0.1, 'l2_reg': 1e-5},
-            {'dropout_rates_mean': 0.2, 'l2_reg': 1e-4}, 
-            {'dropout_rates_mean': 0.3, 'l2_reg': 1e-3},
-            {'dropout_rates_mean': 0.4, 'l2_reg': 1e-4},
-            {'dropout_rates_mean': 0.15, 'l2_reg': 5e-5},
-            {'dropout_rates_mean': 0.25, 'l2_reg': 5e-4}
-        ]
-        for dropout_config in dropout_configs:
-            config = base.copy()
-            config.update(dropout_config)
-            configs.append(config)
-        
-        phase1_count = len(configs)
-        if not self.concise:
-            print(f"Phase 1 generated: {phase1_count} configs")
-            print("Phase 2: Interaction effects and architecture balance...")
-        
-        # Phase 2: Interaction effects and architecture balance (30 configs)
-        
-        # Learning rate × batch size factorial: 12 configs
-        lr_bs_factorial = [
-            (0.001, 16), (0.001, 32), (0.001, 48),
-            (0.002, 16), (0.002, 32), (0.002, 48), 
-            (0.003, 16), (0.003, 32), (0.003, 48),
-            (0.004, 16), (0.004, 32), (0.004, 48)
-        ]
-        for lr, bs in lr_bs_factorial:
-            config = base.copy()
-            config['learning_rate'] = lr
-            config['batch_size'] = bs
-            configs.append(config)
-        
-        # Learning rate × augment fraction interaction: 9 configs
-        lr_af_factorial = [
-            (0.001, 0.2), (0.001, 0.5), (0.001, 0.8),
-            (0.002, 0.2), (0.002, 0.5), (0.002, 0.8),
-            (0.003, 0.2), (0.003, 0.5), (0.003, 0.8)
-        ]
-        for lr, af in lr_af_factorial:
-            config = base.copy()
-            config['learning_rate'] = lr
-            config['augment_fraction'] = af
-            configs.append(config)
-        
-        # Architecture balance: 9 configs
-        # Current analysis shows imbalance: [32,64,128] has 64 experiments vs others have ~10
-        undersampled_architectures = [
-            # Dense architectures
-            {'dense_units': [64]},
-            {'dense_units': [128]}, 
-            {'dense_units': [256]},
-            {'dense_units': [32, 64]},
-            {'dense_units': [256, 128]},
-            # Conv architectures  
-            {'conv_filters': [16, 32]},
-            {'conv_filters': [32, 64]},
-            {'conv_filters': [64, 128, 256]},
-            {'conv_filters': [16, 32, 64]}
-        ]
-        for arch_config in undersampled_architectures:
-            config = base.copy()
-            config.update(arch_config)
-            configs.append(config)
-        
-        total_configs = len(configs)
-        phase2_count = total_configs - phase1_count
-        
-        if not self.concise:
-            print(f"Phase 2 generated: {phase2_count} configs")
-            print(f"Total ANOVA improvement configurations: {total_configs}")
-            print(f"Expected ANOVA benefits:")
-            print(f"  - Reduce learning_rate uncertainty from ±0.251 to ~±0.15")
-            print(f"  - Reduce batch_size uncertainty from ±0.332 to ~±0.20") 
-            print(f"  - Reduce augment_fraction uncertainty from ±0.315 to ~±0.18")
-            print(f"  - Better capture interaction effects between top parameters")
-            print(f"  - Balance architecture sampling for improved statistical power")
-        
-        return configs
     
     
     def _generate_configs_from_space(self, param_space):
@@ -1086,56 +967,61 @@ class HyperparameterTuner:
         return configs
     
     def get_image_dimensions(self, config):
-        """Get actual image dimensions used in training."""
-        # For photodiode signal data, images are resized to (img_width, 2)
-        # This matches the cv2.resize(img, (img_width, 2)) in PD_signal_classifier_v3.py:100
-        
+        """Get actual image dimensions used in training (classifier-specific)."""
         img_width = config['img_width']
-        img_height = 2  # Fixed for this specific application
         
-        # Future enhancement: Could detect from data_dir or add img_height to config
-        # For now, hardcode for photodiode signal processing
+        if self.classifier_type == 'cwt_image':
+            # CWT images have configurable height (default 256) and width (default 100)
+            img_height = config.get('img_height', 256)
+        else:
+            # PD signal data: images are resized to (img_width, 2)
+            # This matches cv2.resize(img, (img_width, 2)) in PD_signal_classifier_v3.py:100
+            img_height = 2
         
         return img_width, img_height
     
-    def load_timing_database(self):
-        """Load historical timing data for adaptive estimation."""
-        if Path(self.timing_db_file).exists():
-            try:
-                with open(self.timing_db_file, 'r') as f:
-                    data = json.load(f)
-                if self.verbose:
-                    print(f"Loaded timing database with {len(data.get('timing_records', []))} records")
-                return data
-            except Exception as e:
-                if self.verbose:
-                    print(f"Failed to load timing database: {e}")
-                    print("Starting fresh")
-        
-        # Default timing database structure
-        return {
-            'timing_records': [],
-            'base_time_per_complexity': 0.001,  # Base time in minutes per complexity unit
-            'last_updated': None
-        }
+    # Removed old complex timing database loading - using SimpleTimingEstimator now
     
     def calculate_model_complexity(self, config):
         """Calculate a complexity score for the model configuration."""
         # Count total parameters (roughly)
         conv_params = 0
-        input_channels = 1  # Starting with 1 channel (grayscale)
+        input_channels = config.get('img_channels', 1)  # CWT: 1 channel, PD: 1 channel
+        
+        # Get kernel size (CWT has configurable kernel size, PD assumes 3x3)
+        if self.classifier_type == 'cwt_image':
+            kernel_size = config.get('conv_kernel_size', [3, 3])
+            kernel_h, kernel_w = kernel_size if len(kernel_size) == 2 else (kernel_size[0], kernel_size[0])
+        else:
+            kernel_h, kernel_w = 3, 3  # PD uses fixed 3x3 kernels
         
         for filters in config['conv_filters']:
-            # Conv2D params = (kernel_size * kernel_size * input_channels + 1) * output_channels
-            # Assume 3x3 kernels
-            conv_params += (3 * 3 * input_channels + 1) * filters
+            # Conv2D params = (kernel_h * kernel_w * input_channels + 1) * output_channels
+            conv_params += (kernel_h * kernel_w * input_channels + 1) * filters
             input_channels = filters
         
         # Dense parameters
         dense_params = 0
-        # Assume flattened conv output feeds into first dense layer
-        # Rough estimate: last conv layer * 10 (for spatial dimensions after pooling)
-        prev_units = config['conv_filters'][-1] * 10 if config['conv_filters'] else 100
+        # Estimate flattened conv output size that feeds into first dense layer
+        if config['conv_filters']:
+            last_conv_filters = config['conv_filters'][-1]
+            
+            if self.classifier_type == 'cwt_image':
+                # CWT: More complex spatial reduction due to pooling layers
+                img_width, img_height = self.get_image_dimensions(config)
+                pool_layers = config.get('pool_layers', [2, 5])
+                pool_size = config.get('pool_size', [2, 2])
+                
+                # Estimate spatial dimensions after pooling (rough approximation)
+                # Each pooling reduces dimensions by pool_size factor
+                spatial_reduction = (pool_size[0] * pool_size[1]) ** len(pool_layers)
+                remaining_spatial = max(1, (img_width * img_height) // spatial_reduction)
+                prev_units = last_conv_filters * remaining_spatial
+            else:
+                # PD: Simple spatial reduction assumption
+                prev_units = last_conv_filters * 10
+        else:
+            prev_units = 100  # Fallback
         
         for units in config['dense_units']:
             dense_params += (prev_units + 1) * units
@@ -1239,7 +1125,12 @@ class HyperparameterTuner:
         # Image size calculation: get actual dimensions used in training
         img_width, img_height = self.get_image_dimensions(config)
         total_pixels = img_width * img_height
-        baseline_pixels = 100 * 2  # Baseline: 100 width × 2 height = 200 pixels
+        
+        # Classifier-specific baseline
+        if self.classifier_type == 'cwt_image':
+            baseline_pixels = 100 * 256  # CWT baseline: 100 × 256 = 25,600 pixels
+        else:
+            baseline_pixels = 100 * 2    # PD baseline: 100 × 2 = 200 pixels
         
         # Linear scaling with total pixels (not quadratic, since it's just resizing)
         image_factor = total_pixels / baseline_pixels
@@ -1248,90 +1139,229 @@ class HyperparameterTuner:
         
         return batch_efficiency * image_factor * fold_factor
     
+    def get_power_law_time_estimate(self, complexity, data_factor, estimated_epochs, config):
+        """
+        Get time estimate using power law relationship fitted to historical data.
+        
+        Args:
+            complexity: Model complexity (parameter count)
+            data_factor: Data processing factor
+            estimated_epochs: Estimated actual epochs
+            config: Configuration dictionary
+            
+        Returns:
+            float: Estimated training time in minutes
+        """
+        import numpy as np
+        from scipy.stats import linregress
+        
+        records = self.timing_data['timing_records']
+        
+        if len(records) < 3:
+            # Fallback to conservative estimate if insufficient data
+            return self.get_conservative_time_estimate(complexity, data_factor, estimated_epochs)
+        
+        # Extract data for power law fitting
+        complexities = np.array([r['complexity'] for r in records])
+        actual_times = np.array([r['actual_time'] for r in records])
+        data_factors = np.array([r['data_factor'] for r in records])
+        
+        # Normalize by data factor to isolate complexity effect
+        normalized_times = actual_times / data_factors
+        
+        # Fit power law using log-log regression: log(time) = log(a) + b*log(complexity)
+        try:
+            log_complexity = np.log(complexities)
+            log_time = np.log(np.maximum(normalized_times, 0.01))  # Avoid log(0)
+            
+            slope, intercept, r_value, p_value, std_err = linregress(log_complexity, log_time)
+            
+            # Power law parameters: time = scaling_factor * complexity^power_coefficient
+            power_coefficient = slope
+            scaling_factor = np.exp(intercept)
+            
+            # Store power law parameters for future use
+            if not hasattr(self.timing_data, 'power_law_params'):
+                self.timing_data['power_law_params'] = {}
+            
+            self.timing_data['power_law_params'] = {
+                'power_coefficient': power_coefficient,
+                'scaling_factor': scaling_factor,
+                'r_squared': r_value**2,
+                'sample_size': len(records),
+                'last_fitted': datetime.datetime.now().isoformat()
+            }
+            
+            # Calculate base prediction using power law
+            base_time = scaling_factor * (complexity ** power_coefficient) * data_factor
+            
+            # Apply recent adjustment based on prediction accuracy
+            recent_records = records[-5:]  # Use fewer records for power law adjustment
+            if len(recent_records) >= 2:
+                ratios = []
+                for record in recent_records:
+                    # Recalculate power law prediction for this record
+                    record_complexity = record['complexity']
+                    record_data_factor = record['data_factor']
+                    power_prediction = scaling_factor * (record_complexity ** power_coefficient) * record_data_factor
+                    
+                    if power_prediction > 0:
+                        ratios.append(record['actual_time'] / power_prediction)
+                
+                if ratios:
+                    # Apply median adjustment to reduce outlier impact
+                    ratios.sort()
+                    median_ratio = ratios[len(ratios)//2]
+                    base_time *= median_ratio
+            
+            if self.verbose:
+                interpretation = "Sub-linear" if power_coefficient < 0.9 else "Super-linear" if power_coefficient > 1.1 else "Linear"
+                print(f"Power law timing model: complexity^{power_coefficient:.3f} ({interpretation}), R²={r_value**2:.3f}")
+            
+        except (ValueError, np.linalg.LinAlgError, ZeroDivisionError) as e:
+            # Fallback to linear model if power law fitting fails
+            if self.verbose:
+                print(f"Power law fitting failed ({e}), using linear fallback")
+            return self.get_adaptive_time_estimate(config)
+        
+        return max(base_time, 0.5)  # Minimum 0.5 minutes
+    
     def get_adaptive_time_estimate(self, config):
-        """Get time estimate based on historical data and model complexity."""
-        complexity = self.calculate_model_complexity(config)
-        data_factor = self.estimate_data_size_factor(config)
+        """Get time estimate based on historical data (fallback when power law unavailable)."""
+        # IMPORTANT: This should NOT use the old broken complexity calculation
+        # Instead, use conservative estimate based on architectural heuristics
         
-        # Base estimate using learned time per complexity unit
-        base_time = self.timing_data['base_time_per_complexity'] * complexity * data_factor
+        # Simplified data factor for fallback
+        batch_efficiency = 16.0 / config['batch_size']  # Normalize to batch_size=16
+        fold_factor = config['k_folds'] / 5.0  # Normalize to 5 folds
+        data_factor = batch_efficiency * fold_factor
         
-        # If we have recent timing records, adjust based on them
+        estimated_epochs = self.estimate_actual_epochs(config)
+        
+        # If we have timing records with REAL complexity, try to estimate from them
         recent_records = self.timing_data['timing_records'][-10:]  # Last 10 records
         if recent_records:
-            # Calculate average actual vs predicted ratio
-            ratios = []
+            # Use actual recorded complexity values (which should be real Keras counts)
+            similar_records = []
             for record in recent_records:
-                predicted = record['predicted_time']
-                actual = record['actual_time']
-                if predicted > 0:
-                    ratios.append(actual / predicted)
+                # Look for records with similar architecture characteristics
+                if (record['classifier_type'] == self.classifier_type and 
+                    record['complexity'] > 0 and record['data_factor'] > 0):
+                    similar_records.append(record)
             
-            if ratios:
-                avg_ratio = sum(ratios) / len(ratios)
-                base_time *= avg_ratio
+            if similar_records:
+                # Average the time per complexity from real records
+                time_per_complexity_values = []
+                for record in similar_records:
+                    time_per_complexity = record['actual_time'] / (record['complexity'] * record['data_factor'])
+                    time_per_complexity_values.append(time_per_complexity)
+                
+                avg_time_per_complexity = sum(time_per_complexity_values) / len(time_per_complexity_values)
+                
+                # For this config, we need to estimate complexity without the broken calculation
+                # Use a simple heuristic based on architecture size until we get real complexity
+                estimated_complexity = self._estimate_complexity_heuristic(config)
+                base_time = avg_time_per_complexity * estimated_complexity * data_factor
+                return max(base_time, 0.5)
         
-        return max(base_time, 0.5)  # Minimum 0.5 minutes per epoch
+        # Fallback to conservative estimate if no historical data
+        estimated_complexity = self._estimate_complexity_heuristic(config)
+        return self.get_conservative_time_estimate(estimated_complexity, data_factor, estimated_epochs)
     
-    def update_timing_database(self, config, actual_time_minutes):
+    def _estimate_complexity_heuristic(self, config):
+        """Simple heuristic for complexity estimation when no real complexity available."""
+        if self.classifier_type == 'cwt_image':
+            # CWT models are typically 8-12M parameters for standard architectures
+            conv_layers = len(config['conv_filters'])
+            dense_size = sum(config['dense_units']) if config['dense_units'] else 128
+            # Rough heuristic: more layers and dense units = more parameters
+            estimated_complexity = (conv_layers * 500000) + (dense_size * 30000)
+            return max(estimated_complexity, 8000000)  # Minimum 8M for CWT
+        else:
+            # PD models are typically 0.5-2M parameters  
+            conv_layers = len(config['conv_filters'])
+            dense_size = sum(config['dense_units']) if config['dense_units'] else 128
+            estimated_complexity = (conv_layers * 50000) + (dense_size * 5000)
+            return max(estimated_complexity, 500000)  # Minimum 500K for PD
+    
+    def get_conservative_time_estimate(self, complexity, data_factor, estimated_epochs):
+        """Conservative time estimate when no historical data is available."""
+        # Conservative estimate: ~1-5 seconds per thousand parameters per epoch
+        base_time_per_epoch = (complexity / 1000.0) * 0.05  # 3 seconds per 1K params per epoch
+        base_time = base_time_per_epoch * estimated_epochs * data_factor
+        
+        return max(base_time, 1.0)  # Minimum 1 minute
+    
+    def update_timing_database(self, config, actual_time_minutes, model_complexity=None):
         """Update the timing database with actual training results."""
-        complexity = self.calculate_model_complexity(config)
-        data_factor = self.estimate_data_size_factor(config)
+        # Use real model complexity if available, otherwise fall back to calculation
+        if model_complexity and model_complexity > 0:
+            complexity = model_complexity
+        else:
+            complexity = self.calculate_model_complexity(config)
+            
+        # Simplified data factor - just batch size and k-folds scaling
+        batch_efficiency = 16.0 / config['batch_size']  # Normalize to batch_size=16
+        fold_factor = config['k_folds'] / 5.0  # Normalize to 5 folds
+        data_factor = batch_efficiency * fold_factor
         
         # Calculate actual time per complexity unit
         actual_time_per_complexity = actual_time_minutes / (complexity * data_factor)
         
-        # Store the record
+        # Get predicted time using appropriate model  
+        estimated_epochs = self.estimate_actual_epochs(config)
+        if len(self.timing_data['timing_records']) >= 2:
+            predicted_time = self.get_power_law_time_estimate(complexity, data_factor, estimated_epochs, config)
+        else:
+            predicted_time = self.get_conservative_time_estimate(complexity, data_factor, estimated_epochs)
+        
+        # Clean, minimal record structure - only essential data for power law modeling
         record = {
             'timestamp': datetime.datetime.now().isoformat(),
-            'config_summary': {
-                'conv_filters': config['conv_filters'],
-                'dense_units': config['dense_units'],
-                'epochs': config['epochs'],
-                'estimated_epochs': self.estimate_actual_epochs(config),
-                'k_folds': config['k_folds'],
-                'batch_size': config['batch_size'],
-                'img_width': config['img_width'],
-                'img_height': self.get_image_dimensions(config)[1],
-                'total_pixels': config['img_width'] * self.get_image_dimensions(config)[1],
-                'early_stopping_patience': config.get('early_stopping_patience', 10)
-            },
-            'complexity': complexity,
-            'data_factor': data_factor,
-            'predicted_time': self.get_adaptive_time_estimate(config),
-            'actual_time': actual_time_minutes,
-            'time_per_complexity': actual_time_per_complexity
+            'complexity': complexity,  # Real Keras parameter count
+            'data_factor': data_factor,  # Simplified: batch size and k-fold scaling only  
+            'actual_time': actual_time_minutes,  # Total training time
+            'predicted_time': predicted_time,  # What we predicted
+            'epochs_trained': estimated_epochs,  # Estimated actual epochs (for reference)
+            'classifier_type': self.classifier_type,  # Track PD vs CWT
+            # Minimal config fingerprint for debugging
+            'config_key': {
+                'arch': f"{config['conv_filters']}-{config['dense_units']}",
+                'lr': config['learning_rate'],
+                'bs': config['batch_size'],
+                'kf': config['k_folds']
+            }
         }
         
         self.timing_data['timing_records'].append(record)
         
-        # Simple moving average update (much simpler than adaptive learning)
-        alpha = 0.2  # Fixed learning rate
-        self.timing_data['base_time_per_complexity'] = (
-            (1 - alpha) * self.timing_data['base_time_per_complexity'] + 
-            alpha * actual_time_per_complexity
-        )
+        # Update metadata
         self.timing_data['last_updated'] = datetime.datetime.now().isoformat()
         
-        # Keep only last 50 records (reduced from 100)
-        self.timing_data['timing_records'] = self.timing_data['timing_records'][-50:]
+        # Keep only last 30 records per classifier type (more manageable)
+        self.timing_data['timing_records'] = self.timing_data['timing_records'][-30:]
         
         # Save to disk
         with open(self.timing_db_file, 'w') as f:
             json.dump(self.timing_data, f, indent=2)
         
         if self.verbose:
-            print(f"Updated timing database: {actual_time_minutes:.1f}min actual vs {record['predicted_time']:.1f}min predicted")
+            error_pct = abs(actual_time_minutes - predicted_time) / actual_time_minutes * 100 if actual_time_minutes > 0 else 0
+            print(f"Updated timing database: {actual_time_minutes:.1f}min actual vs {predicted_time:.1f}min predicted ({error_pct:.1f}% error)")
     
     def save_config_to_file(self, config, config_number_in_run):
         """Save configuration to JSON file with run-scoped sequential numbering."""
         config_file = Path(self.output_root) / f"config_{config_number_in_run:03d}.json"
         
+        # Normalize config using strategy
+        normalized_config = self.strategy.normalize_config(config)
+        
         # Add metadata to config for better traceability
-        enhanced_config = config.copy()
+        enhanced_config = normalized_config.copy()
         enhanced_config['_metadata'] = {
             'config_number_in_run': config_number_in_run,
             'run_id': self.run_info['run_id'],
+            'classifier_type': self.classifier_type,
             'generated_at': datetime.datetime.now().isoformat()
         }
         
@@ -1351,14 +1381,14 @@ class HyperparameterTuner:
         
         return str(config_file)
     
-    def run_training_experiment_enhanced(self, config, config_number_in_run, config_file_path, version, verbose=False, concise=False):
-        """Run training experiment with enhanced traceability."""
+    def run_training_experiment(self, config, config_number_in_run, config_file_path, version, verbose=False, concise=False):
+        """Run training experiment"""
         try:
             # Start timing
             start_time = time.time()
             
             # Run training script (from ml directory)
-            return self._execute_training_subprocess_enhanced(config, config_number_in_run, config_file_path, version, start_time, verbose, concise)
+            return self._execute_training_subprocess(config, config_number_in_run, config_file_path, version, start_time, verbose, concise)
             
         except FileNotFoundError as e:
             print(f"Error: Training script not found - {e}")
@@ -1366,37 +1396,6 @@ class HyperparameterTuner:
                 'config_number_in_run': config_number_in_run,
                 'config': config,
                 'error': f'Training script not found: {e}'
-            })
-            return None
-        except Exception as e:
-            print(f"Unexpected error in config {config_number_in_run}: {e}")
-            self.failed_configs.append({
-                'config_number_in_run': config_number_in_run,
-                'config': config,
-                'error': f'Unexpected error: {e}'
-            })
-            return None
-    
-    def run_training_experiment(self, config, config_id, verbose=False, concise=False):
-        """Run training experiment with given configuration."""
-        try:
-            # Save config to file
-            config_file = self.save_config_to_file(config, config_id)
-            # Ensure absolute path for cross-directory compatibility
-            config_file = str(Path(config_file).resolve())
-            
-            # Start timing
-            start_time = time.time()
-            
-            # Run training script (from ml directory)
-            return self._execute_training_subprocess(config, config_id, config_file, start_time, verbose, concise)
-            
-        except FileNotFoundError as e:
-            print(f"Configuration {config_id} failed: Required file not found - {e}")
-            self.failed_configs.append({
-                'config_id': config_id,
-                'config': config,
-                'error': f'File not found: {e}'
             })
             return None
         except PermissionError as e:
@@ -1408,173 +1407,26 @@ class HyperparameterTuner:
             })
             return None
         except Exception as e:
-            print(f"Configuration {config_id} failed with unexpected error: {e}")
+            print(f"Unexpected error in config {config_number_in_run}: {e}")
             self.failed_configs.append({
-                'config_id': config_id,
+                'config_number_in_run': config_number_in_run,
                 'config': config,
                 'error': f'Unexpected error: {e}'
             })
             return None
     
-    def _execute_training_subprocess(self, config, config_id, config_file, start_time, verbose, concise):
-        """Execute the training subprocess with proper error handling."""
-        cmd = [
-            sys.executable, 
-            str(Path(__file__).parent / 'PD_signal_classifier_v3.py'), 
-            '--config', config_file
-        ]
+    def _execute_training_subprocess(self, config, config_number_in_run, config_file_path, version, start_time, verbose, concise):
+        """Execute the training subprocess"""
+        cmd = self.strategy.get_execution_command(config_file_path)
         
-        # Add concise flag if needed
-        if concise:
-            cmd.append('--concise')
-            
-        # Add source flag to identify hyperparameter optimization runs
-        cmd.extend(['--source', 'hyperopt'])
-        
-        # Add progress tracking info for ETA calculation
-        cmd.extend(['--current_config', str(config_id)])
-        cmd.extend(['--total_configs', str(self.total_configs)])
-        
-        # Use sophisticated time estimation instead of simple averaging
-        estimated_total_time = self.get_adaptive_time_estimate(config)
-        estimated_fold_time = estimated_total_time / config.get('k_folds', 5)
-        cmd.extend(['--estimated_fold_time', str(estimated_fold_time)])
-        
-        try:
-            # Ensure UTF-8 environment for subprocess
-            env = os.environ.copy()
-            env['PYTHONIOENCODING'] = 'utf-8'
-            env['PYTHONLEGACYWINDOWSFSENCODING'] = '0'  # Force UTF-8 on Windows
-            
-            if verbose:
-                # Show output in real-time
-                result = subprocess.run(cmd, timeout=7200, cwd=str(Path(__file__).parent), env=env)
-                # For verbose mode, we can't easily extract results, so return a dummy result
-                if result.returncode == 0:
-                    print(f"Configuration {config_id} completed successfully")
-                    return {
-                        'config_id': config_id,
-                        'timestamp': datetime.datetime.now().isoformat(),
-                        **config,
-                        'mean_val_accuracy': 0.0,  # Will need manual checking
-                        'note': 'Verbose mode - check experiment logs for results'
-                    }
-                else:
-                    print(f"Configuration {config_id} failed (exit code {result.returncode})")
-                    print("Error: Check terminal output above for details")
-                    self.failed_configs.append({
-                        'config_id': config_id,
-                        'config': config,
-                        'error': f'Process failed with exit code {result.returncode} in verbose mode'
-                    })
-                    return None
-            elif concise:
-                # Show concise output in real-time but also capture for extraction
-                import subprocess
-                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
-                                         text=True, bufsize=1, universal_newlines=True,
-                                         encoding='utf-8', errors='replace',
-                                         env=env, cwd=str(Path(__file__).parent))
-                
-                output_lines = []
-                while True:
-                    output = process.stdout.readline()
-                    if output == '' and process.poll() is not None:
-                        break
-                    if output:
-                        print(output.rstrip())  # Show in real-time
-                        output_lines.append(output)
-                        
-                full_output = ''.join(output_lines)
-                result = type('Result', (), {
-                    'returncode': process.returncode, 
-                    'stdout': full_output,
-                    'stderr': ''  # Concise mode combines stdout/stderr, so stderr is empty
-                })()
-            else:
-                # Capture output for result extraction
-                result = subprocess.run(
-                    cmd, 
-                    capture_output=True, 
-                    text=True, 
-                    timeout=7200,  # 2 hour timeout per experiment
-                    encoding='utf-8',
-                    errors='replace',  # Replace problematic characters instead of crashing
-                    env=env,
-                    cwd=str(Path(__file__).parent)
-                )
-            
-            if result.returncode == 0:
-                # Calculate run duration
-                end_time = time.time()
-                duration_minutes = (end_time - start_time) / 60
-                completion_time = datetime.datetime.now().strftime("%H:%M:%S")
-                
-                # Extract results first to get accuracy
-                extracted_result = self.extract_results_from_output(result.stdout, config, config_id)
-                val_acc = extracted_result.get('mean_val_accuracy', 0.0) if extracted_result else 0.0
-                
-                # Update timing database with actual results
-                self.update_timing_database(config, duration_minutes)
-                
-                if concise:
-                    print(f"\nConfiguration {config_id}/{self.total_configs} - COMPLETED | "
-                          f"Val Acc: {val_acc:.4f} | Completed: {completion_time} | Duration: {duration_minutes:.1f}m")
-                else:
-                    print(f"Configuration {config_id} completed successfully")
-                    print(f"Validation Accuracy: {val_acc:.4f}")
-                    print(f"Completion time: {completion_time}, Duration: {duration_minutes:.1f} minutes")
-                    
-                return extracted_result
-            else:
-                print(f"Configuration {config_id} failed")
-                # Provide meaningful error message, handling empty stderr
-                error_msg = result.stderr.strip() if result.stderr and result.stderr.strip() else "No error details available"
-                if concise and not error_msg.strip():
-                    # In concise mode, stderr might be empty because output is combined
-                    # Check the end of stdout for error information
-                    stdout_lines = result.stdout.strip().split('\n') if result.stdout else []
-                    last_few_lines = '\n'.join(stdout_lines[-5:]) if len(stdout_lines) > 0 else "No output captured"
-                    error_msg = f"Process failed (exit code {result.returncode}). Last output:\n{last_few_lines}"
-                else:
-                    error_msg = f"Process failed (exit code {result.returncode}). {error_msg}"
-                
-                print(f"Error: {error_msg}")
-                self.failed_configs.append({
-                    'config_id': config_id,
-                    'config': config,
-                    'error': error_msg
-                })
-                return None
-                
-        except subprocess.TimeoutExpired:
-            print(f"Configuration {config_id} timed out")
-            self.failed_configs.append({
-                'config_id': config_id,
-                'config': config,
-                'error': 'Timeout after 2 hours'
-            })
-            return None
-        except Exception as e:
-            print(f"Configuration {config_id} crashed: {e}")
-            self.failed_configs.append({
-                'config_id': config_id,
-                'config': config,
-                'error': str(e)
-            })
-            return None
-    
-    def _execute_training_subprocess_enhanced(self, config, config_number_in_run, config_file_path, version, start_time, verbose, concise):
-        """Execute the training subprocess with enhanced traceability."""
-        cmd = [
-            sys.executable, 
-            str(Path(__file__).parent / 'PD_signal_classifier_v3.py'), 
-            '--config', config_file_path,
-            '--source', 'hyperopt',
-            '--hyperopt_run_id', self.run_info['run_id'],
-            '--config_file', config_file_path,
-            '--config_number_in_run', str(config_number_in_run)
-        ]
+        # Add hyperopt-specific parameters for both PD and CWT classifiers
+        if self.classifier_type in ['pd_signal', 'cwt_image']:
+            cmd.extend([
+                '--source', 'hyperopt',
+                '--hyperopt_run_id', self.run_info['run_id'],
+                '--config_file', config_file_path,
+                '--config_number_in_run', str(config_number_in_run)
+            ])
         
         # Add concise flag if needed
         if concise:
@@ -1586,8 +1438,8 @@ class HyperparameterTuner:
             env['PYTHONIOENCODING'] = 'utf-8'
             env['PYTHONLEGACYWINDOWSFSENCODING'] = '0'
             
-            if verbose:
-                # Run with real-time output for verbose mode
+            if verbose or concise:
+                # Run with real-time output for verbose or concise mode
                 result = subprocess.run(
                     cmd, 
                     timeout=7200,  # 2 hour timeout
@@ -1601,8 +1453,15 @@ class HyperparameterTuner:
                     if not self.concise:
                         print(f"Config {config_number_in_run} completed successfully")
                     
-                    # Extract results from experiment log (most reliable)
-                    experiment_result = self.extract_from_experiment_log_enhanced(version, config_number_in_run, config_file_path)
+                    # Extract results from experiment log using consolidated function
+                    classifier_type = 'pd_signal' if isinstance(self.strategy, PDSignalStrategy) else 'cwt_image'
+                    experiment_result = extract_experiment_result(
+                        classifier_type=classifier_type,
+                        version=version,
+                        config_number_in_run=config_number_in_run,
+                        config_file_path=config_file_path,
+                        run_id=self.run_info['run_id']
+                    )
                     if experiment_result:
                         return experiment_result
                     else:
@@ -1623,12 +1482,12 @@ class HyperparameterTuner:
                     })
                     return None
             else:
-                # Capture output for non-verbose mode  
+                # Run in silent mode (default case)
                 result = subprocess.run(
                     cmd, 
+                    timeout=7200,  # 2 hour timeout
                     capture_output=True,
                     text=True,
-                    timeout=7200,  # 2 hour timeout
                     encoding='utf-8',
                     errors='replace',
                     env=env,
@@ -1636,26 +1495,42 @@ class HyperparameterTuner:
                 )
                 
                 if result.returncode == 0:
-                    if not self.concise:
-                        print(f"Config {config_number_in_run} completed successfully")
+                    print(f"Config {config_number_in_run} completed successfully")
                     
-                    # Extract results from experiment log (most reliable)  
-                    experiment_result = self.extract_from_experiment_log_enhanced(version, config_number_in_run, config_file_path)
+                    # Extract results from experiment log using consolidated function
+                    classifier_type = 'pd_signal' if isinstance(self.strategy, PDSignalStrategy) else 'cwt_image'
+                    experiment_result = extract_experiment_result(
+                        classifier_type=classifier_type,
+                        version=version,
+                        config_number_in_run=config_number_in_run,
+                        config_file_path=config_file_path,
+                        run_id=self.run_info['run_id']
+                    )
                     if experiment_result:
                         return experiment_result
                     else:
-                        # Fallback to parsing output
-                        return self.extract_results_from_output_enhanced(result.stdout, config, config_number_in_run, version, config_file_path)
+                        # Fallback: try to extract results from captured output
+                        if result.stdout:
+                            extracted = self.extract_results_from_output(result.stdout, config, config_number_in_run, version, config_file_path)
+                            if extracted and 'mean_val_accuracy' in extracted:
+                                return extracted
+                        
+                        return {
+                            'config_number_in_run': config_number_in_run,
+                            'timestamp': datetime.datetime.now().isoformat(),
+                            'version': version,
+                            'config_file': config_file_path,
+                            'note': 'Silent mode - check experiment logs for results'
+                        }
                 else:
-                    print(f"Config {config_number_in_run} failed:")
-                    print(f"Exit code: {result.returncode}")
+                    print(f"Config {config_number_in_run} failed (exit code {result.returncode})")
                     if result.stderr:
-                        print(f"Error output: {result.stderr}")
-                    
+                        print(f"Error output: {result.stderr[:500]}...")
                     self.failed_configs.append({
                         'config_number_in_run': config_number_in_run,
                         'config': config,
-                        'error': f'Exit code {result.returncode}: {result.stderr}'
+                        'error': f'Process failed with exit code {result.returncode}',
+                        'stderr': result.stderr[:1000] if result.stderr else None
                     })
                     return None
                     
@@ -1676,51 +1551,10 @@ class HyperparameterTuner:
             })
             return None
     
-    def extract_from_experiment_log_enhanced(self, version, config_number_in_run, config_file_path):
-        """Extract results from experiment log with enhanced traceability."""
-        try:
-            df = self._get_experiment_log_dataframe()
-            if df is None or df.empty:
-                return None
-            
-            # Find entry by version (most reliable identifier)
-            matching_entries = df[df['version'] == version]
-            
-            if matching_entries.empty:
-                return None
-            
-            latest_entry = matching_entries.iloc[-1]
-            
-            # Extract the key results with enhanced traceability
-            result = {
-                'config_number_in_run': config_number_in_run,
-                'timestamp': datetime.datetime.now().isoformat(),
-                'version': version,
-                'config_file': config_file_path,
-                'hyperopt_run_id': self.run_info['run_id'],
-                'mean_val_accuracy': latest_entry.get('mean_val_accuracy', 0.0),
-                'std_val_accuracy': latest_entry.get('std_val_accuracy', 0.0),
-                'best_val_accuracy': latest_entry.get('best_fold_accuracy', 0.0),
-                'training_time_minutes': latest_entry.get('total_training_time_minutes', 0.0),
-                'learning_rate': latest_entry.get('learning_rate', 0.0),
-                'batch_size': latest_entry.get('batch_size', 0),
-                'epochs': latest_entry.get('epochs', 0),
-                'k_folds': latest_entry.get('k_folds', 0),
-                'conv_filters': str(latest_entry.get('conv_filters', '[]')),
-                'dense_units': str(latest_entry.get('dense_units', '[]')),
-                'conv_dropout': str(latest_entry.get('dropout_rates', '[0.0]')).split(',')[0].strip('['),
-                'dense_dropout': str(latest_entry.get('dropout_rates', '[0.0, [0.0]]')),
-                'l2_regularization': latest_entry.get('l2_reg', 0.0)
-            }
-            
-            return result
-            
-        except Exception as e:
-            print(f"Failed to extract enhanced results from experiment log: {e}")
-            return None
+    # Using consolidated extract_experiment_result function from config.py
     
-    def extract_results_from_output_enhanced(self, output, config, config_number_in_run, version, config_file_path):
-        """Extract key results from training output with enhanced traceability (fallback method)."""
+    def extract_results_from_output(self, output, config, config_number_in_run, version, config_file_path):
+        """Extract key results from training output (fallback method)."""
         result = {
             'config_number_in_run': config_number_in_run,
             'timestamp': datetime.datetime.now().isoformat(),
@@ -1734,14 +1568,41 @@ class HyperparameterTuner:
             import re
             
             # Look for validation accuracy
-            val_acc_match = re.search(r'val_accuracy[:\s]+(\d+\.\d+)', output, re.IGNORECASE)
+            val_acc_match = re.search(r'Mean Val Acc[:\s]+(\d+\.\d+)', output, re.IGNORECASE)
             if val_acc_match:
                 result['mean_val_accuracy'] = float(val_acc_match.group(1))
             
             # Look for training time 
-            time_match = re.search(r'training.*time[:\s]+(\d+\.\d+)', output, re.IGNORECASE)
+            time_match = re.search(r'(\d+\.\d+)\s*minutes', output, re.IGNORECASE)
             if time_match:
                 result['training_time_minutes'] = float(time_match.group(1))
+            
+            # Look for model complexity (Total Parameters: X,XXX,XXX)
+            params_match = re.search(r'Total Parameters:\s*([\d,]+)', output, re.IGNORECASE)
+            if params_match:
+                # Remove commas and convert to int
+                param_str = params_match.group(1).replace(',', '')
+                result['model_complexity'] = int(param_str)
+            
+            # Look for precision, recall, F1-score in concise output (pattern: "P: 0.85 | R: 0.90 | F1: 0.87")
+            metrics_match = re.search(r'P:\s*(\d+\.\d+)\s*\|\s*R:\s*(\d+\.\d+)\s*\|\s*F1:\s*(\d+\.\d+)', output, re.IGNORECASE)
+            if metrics_match:
+                result['mean_precision'] = float(metrics_match.group(1))
+                result['mean_recall'] = float(metrics_match.group(2))
+                result['mean_f1_score'] = float(metrics_match.group(3))
+            else:
+                # Try individual patterns as fallback
+                precision_match = re.search(r'precision[:\s]+(\d+\.\d+)', output, re.IGNORECASE)
+                if precision_match:
+                    result['mean_precision'] = float(precision_match.group(1))
+                
+                recall_match = re.search(r'recall[:\s]+(\d+\.\d+)', output, re.IGNORECASE)
+                if recall_match:
+                    result['mean_recall'] = float(recall_match.group(1))
+                
+                f1_match = re.search(r'f1[:\s]+(\d+\.\d+)', output, re.IGNORECASE)
+                if f1_match:
+                    result['mean_f1_score'] = float(f1_match.group(1))
             
             # Add config parameters
             result.update({
@@ -1761,77 +1622,6 @@ class HyperparameterTuner:
             
         return result
     
-    def extract_results_from_output(self, output, config, config_id):
-        """Extract key results from training output and experiment log."""
-        # Try to read from the experiment log CSV first (most reliable)
-        result = self.extract_from_experiment_log(config_id)
-        if result:
-            return result
-        
-        # Fallback: parse training output (less reliable)
-        
-        result = {
-            'config_id': config_id,
-            'timestamp': datetime.datetime.now().isoformat(),
-        }
-        
-        # Add all config parameters
-        result.update(config)
-        
-        # Try to extract validation accuracy and fold times from output
-        lines = output.split('\n')
-        fold_times = []  # Track individual fold times
-        
-        for line in lines:
-            # Extract fold completion times (format: "| 45.2m")
-            if 'Fold' in line and 'completed' in line and 'm |' in line:
-                try:
-                    # Extract timing from "...| 45.2m" or "...| 45.2m | ETA: ..."
-                    parts = line.split('|')
-                    for part in parts:
-                        part = part.strip()
-                        if part.endswith('m'):
-                            time_str = part.replace('m', '')
-                            try:
-                                fold_time = float(time_str)
-                                fold_times.append(fold_time)
-                                break
-                            except ValueError:
-                                pass
-                except (ValueError, IndexError, AttributeError):
-                    pass
-            
-            elif 'Mean Validation Accuracy:' in line:
-                try:
-                    # Extract "Mean Validation Accuracy: 0.8532 ± 0.0234"
-                    parts = line.split(':')[1].strip().split('±')
-                    mean_acc = float(parts[0].strip())
-                    std_acc = float(parts[1].strip()) if len(parts) > 1 else 0.0
-                    result['mean_val_accuracy'] = mean_acc
-                    result['std_val_accuracy'] = std_acc
-                except (ValueError, IndexError, AttributeError):
-                    pass
-            
-            elif 'Best Fold Accuracy:' in line:
-                try:
-                    # Extract "Best Fold Accuracy: 0.8732 (Fold 3)"
-                    acc_part = line.split(':')[1].strip().split('(')[0].strip()
-                    result['best_val_accuracy'] = float(acc_part)
-                except (ValueError, IndexError, AttributeError):
-                    pass
-            
-            elif 'Training Time:' in line:
-                try:
-                    # Extract "Training Time: 45.2 minutes"
-                    time_part = line.split(':')[1].strip().split()[0]
-                    result['training_time_minutes'] = float(time_part)
-                except (ValueError, IndexError, AttributeError):
-                    pass
-        
-        # Note: fold_times tracking removed - using sophisticated prediction instead
-        
-        return result
-    
     def analyze_configuration_space(self, configs):
         """Analyze the configuration space and return summary statistics."""
         if not configs:
@@ -1844,7 +1634,7 @@ class HyperparameterTuner:
             'epochs': sorted(set(config['epochs'] for config in configs)),
             'k_folds': sorted(set(config['k_folds'] for config in configs)),
             'conv_dropouts': sorted(set(config['conv_dropout'] for config in configs)),
-            'dense_dropouts': sorted(list(set(tuple(config['dense_dropout']) for config in configs))),
+            'dense_dropouts': self._analyze_dense_dropouts(configs),
             'l2_regs': sorted(set(config['l2_regularization'] for config in configs)),
             'architectures': []
         }
@@ -1856,18 +1646,37 @@ class HyperparameterTuner:
             arch_set.add(arch)
         analysis['architectures'] = sorted(list(arch_set))
         
-        # Calculate total training time estimate using adaptive system
+        # Calculate total training time estimate using simple timing system
         total_time_minutes = 0
         for config in configs:
-            # Use adaptive time estimation if available, otherwise fall back to heuristic
-            adaptive_time = self.get_adaptive_time_estimate(config)
-            total_time_minutes += adaptive_time
+            time_estimate = self.timing_estimator.estimate_time(config)
+            total_time_minutes += time_estimate
         
         analysis['estimated_total_time_hours'] = total_time_minutes / 60
         
         return analysis
     
-    def display_start_screen(self, mode, configs, resume=False, completed_ids=None, skip_from_deduplication=None, configs_to_run_count=None):
+    def _analyze_dense_dropouts(self, configs):
+        """Analyze dense dropout values - now consistently stored as lists/tuples."""
+        dropout_values = set()
+        
+        for config in configs:
+            dropout = config.get('dense_dropout')
+            if dropout is not None:
+                if isinstance(dropout, (list, tuple)):
+                    # Standard format: list of values
+                    dropout_values.add(tuple(dropout))
+                else:
+                    # Legacy single value - convert to tuple for consistency
+                    dropout_values.add((dropout,))
+        
+        return sorted(list(dropout_values))
+    
+    def _format_dense_dropouts(self, dense_dropouts):
+        """Format dense dropout values for display - all values are now tuples."""
+        return [list(dropout) for dropout in dense_dropouts]
+    
+    def display_start_screen(self, mode, configs, resume=False, completed_ids=None, skip_from_deduplication=None, skip_from_max_configs=None, configs_to_run_count=None, smart_config_info=None):
         """Display comprehensive start screen with configuration analysis."""
         analysis = self.analyze_configuration_space(configs)
         
@@ -1876,13 +1685,17 @@ class HyperparameterTuner:
             completed_ids = set()
         if skip_from_deduplication is None:
             skip_from_deduplication = set()
+        if skip_from_max_configs is None:
+            skip_from_max_configs = set()
             
         # Calculate which configs will actually run for better preview
         configs_to_execute = []
         execution_order = 0
         for i, config in enumerate(configs, 1):
-            config_index = i - 1  # Convert to 0-based index for deduplication check
-            if config_index not in skip_from_deduplication and i not in completed_ids:
+            config_index = i - 1  # Convert to 0-based index for skip check
+            if (config_index not in skip_from_deduplication and 
+                config_index not in skip_from_max_configs and 
+                i not in completed_ids):
                 execution_order += 1
                 configs_to_execute.append((execution_order, i, config))
         
@@ -1897,12 +1710,26 @@ class HyperparameterTuner:
         print("="*100)
         
         print(f"\nOPTIMIZATION DETAILS:")
-        print(f"   Mode: {mode.upper()}")
+        
+        # Handle smart mode display with special formatting
+        if smart_config_info:
+            focus_mode = smart_config_info['focus_mode']
+            mode_str = "grid search" if smart_config_info['grid_search'] else "OFAT"
+            print(f"   Mode: SMART ({focus_mode.upper()})")
+            print(f"   Best config: {smart_config_info['best_config'].get('version', 'unknown')} (accuracy: {smart_config_info['best_config']['mean_val_accuracy']:.4f})")
+            print(f"   Search radius: ±{smart_config_info['search_radius']}")
+            if smart_config_info['ignore_params']:
+                print(f"   Ignoring parameters: {', '.join(smart_config_info['ignore_params'])}")
+        else:
+            print(f"   Mode: {mode.upper()}")
+            
         print(f"   Total Configurations: {analysis['total_configs']}")
         
         # Show deduplication and completion info more accurately
         if skip_from_deduplication:
             print(f"   Skipped by Deduplication: {len(skip_from_deduplication)}")
+        if skip_from_max_configs:
+            print(f"   Skipped by Max Configs Limit: {len(skip_from_max_configs)}")
         if resume and completed_ids:
             completed_also_duplicates = sum(1 for i in completed_ids if (i-1) in skip_from_deduplication)
             if completed_also_duplicates > 0:
@@ -1915,31 +1742,59 @@ class HyperparameterTuner:
         print(f"   Output Directory: {self.output_root}")
         
         print(f"\nTIME ESTIMATES:")
-        if resume and completed_ids:
-            # Calculate time for remaining configs only
-            avg_time_per_config = analysis['estimated_total_time_hours'] / analysis['total_configs']
-            remaining_time_hours = avg_time_per_config * remaining_configs
-            print(f"   Estimated Remaining Time: {remaining_time_hours:.1f} hours")
-            print(f"   Average per Config: {avg_time_per_config*60:.1f} minutes")
-            print(f"   (Original total estimate was {analysis['estimated_total_time_hours']:.1f} hours for {analysis['total_configs']} configs)")
+        
+        # Calculate time estimate for configs that will actually run
+        if configs_to_run_count is not None and configs_to_run_count > 0:
+            # Calculate time only for configs that will run
+            total_time_for_running_configs = 0
+            configs_counted = 0
+            
+            for i, config in enumerate(configs):
+                config_index = i  # 0-based index
+                if (config_index not in skip_from_deduplication and 
+                    config_index not in skip_from_max_configs and 
+                    (i + 1) not in completed_ids):
+                    time_estimate = self.timing_estimator.estimate_time(config)
+                    total_time_for_running_configs += time_estimate
+                    configs_counted += 1
+                    if configs_counted >= configs_to_run_count:
+                        break
+            
+            actual_time_hours = total_time_for_running_configs / 60
+            avg_time_per_config = total_time_for_running_configs / max(configs_counted, 1)
+            
+            # Store for use in confirmation section
+            self._last_calculated_time_hours = actual_time_hours
+            
+            if resume and completed_ids:
+                print(f"   Estimated Remaining Time: {actual_time_hours:.1f} hours")
+                print(f"   Average per Config: {avg_time_per_config:.1f} minutes")
+                print(f"   (Original total estimate was {analysis['estimated_total_time_hours']:.1f} hours for {analysis['total_configs']} configs)")
+            else:
+                print(f"   Estimated Total Time: {actual_time_hours:.1f} hours")
+                print(f"   Average per Config: {avg_time_per_config:.1f} minutes")
         else:
+            # Fallback to original calculation
             print(f"   Estimated Total Time: {analysis['estimated_total_time_hours']:.1f} hours")
             print(f"   Average per Config: {analysis['estimated_total_time_hours']*60/analysis['total_configs']:.1f} minutes")
         
-        # Show timing database status
-        num_records = len(self.timing_data['timing_records'])
-        if num_records > 0:
-            print(f"   Timing Database: {num_records} historical records (adaptive estimation)")
+        # Show simple timing database status
+        num_records = len(self.timing_estimator.records)
+        if num_records >= 3:
+            stats = self.timing_estimator.get_stats()
+            print(f"   Timing Database: {stats}")
+        elif num_records > 0:
+            print(f"   Timing Database: {num_records} records (insufficient for power law)")
         else:
             print(f"   Timing Database: No historical data (using conservative estimates)")
         
-        print(f"\nHYPERPARAMETER RANGES:")
+        print(f"\nHYPERPARAMETER RANGES (most significant):")
         print(f"   Learning Rates: {analysis['learning_rates']}")
         print(f"   Batch Sizes: {analysis['batch_sizes']}")
         print(f"   Epochs per Config: {analysis['epochs']}")
         print(f"   K-Folds per Config: {analysis['k_folds']}")
         print(f"   Conv Dropout Rates: {analysis['conv_dropouts']}")
-        print(f"   Dense Dropout Rates: {[list(dropout) for dropout in analysis['dense_dropouts']]}")
+        print(f"   Dense Dropout Rates: {self._format_dense_dropouts(analysis['dense_dropouts'])}")
         print(f"   L2 Regularization: {analysis['l2_regs']}")
         
         print(f"\nNETWORK ARCHITECTURES:")
@@ -1965,16 +1820,23 @@ class HyperparameterTuner:
         if len(configs_to_execute) > num_to_show:
             print(f"   ... and {len(configs_to_execute) - num_to_show} more configurations to execute")
         
-        if skip_from_deduplication or completed_ids:
-            skipped_total = len(skip_from_deduplication) + len(completed_ids)
-            print(f"   (Skipping {skipped_total} configs: {len(skip_from_deduplication)} duplicates + {len(completed_ids)} completed)")
+        if skip_from_deduplication or skip_from_max_configs or completed_ids:
+            skipped_total = len(skip_from_deduplication) + len(skip_from_max_configs) + len(completed_ids)
+            skip_parts = []
+            if skip_from_deduplication:
+                skip_parts.append(f"{len(skip_from_deduplication)} duplicates")
+            if skip_from_max_configs:
+                skip_parts.append(f"{len(skip_from_max_configs)} by max_configs limit")
+            if completed_ids:
+                skip_parts.append(f"{len(completed_ids)} completed")
+            print(f"   (Skipping {skipped_total} configs: {' + '.join(skip_parts)})")
         
         print("\n" + "="*100)
         
         return analysis
     
-    def create_run_directory(self, mode, resume=False):
-        """Create a unique directory for this optimization run with enhanced tracking."""
+    def setup_run_directory(self, mode, resume=False):
+        """Setup run directory paths and load info (but don't create directory yet)"""
         if resume:
             # Find the most recent directory for this mode
             pattern = f"{mode}_run_*"
@@ -1991,12 +1853,21 @@ class HyperparameterTuner:
                 if run_info_file.exists():
                     with open(run_info_file) as f:
                         self.run_info = json.load(f)
+                    
+                    # Ensure progress structure exists (for legacy run_info files)
+                    if 'progress' not in self.run_info:
+                        self.run_info['progress'] = {
+                            'completed_configs': [],
+                            'current': 0,
+                            'total': 0,
+                            'last_updated': datetime.datetime.now().isoformat()
+                        }
                 else:
                     # Create run info for legacy runs
                     self.run_info = {
                         'run_id': run_dir,
                         'mode': mode,
-                        'start_time': 'legacy_run',
+                        'start_time': 'unknown',
                         'total_configs_executed': 0,
                         'is_legacy': True
                     }
@@ -2005,7 +1876,7 @@ class HyperparameterTuner:
                 resume = False
         
         if not resume:
-            # Create new run directory with timestamp
+            # Create new run directory name with timestamp
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             run_dir = f"{mode}_run_{timestamp}"
             # Initialize run info for new runs
@@ -2015,15 +1886,78 @@ class HyperparameterTuner:
                 'start_time': datetime.datetime.now().isoformat(),
                 'total_configs_executed': 0,
                 'config_files': {},  # Maps config_number -> config_file_path
-                'version_mapping': {}  # Maps version -> config_number
+                'version_mapping': {},  # Maps version -> config_number
+                
+                # Progress tracking (replaces tuning_progress.json)
+                'progress': {
+                    'completed_configs': [],
+                    'current': 0,
+                    'total': 0,
+                    'last_updated': datetime.datetime.now().isoformat()
+                }
             }
         
+        # Setup paths (but don't create directory yet)
         self.output_root = self.base_output_root / run_dir
-        self.output_root.mkdir(parents=True, exist_ok=True)
-        
-        # Setup progress tracking files
-        self.progress_file = self.output_root / "tuning_progress.json"
         self.results_file = self.output_root / "hyperparameter_results.csv"
+        self.run_info_file = self.output_root / "run_info.json"
+        
+        return str(self.output_root)
+    
+    def _determine_configs_to_skip(self, configs, deduplication, resume, max_configs):
+        """
+        Determine which configurations to skip based on deduplication, resume, and limits.
+        
+        Returns:
+            tuple: (skip_duplicates, completed_ids, skip_max_configs, configs_to_run_count)
+                - skip_duplicates: set of 0-based indices to skip due to deduplication
+                - completed_ids: set of 1-based indices already completed (for resume)  
+                - skip_max_configs: set of 0-based indices to skip due to max_configs limit
+                - configs_to_run_count: number of configs that will actually run
+        """
+        total_configs = len(configs)
+        
+        # Get duplicates (0-based indices)
+        skip_duplicates = set()
+        if deduplication:
+            skip_duplicates = self._get_duplicate_indices(configs)
+            if skip_duplicates and not self.concise:
+                print(f"Smart deduplication: Will skip {len(skip_duplicates)}/{total_configs} configurations (already tested)")
+        
+        # Get completed configs from resume (1-based indices)
+        completed_ids = set()
+        if resume:
+            # Try to load from run_info.json first (new format)
+            if self.run_info_file.exists():
+                with open(self.run_info_file, 'r') as f:
+                    run_info = json.load(f)
+                    completed_ids = set(run_info.get('progress', {}).get('completed_configs', []))
+        
+        # Get indices of configs to run using direct filtering
+        available_indices = [
+            i for i in range(total_configs) 
+            if i not in skip_duplicates and (i + 1) not in completed_ids
+        ]
+        
+        # Apply max_configs limit with separate tracking
+        skip_max_configs = set()
+        if max_configs and max_configs < len(available_indices):
+            if not self.concise:
+                print(f"Limiting to first {max_configs} configurations (from {len(available_indices)} available)")
+            
+            # Mark excess configs as skipped due to max_configs (separate from deduplication)
+            excess_indices = available_indices[max_configs:]
+            skip_max_configs.update(excess_indices)
+        
+        # Calculate final count
+        configs_to_run_count = min(len(available_indices), max_configs or len(available_indices))
+        
+        return skip_duplicates, completed_ids, skip_max_configs, configs_to_run_count
+    
+    def create_actual_directory(self):
+        """Actually create the directory and files after user confirmation"""
+        # Create the directory
+        self.output_root.mkdir(parents=True, exist_ok=True)
         
         # Save run info
         run_info_file = self.output_root / "run_info.json"
@@ -2032,11 +1966,10 @@ class HyperparameterTuner:
         
         print(f"Run directory: {self.output_root.as_posix()}")
         print(f"Run ID: {self.run_info['run_id']}")
-        return str(self.output_root)
     
     def ensure_experiment_log_columns(self):
         """Ensure experiment log has the new columns for enhanced traceability."""
-        log_file = get_experiment_log_path()
+        log_file = self.strategy.get_experiment_log_path()
         new_columns = ['hyperopt_run_id', 'config_file', 'config_number_in_run']
         
         if not Path(log_file).exists():
@@ -2049,11 +1982,11 @@ class HyperparameterTuner:
             for col in new_columns:
                 if col not in df.columns:
                     if col == 'hyperopt_run_id':
-                        df[col] = 'legacy_run'  # Default for existing entries
+                        df[col] = 'unknown'  # Default for existing entries
                     elif col == 'config_file':
                         df[col] = ''  # Will be populated retroactively
                     elif col == 'config_number_in_run':
-                        df[col] = -1  # -1 indicates legacy/unknown
+                        df[col] = -1  # -1 indicates unknown
                     columns_added = True
             
             if columns_added:
@@ -2083,8 +2016,12 @@ class HyperparameterTuner:
                 # Use accurate count if provided
                 if configs_to_run_count is not None:
                     configs_to_run = configs_to_run_count
-                    avg_time_per_config = analysis['estimated_total_time_hours'] / analysis['total_configs']
-                    estimated_time_hours = avg_time_per_config * configs_to_run
+                    # Recalculate time based on actual configs to run (already calculated above)
+                    if hasattr(self, '_last_calculated_time_hours'):
+                        estimated_time_hours = self._last_calculated_time_hours
+                    else:
+                        avg_time_per_config = analysis['estimated_total_time_hours'] / analysis['total_configs']
+                        estimated_time_hours = avg_time_per_config * configs_to_run
                 else:
                     configs_to_run = analysis['total_configs']
                     estimated_time_hours = analysis['estimated_total_time_hours']
@@ -2104,118 +2041,96 @@ class HyperparameterTuner:
             else:
                 print("   Please enter 'y' for yes or 'n' for no.")
     
-    def run_optimization(self, mode='smart', max_configs=None, resume=False, verbose=False, concise=False, skip_deduplication=False, search_radius=1, grid_search=False, ignore_params=None, max_grid_size=100):
+    def run_optimization(self, mode='smart', max_configs=None, resume=False, verbose=False, concise=False, deduplication=True, search_radius=1, grid_search=False, ignore_params=None, max_grid_size=100, categories=None, priority_tiers=None):
         """
         Run hyperparameter optimization.
         
         Args:
             mode: Optimization mode options:
                 - test: 2 configs for testing (2 folds, 2 epochs)
-                - quick: ~15-20 configs, basic parameter exploration
-                - medium: ~25-30 configs, systematic OFAT approach
-                - smart: Adaptive search around best previous results (all parameters)
-                - smart-training: Focus on learning dynamics (learning_rate, batch_size, epochs, early_stopping_patience)
-                - smart-architecture: Focus on model structure (conv_filters, dense_units)
-                - smart-regularization: Focus on overfitting control (dropout, l2_reg, class_weights)
-                - smart-augmentation: Focus on data augmentation parameters
-                - full: Exhaustive grid search (hundreds of configs)
-                - augmentation: Specialized augmentation parameter optimization
-                - anova: ~80 configs to improve ANOVA analysis quality (focus on high-uncertainty parameters)
+                - smart: Registry-based adaptive search around best previous results
+                - channel-ablation: Multi-channel analysis study (CWT only)
             max_configs: Maximum number of configs to test (None for all)
             resume: Whether to resume from previous run
-            skip_deduplication: If True, don't skip previously tested configurations
+            deduplication: If True, skip previously tested configurations (default: True)
             search_radius: For smart mode, number of neighboring values to test around best config (±1 or ±2)
+            grid_search: If True, do full grid search; if False, use OFAT (default)
+            ignore_params: List of parameters to ignore in smart mode
+            max_grid_size: Maximum grid size before parameter limiting
+            categories: List of parameter categories to include (training, regularization, architecture, training_control, augmentation)
+            priority_tiers: List of priority tiers to include (1-5, where 1 is highest priority)
         """
-        # Create run-specific directory first
-        self.create_run_directory(mode, resume)
+        # Setup run directory paths (but don't create directory yet)
+        self.setup_run_directory(mode, resume)
         
         # Ensure experiment log has new columns
         self.ensure_experiment_log_columns()
         
+        # For smart mode, store config info for later display in OPTIMIZATION DETAILS
+        smart_config_info = None
+        if mode == 'smart':
+            best_config = self._find_best_previous_config()
+            print()
+            print('Best config:')
+            print(best_config)
+            print()
+            if best_config:
+                # Determine focus mode description
+                if categories:
+                    focus_mode = f"categories: {', '.join(categories)}"
+                elif priority_tiers:
+                    focus_mode = f"priority tiers: {', '.join(map(str, priority_tiers))}"
+                else:
+                    focus_mode = "all parameters"
+                
+                smart_config_info = {
+                    'best_config': best_config,
+                    'categories': categories,
+                    'priority_tiers': priority_tiers,
+                    'search_radius': search_radius,
+                    'ignore_params': ignore_params,
+                    'grid_search': grid_search,
+                    'focus_mode': focus_mode
+                }
+            else:
+                print(f"\nNo previous experiments found - using default base config as origin")
+        
         # Generate configurations
         if mode == 'smart':
-            configs = self.generate_smart_configs(search_radius=search_radius, grid_search=grid_search, ignore_params=ignore_params or [], max_grid_size=max_grid_size, mode='all')
-        elif mode in ['smart-training', 'smart-architecture', 'smart-regularization', 'smart-augmentation']:
-            # New focused smart modes
-            focus_mode = mode.split('-')[1]  # Extract 'training', 'architecture', etc.
-            configs = self.generate_smart_configs(search_radius=search_radius, grid_search=grid_search, ignore_params=ignore_params or [], max_grid_size=max_grid_size, mode=focus_mode)
-        elif mode == 'augmentation':
-            # Augmentation mode supports grid_search parameter
-            configs = self.generate_augmentation_configs(use_grid_search=grid_search)
+            configs = self.generate_smart_configs(
+                search_radius=search_radius, 
+                grid_search=grid_search, 
+                ignore_params=ignore_params or [], 
+                max_grid_size=max_grid_size, 
+                categories=categories,
+                priority_tiers=priority_tiers,
+                best_config=best_config
+            )
+        elif mode == 'channel-ablation':
+            # Channel ablation mode - CWT only
+            if self.classifier_type != 'cwt_image':
+                raise ValueError("Channel ablation mode is only supported for CWT image classifier")
+            configs = self.generate_channel_ablation_configs()
+        elif mode == 'test':
+            configs = self.generate_test_configs()
         else:
-            config_generators = {
-                'test': self.generate_test_configs,
-                'quick': self.generate_quick_configs,
-                'medium': self.generate_medium_configs,
-                'full': self.generate_full_configs,
-                'anova': self.generate_anova_improvement_configs
-            }
-            
-            if mode not in config_generators:
-                available_modes = list(config_generators.keys()) + ['smart', 'smart-training', 'smart-architecture', 'smart-regularization', 'smart-augmentation', 'augmentation']
-                raise ValueError(f"Unknown mode: {mode}. Available modes: {available_modes}")
-            
-            configs = config_generators[mode]()
+            available_modes = ['smart', 'channel-ablation', 'test']
+            raise ValueError(f"Unknown mode: {mode}. Available modes: {available_modes}")
         
-        # Determine which configs to skip from deduplication
-        skip_from_deduplication = set()
-        if not skip_deduplication:
-            skip_from_deduplication = self._get_duplicate_indices(configs)
-            if skip_from_deduplication and not self.concise:
-                print(f"Smart deduplication: Will skip {len(skip_from_deduplication)}/{len(configs)} configurations (already tested)")
-        
-        # Load previous progress if resuming
-        completed_ids = set()
-        if resume and self.progress_file.exists():
-            with open(self.progress_file, 'r') as f:
-                progress = json.load(f)
-                completed_ids = set(progress.get('completed_configs', []))
-        
-        # Calculate available configs (accounting for mixed indexing)
-        available_configs = 0
-        for i in range(len(configs)):
-            config_index_0based = i  # 0-based for deduplication 
-            config_index_1based = i + 1  # 1-based for resume progress
-            
-            if config_index_0based not in skip_from_deduplication and config_index_1based not in completed_ids:
-                available_configs += 1
-        
-        # Apply max_configs limit after determining skips
-        if max_configs and max_configs < available_configs:
-            if not self.concise:
-                print(f"Limiting to first {max_configs} configurations (from {available_configs} available)")
-            
-            # Keep only the first max_configs available configs
-            kept_count = 0
-            additional_skips = set()  # Store 0-based indices to skip due to max_configs
-            
-            for i in range(len(configs)):
-                config_index_0based = i
-                config_index_1based = i + 1
-                
-                # If this config would normally run
-                if config_index_0based not in skip_from_deduplication and config_index_1based not in completed_ids:
-                    kept_count += 1
-                    if kept_count > max_configs:
-                        additional_skips.add(config_index_0based)
-            
-            # Add additional skips to deduplication skips
-            skip_from_deduplication.update(additional_skips)
-        
-        # Calculate actual configs that will run after all filtering
-        configs_to_run_count = 0
-        for i in range(len(configs)):
-            config_index_0based = i
-            config_index_1based = i + 1
-            if config_index_0based not in skip_from_deduplication and config_index_1based not in completed_ids:
-                configs_to_run_count += 1
+        # Determine which configs to skip and which to run
+        skip_from_deduplication, completed_ids, skip_from_max_configs, configs_to_run_count = self._determine_configs_to_skip(
+            configs, deduplication, resume, max_configs)
         
         # Display start screen and get confirmation (with accurate counts)
         analysis = self.display_start_screen(mode, configs, resume, completed_ids, 
-                                           skip_from_deduplication, configs_to_run_count)
+                                           skip_from_deduplication, skip_from_max_configs, configs_to_run_count, 
+                                           smart_config_info=smart_config_info)
         
         if not self.get_user_confirmation(analysis, resume, completed_ids, configs_to_run_count):
             return
+        
+        # Now create the actual directory after user confirmation
+        self.create_actual_directory()
         
         if not self.concise:
             print(f"\nStarting Hyperparameter Optimization")
@@ -2232,11 +2147,18 @@ class HyperparameterTuner:
         config_number_in_run = 0  # Sequential counter for executed configs in this run
         
         for i, config in enumerate(configs, 1):
-            # Skip configs that were already tested or completed
-            config_index = i - 1  # Convert to 0-based index for deduplication check
-            if config_index in skip_from_deduplication or i in completed_ids:
+            # Skip configs that were already tested, completed, or beyond max_configs limit
+            config_index = i - 1  # Convert to 0-based index for skip checks
+            if (config_index in skip_from_deduplication or 
+                config_index in skip_from_max_configs or 
+                i in completed_ids):
                 if not self.concise:
-                    skip_reason = "already completed" if (i in completed_ids) else "already tested"
+                    if i in completed_ids:
+                        skip_reason = "already completed"
+                    elif config_index in skip_from_deduplication:
+                        skip_reason = "already tested in a previous run"
+                    else:  # config_index in skip_from_max_configs
+                        skip_reason = "beyond max_configs limit"
                     print(f"Skipping configuration {i} ({skip_reason})")
                 continue
             
@@ -2247,22 +2169,22 @@ class HyperparameterTuner:
             dense_dropout_str = str(config['dense_dropout']).replace(' ', '') if isinstance(config['dense_dropout'], list) else config['dense_dropout']
             
             # Get the actual version that will be used (accounts for previous experiments)
-            current_version_num = get_next_version_from_log()
+            current_version_num = get_next_version_from_log(classifier_type=self.classifier_type)
             actual_version = format_version(current_version_num)
             
             print(f"\n{'='*90}")
             print(f"Config {config_number_in_run}/{configs_to_run_count} | Version: {actual_version}")
             print(f"Parameters: LR={config['learning_rate']} | BS={config['batch_size']} | Dropout={config['conv_dropout']}/{dense_dropout_str}")
-            print(f"Run: {self.run_info['run_id']} | Config File: config_{config_number_in_run:03d}.json")
+            print(f"Run: {self.run_info['run_id']} | Config File: config_{i:03d}.json")
             print(f"{'='*90}")
             
-            # Save config with sequential numbering and run the experiment
-            config_file_path = self.save_config_to_file(config, config_number_in_run)
+            # Save config with original config numbering and run the experiment
+            config_file_path = self.save_config_to_file(config, i)
             
             # Update run info with version mapping
             self.run_info['version_mapping'][actual_version] = config_number_in_run
             
-            result = self.run_training_experiment_enhanced(config, config_number_in_run, config_file_path, actual_version, verbose=verbose, concise=concise)
+            result = self.run_training_experiment(config, config_number_in_run, config_file_path, actual_version, verbose=verbose, concise=concise)
             
             if result:
                 # Enhanced result with traceability info
@@ -2273,6 +2195,17 @@ class HyperparameterTuner:
                 result['execution_order'] = config_number_in_run  # Same as config_number_in_run now
                 self.results.append(result)
                 self.save_intermediate_results()
+                
+                # Update timing database with actual training time
+                if result.get('training_time_minutes', 0) > 0 and result.get('model_complexity', 0) > 0:
+                    self.timing_estimator.record_actual_time(
+                        config, result['training_time_minutes'], result['model_complexity'])
+                
+                # Concise completion message
+                if self.concise:
+                    actual_time_min = result.get('training_time_minutes', 0)
+                    print(f"✅ Config {config_number_in_run}/{configs_to_run_count} completed ({actual_time_min:.1f} min)")
+                
                 # Only mark as completed if successful (use original index for resume tracking)
                 completed_ids.add(i)
                 self.save_progress(list(completed_ids), i, len(configs))
@@ -2285,6 +2218,10 @@ class HyperparameterTuner:
             avg_time = elapsed / config_number_in_run  # Average time per config actually run
             remaining = configs_to_run_count - config_number_in_run
             eta = avg_time * remaining / 3600  # in hours
+            
+            # Concise progress message with ETA
+            if self.concise and remaining > 0:
+                print(f"📊 Progress: {config_number_in_run}/{configs_to_run_count} | ETA: {eta:.1f}h ({remaining} configs remaining)")
             
             if not self.concise:
                 print(f"\nProgress: {config_number_in_run}/{configs_to_run_count} ({config_number_in_run/configs_to_run_count*100:.1f}%)")
@@ -2304,15 +2241,19 @@ class HyperparameterTuner:
         print(f"Results saved to: {self.results_file.as_posix()}")
     
     def save_progress(self, completed_configs, current, total):
-        """Save progress to resume later."""
-        progress = {
+        """Save progress to run_info file (replaces separate tuning_progress.json)."""
+        # Update progress in run_info
+        self.run_info['progress'] = {
             'completed_configs': completed_configs,
             'current': current,
             'total': total,
-            'timestamp': datetime.datetime.now().isoformat()
+            'last_updated': datetime.datetime.now().isoformat()
         }
-        with open(self.progress_file, 'w') as f:
-            json.dump(progress, f, indent=2)
+        
+        # Save updated run_info
+        with open(self.run_info_file, 'w') as f:
+            json.dump(self.run_info, f, indent=2)
+    
     
     def _format_dropout_value(self, dropout_value):
         """Format dropout value for display, handling various data types."""
@@ -2332,7 +2273,7 @@ class HyperparameterTuner:
     
     def _get_experiment_log_dataframe(self):
         """Get experiment log DataFrame with caching to avoid repeated file reads."""
-        log_file = str(get_experiment_log_path())
+        log_file = str(self.strategy.get_experiment_log_path())
         
         if not Path(log_file).exists():
             return None
@@ -2350,55 +2291,6 @@ class HyperparameterTuner:
                 return None
         
         return self._experiment_log_cache
-    
-    def extract_from_experiment_log(self, config_id):
-        """Extract results from the experiment log CSV (most reliable source)."""
-        try:
-            df = self._get_experiment_log_dataframe()
-            if df is None or df.empty:
-                return None
-            
-            # Filter for hyperopt source entries (recent runs from hyperparameter optimization)
-            hyperopt_entries = df[df['source'] == 'hyperopt'].copy()
-            
-            if hyperopt_entries.empty:
-                return None
-            
-            # Find the entry for the specific config_id by matching version
-            target_version = format_version(config_id)
-            matching_entries = hyperopt_entries[hyperopt_entries['version'] == target_version]
-            
-            if matching_entries.empty:
-                # Fallback to the most recent entry if version doesn't match
-                latest_entry = hyperopt_entries.iloc[-1]
-            else:
-                latest_entry = matching_entries.iloc[-1]
-            
-            # Extract the key results
-            result = {
-                'config_id': config_id,
-                'timestamp': datetime.datetime.now().isoformat(),
-                'version': latest_entry.get('version', format_version(config_id)),
-                'mean_val_accuracy': latest_entry.get('mean_val_accuracy', 0.0),
-                'std_val_accuracy': latest_entry.get('std_val_accuracy', 0.0),
-                'best_val_accuracy': latest_entry.get('best_fold_accuracy', 0.0),
-                'training_time_minutes': latest_entry.get('total_training_time_minutes', 0.0),
-                'learning_rate': latest_entry.get('learning_rate', 0.0),
-                'batch_size': latest_entry.get('batch_size', 0),
-                'epochs': latest_entry.get('epochs', 0),
-                'k_folds': latest_entry.get('k_folds', 0),
-                'conv_filters': self._safe_parse_list(latest_entry.get('conv_filters', '[]')),
-                'dense_units': self._safe_parse_list(latest_entry.get('dense_units', '[]')),
-                'conv_dropout': latest_entry.get('conv_dropout', 0.0),
-                'dense_dropout': self._safe_parse_list(latest_entry.get('dropout_rates', '[]')),
-                'l2_regularization': latest_entry.get('l2_reg', 0.0),
-            }
-            
-            return result
-            
-        except Exception as e:
-            print(f"Failed to extract from experiment log: {e}")
-            return None
     
     def analyze_and_save_final_results(self, total_time_minutes=None):
         """Analyze results and save final report."""
@@ -2431,6 +2323,15 @@ class HyperparameterTuner:
         if 'mean_val_accuracy' in df.columns:
             best_result = df.iloc[0]
             print(f"Best Accuracy: {best_result['mean_val_accuracy']:.4f}")
+            
+            # Display precision, recall, F1-score if available
+            if 'mean_precision' in best_result and best_result['mean_precision'] > 0:
+                print(f"   Precision: {best_result['mean_precision']:.4f}")
+            if 'mean_recall' in best_result and best_result['mean_recall'] > 0:
+                print(f"   Recall: {best_result['mean_recall']:.4f}")
+            if 'mean_f1_score' in best_result and best_result['mean_f1_score'] > 0:
+                print(f"   F1 Score: {best_result['mean_f1_score']:.4f}")
+                
             print(f"   Config ID: {best_result['config_id']}")
             print(f"   Learning Rate: {best_result['learning_rate']}")
             print(f"   Batch Size: {best_result['batch_size']}")
@@ -2439,25 +2340,24 @@ class HyperparameterTuner:
             
             print(f"\nTop 5 Results:")
             for i, (_, row) in enumerate(df.head(5).iterrows()):
-                # Get reliable data from experiment log for this config
+                # Read from DataFrame 
                 config_id = row['config_id']
-                log_result = self.extract_from_experiment_log(config_id)
+                accuracy = row['mean_val_accuracy']
+                learning_rate = row['learning_rate']
+                batch_size = row['batch_size']
+                version = format_version(config_id)
                 
-                if log_result:
-                    # Use data from experiment log (more reliable)
-                    accuracy = log_result['mean_val_accuracy']
-                    learning_rate = log_result['learning_rate']
-                    batch_size = log_result['batch_size']
-                    version = log_result.get('version', format_version(config_id))
-                else:
-                    # Fallback to DataFrame data if log extraction fails
-                    accuracy = row['mean_val_accuracy']
-                    learning_rate = row['learning_rate']
-                    batch_size = row['batch_size']
-                    version = format_version(config_id)
+                # Include precision, recall, F1-score if available
+                metrics_str = ""
+                if 'mean_precision' in row and row['mean_precision'] > 0:
+                    metrics_str += f", P={row['mean_precision']:.3f}"
+                if 'mean_recall' in row and row['mean_recall'] > 0:
+                    metrics_str += f", R={row['mean_recall']:.3f}"
+                if 'mean_f1_score' in row and row['mean_f1_score'] > 0:
+                    metrics_str += f", F1={row['mean_f1_score']:.3f}"
                 
                 print(f"   {i+1}. Config {config_id} ({version}): {accuracy:.4f} "
-                      f"(LR={learning_rate}, BS={batch_size})")
+                      f"(LR={learning_rate}, BS={batch_size}{metrics_str})")
         
         # Save failed configs if any
         if self.failed_configs:
@@ -2468,34 +2368,81 @@ class HyperparameterTuner:
             print(f"\n{len(self.failed_configs)} configs failed - see {failed_file.as_posix()}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Hyperparameter Optimization for PD Signal Classifier')
-    parser.add_argument('--mode', choices=['test', 'quick', 'medium', 'smart', 'smart-training', 'smart-architecture', 'smart-regularization', 'smart-augmentation', 'full', 'augmentation', 'anova'], default='smart',
-                       help='Optimization mode (default: smart). Smart modes: smart=all parameters, smart-training=learning dynamics, smart-architecture=model structure, smart-regularization=overfitting control, smart-augmentation=data augmentation, anova=ANOVA analysis improvement')
+    parser = argparse.ArgumentParser(description='Hyperparameter Optimization for ML Classifiers')
+    parser.add_argument('--classifier', choices=['pd_signal', 'cwt_image'], default='pd_signal',
+                       help='Type of classifier to optimize (default: pd_signal)')
+    parser.add_argument('--multi-channel', action='store_true',
+                       help='Use multi-channel configuration for CWT classifier (uses hardcoded paths from config.py)')
+    parser.add_argument('--base', type=int, default=None,
+                       help='Use configuration from specific version as base (e.g., --base 115 for v115)')
+    parser.add_argument('--mode', choices=['test', 'smart', 'channel-ablation'], default='smart',
+                       help='Optimization mode (default: smart). Modes: test=quick validation, smart=registry-based adaptive search, channel-ablation=multi-channel analysis study (CWT only)')
     parser.add_argument('--max_configs', type=int, default=None,
                        help='Maximum number of configurations to test')
     parser.add_argument('--output_dir', type=str, default=None,
-                       help='Output directory for results (defaults to config HYPEROPT_RESULTS_DIR)')
+                       help='Output directory for results (defaults to config PD_HYPEROPT_RESULTS_DIR)')
     parser.add_argument('--resume', action='store_true',
                        help='Resume from previous run')
     parser.add_argument('--verbose', action='store_true',
                        help='Show training output in real-time')
     parser.add_argument('--concise', action='store_true',
                        help='Show concise progress updates (one line per epoch)')
-    parser.add_argument('--skip-deduplication', action='store_true',
-                       help='Skip smart deduplication - allow retesting previous configurations')
-    parser.add_argument('--search-radius', type=int, choices=[1, 2], default=1,
+    parser.add_argument('--skip_deduplication', action='store_true',
+                       help='Disable smart deduplication - allow retesting previous configurations')
+    parser.add_argument('--search_radius', type=int, choices=[1, 2], default=1,
                        help='For smart mode: search radius around best config (±1 or ±2 values per parameter)')
-    parser.add_argument('--grid-search', action='store_true',
-                       help='For smart/augmentation modes: do full grid search instead of OFAT')
+    parser.add_argument('--grid_search', action='store_true',
+                       help='For smart mode: do full grid search instead of OFAT')
     parser.add_argument('--ignore', nargs='+', default=[], metavar='PARAM',
                        help='For smart mode: parameters to ignore in search, using previous optimum value')
-    parser.add_argument('--max-grid-size', type=int, default=100, metavar='N',
+    parser.add_argument('--max_grid_size', type=int, default=100, metavar='N',
                        help='Maximum grid search size before parameter limiting kicks in')
+    parser.add_argument('--category', nargs='+', choices=['training', 'regularization', 'architecture', 'training_control', 'augmentation', 'fixed'], default=None, metavar='CAT',
+                       help='For smart mode: parameter categories to include (default: all non-fixed categories)')
+    parser.add_argument('--priority', nargs='+', type=int, choices=[1, 2, 3, 4, 5], default=None, metavar='TIER',
+                       help='For smart mode: priority tiers to include (1=highest, 5=lowest, default: all tiers)')
+    
+    # DoE-specific arguments
+    parser.add_argument('--doe_design', type=str, choices=['factorial', 'response_surface', 'lhs', 'from_file'], default='factorial',
+                       help='DoE design type for --mode doe (default: factorial)')
+    parser.add_argument('--doe_file', type=str,
+                       help='Path to CSV file containing DoE experiments (for --doe_design from_file)')
+    parser.add_argument('--doe_phase', type=int, choices=[1, 2, 3],
+                       help='DoE phase (1=screening, 2=optimization, 3=validation)')
+    parser.add_argument('--doe_factors', type=str, nargs='*',
+                       help='Specific factors to include in DoE (default: auto-select based on analysis)')
+    parser.add_argument('--auto_analyze', action='store_true',
+                       help='Automatically run comprehensive analysis after DoE completion')
     
     args = parser.parse_args()
     
-    # Initialize tuner (output_root will be set when run_optimization is called)
-    tuner = HyperparameterTuner(output_root=args.output_dir, verbose=args.verbose, concise=args.concise)
+    # Validate arguments
+    if args.multi_channel and args.classifier != 'cwt_image':
+        parser.error("--multi-channel can only be used with --classifier cwt_image")
+    
+    # Channel-ablation mode requires multi-channel configuration
+    if args.mode == 'channel-ablation':
+        if args.classifier != 'cwt_image':
+            parser.error("--mode channel-ablation can only be used with --classifier cwt_image")
+        args.multi_channel = True  # Automatically enable multi-channel mode
+    
+    # Initialize tuner with classifier type (output_root will be set when run_optimization is called)
+    tuner = HyperparameterTuner(
+        classifier_type=args.classifier,
+        output_root=args.output_dir, 
+        verbose=args.verbose, 
+        concise=args.concise,
+        multi_channel=args.multi_channel,
+        base_version=args.base
+    )
+    
+    # Set DoE-specific parameters as instance variables for access in DoE mode
+    if args.mode == 'doe':
+        tuner._doe_design = args.doe_design
+        tuner._doe_phase = args.doe_phase
+        tuner._doe_factors = args.doe_factors
+        tuner._doe_file = args.doe_file
+        tuner._auto_analyze = args.auto_analyze
     
     # Run optimization
     tuner.run_optimization(
@@ -2504,12 +2451,64 @@ def main():
         resume=args.resume,
         verbose=args.verbose,
         concise=args.concise,
-        skip_deduplication=args.skip_deduplication,
+        deduplication=not args.skip_deduplication,  # Default to True unless --skip_deduplication is used
         search_radius=args.search_radius,
         grid_search=args.grid_search,
         ignore_params=args.ignore,
-        max_grid_size=args.max_grid_size
+        max_grid_size=args.max_grid_size,
+        categories=args.category,
+        priority_tiers=args.priority
     )
+    
+    # Run comprehensive analysis after DoE completion if requested
+    if args.mode == 'doe' and getattr(args, 'auto_analyze', False):
+        print("\n" + "="*60)
+        print("🔬 RUNNING AUTOMATIC POST-DOE COMPREHENSIVE ANALYSIS")
+        print("="*60)
+        
+        try:
+            from comprehensive_hyperopt_analyzer import ComprehensiveHyperoptAnalyzer
+            
+            # Determine analysis mode based on classifier type
+            analysis_mode = 'cwt' if args.classifier == 'cwt_image' else 'pd'
+            
+            # Initialize and run comprehensive analysis
+            analyzer = ComprehensiveHyperoptAnalyzer(
+                mode=analysis_mode,
+                verbose=args.verbose
+            )
+            
+            # Run complete analysis including interaction effects
+            results = analyzer.run_complete_analysis()
+            
+            print(f"\n✅ Comprehensive analysis completed!")
+            print(f"📊 Analysis results saved to: {analyzer.output_dir}")
+            print(f"📈 Key findings:")
+            
+            if analyzer.anova_results:
+                # Show top parameters
+                sorted_params = sorted(analyzer.anova_results.items(), 
+                                     key=lambda x: x[1]['normalized_importance'], reverse=True)
+                top_param, top_result = sorted_params[0]
+                print(f"   • Most important parameter: {top_param} ({top_result['normalized_importance']*100:.1f}%)")
+                
+                # Show interaction effects if any
+                if hasattr(analyzer, 'interaction_results') and analyzer.interaction_results:
+                    significant_interactions = sum(1 for result in analyzer.interaction_results.values() 
+                                                 if result['significant'])
+                    print(f"   • Significant interactions found: {significant_interactions}")
+                    
+                    if significant_interactions > 0:
+                        print("   • Recommended next phase: Response Surface Methodology (RSM)")
+                    else:
+                        print("   • Recommended next phase: Factorial optimization on main effects")
+                        
+                print(f"   • DoE recommendations available in analysis report")
+                
+        except Exception as e:
+            print(f"⚠️  Warning: Automatic analysis failed: {e}")
+            print("   You can run analysis manually with:")
+            print(f"   python ml/comprehensive_hyperopt_analyzer.py --mode {analysis_mode} --verbose")
 
 if __name__ == "__main__":
     main()
