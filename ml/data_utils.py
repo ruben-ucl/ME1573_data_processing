@@ -65,12 +65,12 @@ def split_dual_branch_image(img, img_width):
 def estimate_memory_usage_gb(num_files, img_width, signals_per_image=2):
     """
     Estimate memory usage in GB for loading images into memory.
-    
+
     Args:
         num_files: Number of image files
         img_width: Width of each image after resizing
         signals_per_image: Number of signals per image (default 2 for dual-branch)
-        
+
     Returns:
         float: Estimated memory usage in GB
     """
@@ -78,4 +78,31 @@ def estimate_memory_usage_gb(num_files, img_width, signals_per_image=2):
     bytes_per_image = img_width * 1 * 4 * signals_per_image
     total_bytes = num_files * bytes_per_image
     return total_bytes / (1024**3)  # Convert to GB
+
+
+def extract_trackid_from_filename(filename):
+    """
+    Extract trackid from filename using simple split logic.
+
+    Expected format: XXXX_YY_...rest.ext → XXXX_YY
+    Example: "0105_01_0.2-1.2ms.png" → "0105_01"
+
+    Args:
+        filename: Filename string or Path object
+
+    Returns:
+        str: Trackid (e.g., "0105_01") or None if format doesn't match
+    """
+    from pathlib import Path
+
+    if isinstance(filename, Path):
+        filename = filename.name
+
+    stem = Path(filename).stem
+    parts = stem.split('_')
+
+    if len(parts) >= 2:
+        return f"{parts[0]}_{parts[1]}"
+
+    return None
 

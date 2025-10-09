@@ -557,27 +557,26 @@ class HyperparameterTuner:
             return None
     
     def _extract_config_from_row(self, row):
-        """Extract configuration dictionary from a dataframe row."""
-        # Parse dropout rates from combined format [conv_dropout, dense_dropout]
-        dropout_rates = self._safe_parse_list(row.get('dropout_rates'), [])
-        conv_dropout = dropout_rates[0] if len(dropout_rates) > 0 else 0.2
-        dense_dropout = dropout_rates[1] if len(dropout_rates) > 1 else [0.3, 0.2]
-        
-        # Extract configuration from the row
-        config = {
-            'learning_rate': row.get('learning_rate'),
-            'batch_size': int(row.get('batch_size', 0)) if pd.notna(row.get('batch_size')) else None,
-            'conv_dropout': conv_dropout,
-            'dense_dropout': dense_dropout,
-            'l2_regularization': row.get('l2_reg'),
-            'conv_filters': self._safe_parse_list(row.get('conv_filters')),
-            'dense_units': self._safe_parse_list(row.get('dense_units')),
-            'early_stopping_patience': int(row.get('early_stopping_patience', 0)) if pd.notna(row.get('early_stopping_patience')) else None,
-            'use_class_weights': row.get('class_weights'),
-            'mean_val_accuracy': row.get('mean_val_accuracy'),
-            'version': row.get('version')
-        }
-        
+        """Extract configuration dictionary from a dataframe row.
+
+        Uses centralized template management to ensure all parameters have valid defaults,
+        preventing None values that cause comparison errors.
+        """
+        # Start with template to ensure all parameters have valid defaults
+        config = self.strategy.get_config_template()
+
+        # Parse experiment log row using strategy-specific parsing
+        row_config = self.strategy.parse_experiment_log_row(row, self)
+
+        # Update template with values from experiment log (only non-None values)
+        for key, value in row_config.items():
+            if value is not None:
+                config[key] = value
+
+        # Add metadata fields
+        config['mean_val_accuracy'] = row.get('mean_val_accuracy')
+        config['version'] = row.get('version')
+
         return config
     
     def _find_best_previous_config(self):

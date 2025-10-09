@@ -561,13 +561,16 @@ class FinalModelTrainer:
                 class_files = glob(str(class_path / file_pattern))
                 
                 for file_path in class_files:
-                    filename = Path(file_path).name
-                    # Extract trackid from filename (assumes format: trackid_*.png/tiff)
-                    trackid = filename.split('_')[0] + '_' + filename.split('_')[1]  # e.g., "0105_01"
-                    
+                    # Extract trackid using helper function
+                    from data_utils import extract_trackid_from_filename
+                    trackid = extract_trackid_from_filename(file_path)
+
+                    if not trackid:
+                        continue
+
                     all_files.append(file_path)
                     labels.append(int(class_label))
-                    
+
                     if trackid in holdout_trackids:
                         test_files.append(file_path)
                         test_labels.append(int(class_label))

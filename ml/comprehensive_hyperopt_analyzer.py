@@ -1229,7 +1229,7 @@ class ComprehensiveHyperoptAnalyzer:
             
             # Interpolate surface
             try:
-                zi = griddata((x_data, y_data), target_values, (xi_grid, yi_grid), method='cubic') # 'linear', 'nearest' or 'cubic'
+                zi = griddata((x_data, y_data), target_values, (xi_grid, yi_grid), method='linear') # 'linear', 'nearest' or 'cubic'
                 
                 # Create contour plot with surface
                 # levels = np.linspace(target_values.min(), target_values.max(), 20)

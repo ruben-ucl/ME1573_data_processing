@@ -1,0 +1,178 @@
+{
+  "generation_timestamp": "2025-10-09T14:44:36.928680",
+  "random_seed": null,
+  "selection_criteria": {
+    "material": "AlSi10Mg",
+    "laser_mode": "CW",
+    "layer": 1,
+    "duty_cycle": 1.0
+  },
+  "trackid_statistics": {
+    "total_available": 51,
+    "selected_count": 5,
+    "percentage_of_trackids": 9.803921568627452
+  },
+  "image_statistics": {
+    "holdout_images": 180,
+    "estimated_total_images": 1530,
+    "estimated_percentage": 9.803921568627452,
+    "total_dataset_images": 1441,
+    "training_images": 1261,
+    "holdout_percentage": 12.491325468424705,
+    "training_percentage": 87.5086745315753
+  },
+  "holdout_regime_breakdown": {
+    "quasi-stable vapour depression": {
+      "trackids": [
+        "0326_05"
+      ],
+      "image_count": 0,
+      "trackid_details": {
+        "0326_05": 0
+      }
+    },
+    "unstable keyhole": {
+      "trackids": [
+        "0105_05"
+      ],
+      "image_count": 89,
+      "trackid_details": {
+        "0105_05": 89
+      }
+    },
+    "keyhole flickering": {
+      "trackids": [
+        "0106_02"
+      ],
+      "image_count": 39,
+      "trackid_details": {
+        "0106_02": 39
+      }
+    },
+    "quasi-stable keyhole": {
+      "trackids": [
+        "0514_06"
+      ],
+      "image_count": 29,
+      "trackid_details": {
+        "0514_06": 29
+      }
+    },
+    "conduction": {
+      "trackids": [
+        "0323_06"
+      ],
+      "image_count": 23,
+      "trackid_details": {
+        "0323_06": 23
+      }
+    }
+  },
+  "selected_trackids": [
+    "0326_05",
+    "0105_05",
+    "0106_02",
+    "0514_06",
+    "0323_06"
+  ],
+  "data_directories_searched": [
+    "E:\\AlSi10Mg single layer ffc\\CWT_labelled_windows\\PD1\\cmor1_5-1_0\\1.0_ms\\781-50000_Hz_256_steps\\grey",
+    "E:\\AlSi10Mg single layer ffc\\Photodiode_1ms_window_plots\\window_plots_16bit"
+  ],
+  "dataset_regime_distribution": {
+    "unstable keyhole": {
+      "trackids": [
+        "0105_01",
+        "0105_02",
+        "0105_06",
+        "0106_03",
+        "0106_04",
+        "0106_05",
+        "0106_06",
+        "0323_04",
+        "0514_01",
+        "0514_03",
+        "0105_03",
+        "0105_04",
+        "0105_05",
+        "0323_05"
+      ],
+      "image_count": 926
+    },
+    "keyhole flickering": {
+      "trackids": [
+        "0106_01",
+        "0106_02",
+        "0324_01"
+      ],
+      "image_count": 101
+    },
+    "quasi-stable keyhole": {
+      "trackids": [
+        "0323_01",
+        "0323_02",
+        "0323_03",
+        "0325_04",
+        "0325_05",
+        "0514_06"
+      ],
+      "image_count": 224
+    },
+    "conduction": {
+      "trackids": [
+        "0323_06"
+      ],
+      "image_count": 23
+    },
+    "quasi-stable vapour depression": {
+      "trackids": [
+        "0324_02",
+        "0324_03",
+        "0324_04",
+        "0324_05",
+        "0324_06",
+        "0325_01",
+        "0325_02",
+        "0325_03",
+        "0325_06"
+      ],
+      "image_count": 167
+    }
+  },
+  "dataset_statistics": {
+    "total_trackids": 33,
+    "trackids_without_regime": 0
+  },
+  "representation_analysis": {
+    "unstable keyhole": {
+      "dataset_percentage": 64.26092990978486,
+      "holdout_percentage": 49.44444444444444,
+      "representation_ratio": 0.7694324454043677,
+      "status": "under_represented"
+    },
+    "keyhole flickering": {
+      "dataset_percentage": 7.009021512838307,
+      "holdout_percentage": 21.666666666666668,
+      "representation_ratio": 3.0912541254125414,
+      "status": "over_represented"
+    },
+    "quasi-stable keyhole": {
+      "dataset_percentage": 15.544760582928522,
+      "holdout_percentage": 16.11111111111111,
+      "representation_ratio": 1.0364335317460318,
+      "status": "well_represented"
+    },
+    "conduction": {
+      "dataset_percentage": 1.5961138098542678,
+      "holdout_percentage": 12.777777777777777,
+      "representation_ratio": 8.005555555555555,
+      "status": "over_represented"
+    },
+    "quasi-stable vapour depression": {
+      "dataset_percentage": 11.589174184594032,
+      "holdout_percentage": 0.0,
+      "representation_ratio": 0.0,
+      "status": "under_represented"
+    }
+  }
+}

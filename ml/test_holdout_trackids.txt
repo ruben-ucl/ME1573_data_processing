@@ -4,8 +4,8 @@
 #
 # HOLDOUT STATISTICS:
 # Total available trackids (filtered): 51
-# Selected trackids for holdout: 7 (13.7%)
-# Holdout images: 517
+# Selected trackids for holdout: 5 (9.8%)
+# Holdout images: 180
 # Estimated holdout percentage: TBD during training
 #
 # SELECTION CRITERIA:
@@ -15,7 +15,30 @@
 # - Duty cycle: 1.0
 #
 # SELECTION METHOD:
+# - Random seed: None (truly random)
 # - One representative trackid from each melting regime
 # - Additional trackids from largest regime if needed for target count
 #
 # DATA DIRECTORIES SEARCHED:
+# 1. ✓ E:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD1\cmor1_5-1_0\1.0_ms\781-50000_Hz_256_steps\grey
+# 2. ✓ E:\AlSi10Mg single layer ffc\Photodiode_1ms_window_plots\window_plots_16bit
+#
+# REGIME BREAKDOWN:
+# quasi-stable vapour depression: 1 trackids, 0 images
+#   0326_05: 0 images
+# unstable keyhole: 1 trackids, 89 images
+#   0105_05: 89 images
+# keyhole flickering: 1 trackids, 39 images
+#   0106_02: 39 images
+# quasi-stable keyhole: 1 trackids, 29 images
+#   0514_06: 29 images
+# conduction: 1 trackids, 23 images
+#   0323_06: 23 images
+#
+# TRACKID LIST (one per line):
+
+0105_05
+0106_02
+0323_06
+0326_05
+0514_06
