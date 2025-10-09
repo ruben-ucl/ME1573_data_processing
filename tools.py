@@ -4,6 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import time, functools, glob
+import pywt
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
@@ -398,36 +399,74 @@ def hist_eq(dset):
     return output_dset
     
 # Scales optimization
-def get_cwt_scales(wavelet, num=512):
-    # Dictionary with min and max scales at indices 0 and 1, and vmax for heatmap at index 2
-    scale_lims = {'cmor1.5-1.0': [1, 7, 150],
-        'cmor2.5-0.5': [0, 6, 150],
-        'cmor3.0-0.5': [0, 6, 150],
-        'cmor10.0-0.3': [-0.67808, 5.4, 150],
-        'mexh': [-1, 5, 300],
-        'morl': [0.70043, 6.7, 300],
-        'gaus1': [-1.32194, 5, 300]
+def get_cwt_scales(wavelet, num=512, fmin=1000, fmax=50000, sampling_rate=100000):
+    """
+    Generate CWT scales for a given wavelet with dynamic frequency range calculation.
+    
+    Args:
+        wavelet (str): Name of the wavelet
+        num (int): Number of scales to generate (default: 512)
+        fmin (float): Minimum frequency in Hz (default: 1000 Hz = 1 kHz)
+        fmax (float): Maximum frequency in Hz (default: 50000 Hz = 50 kHz) 
+        sampling_rate (float): Sampling rate in Hz (default: 100000)
+    
+    Returns:
+        tuple: (scales array, vmax for visualization)
+    """
+    # BACKUP: Original hardcoded scale_lims dictionary (for reference)
+    scale_lims_backup = {'cmor1.5-1.0': [1, 7, 50],    #           150 | 50
+        'cmor2.5-0.5': [0, 6, 150],             #           150 |
+        'cmor3.0-0.5': [0, 6, 150],             #           150 |
+        'cmor10.0-0.3': [-0.67808, 5.4, 150],   #           150 |
+        'mexh': [-1, 5, 100],                   #           300 | 100
+        'morl': [0.7, 6.3, 300],                #           Corrected: Morlet (was [0.70043, 6.7, 300])
+        'gaus1': [-1.32194, 5, 300],            #           300 |
+        'gaus2': [-1, 5, 150],                  #           New: 2nd Gaussian derivative
+        "fbsp2-1.0-1.0": [3, 9, 300],           #           300 |
+        "fbsp4-0.6-1.0": [3, 9, 300],           #           300 |
+        "fbsp1-1.5-1.0": [-0.9, 4.8, 200],     #           New: frequency B-spline (corrected for 1-50 kHz)
+        "shan1.5-1.0": [-0.9, 4.8, 200],       #           New: Shannon wavelet (corrected for 1-50 kHz)
+        "cgau8": [0.5, 6.1, 150]                #           New: complex Gaussian (corrected for 1-50 kHz)
         }
+    
+    # vmax values for visualization (wavelet-dependent)
+    vmax_dict = {
+        'cmor1.5-1.0': 50, 'cmor2.5-0.5': 150, 'cmor3.0-0.5': 150, 'cmor10.0-0.3': 150,
+        'mexh': 100, 'morl': 300, 'gaus1': 300, 'gaus2': 150,
+        'fbsp2-1.0-1.0': 300, 'fbsp4-0.6-1.0': 300, 'fbsp1-1.5-1.0': 200,
+        'shan1.5-1.0': 200, 'cgau8': 150
+    }
     
     # Return list of supported wavelet names
     if wavelet == None:
-        return scale_lims.keys()
+        return vmax_dict.keys()
     
     try:
-        lims = scale_lims[wavelet]
-    except KeyError:
-        lims = [1, 7, 300]
-        print('get_cwt_scales() error: No scale preset found - using default range of 1-7')
+        # Dynamic calculation of scale limits based on frequency range using pywt.frequency2scale
+        scale_min = pywt.frequency2scale(wavelet, fmax / sampling_rate)  # Higher frequency = smaller scale
+        scale_max = pywt.frequency2scale(wavelet, fmin / sampling_rate)  # Lower frequency = larger scale
         
-    scales = np.logspace(lims[0],
-        lims[1],
-        base=2,
-        num=num,
-        endpoint=True)
+        # Generate logarithmic scale array
+        scales = np.logspace(np.log2(scale_min),
+                            np.log2(scale_max),
+                            base=2,
+                            num=num,
+                            endpoint=True)
         
-    vmax = lims[2]
+        # Get vmax for visualization
+        vmax = vmax_dict.get(wavelet, 150)  # Default vmax if not found
         
-    return scales, vmax
+        return scales, vmax
+        
+    except Exception as e:
+        print(f'get_cwt_scales() error for wavelet {wavelet}: {e}')
+        print('Using fallback scale range')
+        
+        # Fallback to safe default range
+        scales = np.logspace(1, 7, base=2, num=num, endpoint=True)
+        vmax = 150
+        
+        return scales, vmax
 
 def interpolate_low_quality_data(fkw_angle: np.ndarray, 
                                 n_points_fit: np.ndarray | None, 
