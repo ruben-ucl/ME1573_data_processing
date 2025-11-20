@@ -24,6 +24,7 @@ import pickle
 import subprocess
 import sys
 from pathlib import Path
+import matplotlib.pyplot as plt
 
 import cv2
 import logging
@@ -33,19 +34,20 @@ from sklearn.model_selection import train_test_split
 
 from config import (
     get_pd_experiment_log_path, get_cwt_experiment_log_path, format_version, get_next_version_from_log,
-    convert_numpy_types, normalize_path, PD_OUTPUTS_DIR, CWT_OUTPUTS_DIR, 
-    PD_HYPEROPT_RESULTS_DIR, CWT_HYPEROPT_RESULTS_DIR, ensure_directories, ensure_cwt_directories
+    convert_numpy_types, normalize_path, PD_OUTPUTS_DIR, CWT_OUTPUTS_DIR,
+    PD_HYPEROPT_RESULTS_DIR, CWT_HYPEROPT_RESULTS_DIR, ensure_directories, ensure_cwt_directories,
+    load_dataset_variant_info
 )
 from data_utils import normalize_image, split_dual_branch_image, estimate_memory_usage_gb
 
 class FinalModelTrainer:
     """Trains final production model using best hyperparameters."""
     
-    def __init__(self, classifier_type='pd_signal', verbose=False, k_folds_override=None, test_holdout_file=None):
+    def __init__(self, classifier_type='pd_signal', verbose=False, k_folds_override=None, dataset_variant=None):
         self.classifier_type = classifier_type
         self.verbose = verbose
         self.k_folds_override = k_folds_override
-        self.test_holdout_file = test_holdout_file
+        self.dataset_variant = dataset_variant
         # Set up logging
         self.logger = logging.getLogger(__name__)
         if not self.logger.handlers:
@@ -153,17 +155,9 @@ class FinalModelTrainer:
             output_root = str(CWT_OUTPUTS_DIR)
         else:
             output_root = str(PD_OUTPUTS_DIR)
-        
-        # Set appropriate data directory key based on classifier type
-        if self.classifier_type == 'cwt_image':
-            data_dir_key = 'cwt_data_dir'
-            data_dir_source = log_row['cwt_data_dir']  # CWT logs use 'cwt_data_dir' column
-        else:
-            data_dir_key = 'data_dir'
-            data_dir_source = log_row['data_dir']  # PD logs use 'data_dir' column
-        
+
+        # Build base config (model hyperparameters only)
         config = {
-            data_dir_key: data_dir_source,
             'img_width': int(log_row['img_width']),
             'output_root': output_root,
             'learning_rate': float(log_row['learning_rate']),
@@ -187,14 +181,22 @@ class FinalModelTrainer:
             'noise_probability': float(log_row.get('noise_probability', 0.5)),
             'amplitude_scale_probability': float(log_row.get('amplitude_scale_probability', 0.5)),
         }
-        
+
+        # Add data directory ONLY if not using dataset variant
+        # Dataset variant will provide data_dir from its own config
+        if not self.dataset_variant:
+            if self.classifier_type == 'cwt_image':
+                config['cwt_data_dir'] = log_row['cwt_data_dir']
+            else:
+                config['data_dir'] = log_row['data_dir']
+
         # Add CWT-specific parameters
         if self.classifier_type == 'cwt_image':
             config.update({
                 'img_height': int(log_row.get('img_height', 256)),
                 'img_channels': int(log_row.get('img_channels', 1)),
             })
-        
+
         return config
     
     def _safe_parse_list(self, value):
@@ -347,54 +349,65 @@ class FinalModelTrainer:
     def load_and_correct_config(self, config_file_path):
         """Load config file and ensure it has correct paths for this classifier type."""
         import json
-        
+
         # Load existing config
         with open(config_file_path, 'r') as f:
             config = json.load(f)
-        
+
         # Ensure correct output_root based on classifier type
         if self.classifier_type == 'cwt_image':
             correct_output_root = str(CWT_OUTPUTS_DIR)
         else:
             correct_output_root = str(PD_OUTPUTS_DIR)
-        
+
         # Update or add output_root
         config['output_root'] = correct_output_root
-        
+
+        # Remove data directory paths if using dataset variant
+        # Dataset variant will provide the correct data_dir
+        if self.dataset_variant:
+            config.pop('cwt_data_dir', None)
+            config.pop('cwt_data_channels', None)
+            config.pop('data_dir', None)
+            if self.verbose:
+                print("Removed data_dir/cwt_data_channels from config - will use dataset variant's data_dir")
+
         # Ensure k_folds is at least 2 for sklearn compatibility, but prefer original value
         if config.get('k_folds', 5) < 2:
             config['k_folds'] = 5
-        
+
         # Create corrected config file
         corrected_path = Path(config_file_path).parent / f"corrected_{Path(config_file_path).name}"
         with open(corrected_path, 'w') as f:
             json.dump(config, f, indent=2, default=str)
-        
+
         if self.verbose:
             print(f"Corrected config file created: {corrected_path}")
             print(f"Set output_root to: {correct_output_root}")
-        
+
         return corrected_path
     
     def holdout_test_set(self, config, output_version_dir):
         """
         Create holdout test set by sampling files and creating exclusion list.
-        Can use either random sampling or preexisting trackid-based holdout.
-        Unified approach for both PD and CWT classifiers.
-        
+        For dataset variants, returns None to signal that classifier should handle exclusion.
+        For random sampling, creates test set and exclusion list.
+
         Args:
             config: Configuration dictionary containing data_dir/cwt_data_dir, img_width, img_height
             output_version_dir: Output directory for this model version
-            
+
         Returns:
-            tuple: (test_data_file, exclusion_file) both in output_version_dir
+            tuple: (test_data_file, exclusion_file) or (None, None) if using dataset variant
         """
         from glob import glob
         sys.path.append('ml')
-        
-        # Check if using preexisting test holdout file
-        if self.test_holdout_file:
-            return self._use_preexisting_holdout(config, output_version_dir)
+
+        # If using dataset variant, don't create test set here - classifier handles it
+        if self.dataset_variant:
+            print(f"\n📊 Using dataset variant '{self.dataset_variant}' for test holdout")
+            print("Test exclusion will be handled by classifier automatically")
+            return None, None
         
         print(f"\n📊 Creating test set holdout via random file sampling...")
         
@@ -470,7 +483,7 @@ class FinalModelTrainer:
         
         # Load test images based on classifier type
         if self.classifier_type == 'cwt_image':
-            X_test, y_test_filtered = self._load_cwt_test_images(test_files, test_labels, img_width, img_height, img_channels)
+            X_test, y_test_filtered, test_files_filtered = self._load_cwt_test_images(test_files, test_labels, img_width, img_height, img_channels)
         else:  # pd_signal
             X_test, y_test_filtered = self._load_pd_test_images(test_files, test_labels, img_width)
         
@@ -618,7 +631,7 @@ class FinalModelTrainer:
         
         # Load test images based on classifier type
         if self.classifier_type == 'cwt_image':
-            X_test, y_test_filtered = self._load_cwt_test_images(test_files, test_labels, img_width, img_height, img_channels)
+            X_test, y_test_filtered, test_files_filtered = self._load_cwt_test_images(test_files, test_labels, img_width, img_height, img_channels)
         else:  # pd_signal
             X_test, y_test_filtered = self._load_pd_test_images(test_files, test_labels, img_width)
         
@@ -650,6 +663,7 @@ class FinalModelTrainer:
     def _load_cwt_test_images(self, test_files, test_labels, img_width, img_height, img_channels):
         """Load CWT test images from file paths."""
         X_test = []
+        files_filtered = []
         y_test_filtered = []
         
         for class_label in [0, 1]:
@@ -671,17 +685,19 @@ class FinalModelTrainer:
                         
                         X_test.append(img)
                         y_test_filtered.append(class_label)
+                        files_filtered.append(file_path)
                 except Exception as e:
                     self.logger.warning(f"Could not load CWT test image {file_path}: {e}")
                     if self.verbose:
                         print(f"Warning: Could not load CWT test image {file_path}: {e}")
         
-        return np.array(X_test), y_test_filtered
+        return np.array(X_test), y_test_filtered, files_filtered
 
     def _load_pd_test_images(self, test_files, test_labels, img_width):
         """Load PD test images from file paths."""
         pd1_test, pd2_test = [], []
         y_test_filtered = []
+        files_filtered = []
         
         for class_label in [0, 1]:
             class_files = test_files[test_labels == class_label]
@@ -709,12 +725,13 @@ class FinalModelTrainer:
                         pd1_test.append(pd1_signal)
                         pd2_test.append(pd2_signal)
                         y_test_filtered.append(class_label)
+                        files_filtered.append(file_path)
                 except Exception as e:
                     self.logger.warning(f"Could not load PD test image {file_path}: {e}")
                     if self.verbose:
                         print(f"Warning: Could not load PD test image {file_path}: {e}")
         
-        return (np.array(pd1_test), np.array(pd2_test)), y_test_filtered
+        return (np.array(pd1_test), np.array(pd2_test)), y_test_filtered, files_filtered
 
     def evaluate_with_threshold_optimization(self, model, test_data, output_dir, version):
         """
@@ -840,11 +857,26 @@ class FinalModelTrainer:
         # Generate Grad-CAM analysis for CWT classifiers
         gradcam_results = None
         if classifier_type == 'cwt_image':
+            test_files = test_data.get('test_files', None)
             gradcam_results = self._generate_comprehensive_gradcam(
-                model, X_test, y_test, y_pred_best, y_proba_flat, 
-                best_threshold, output_dir, version
+                model, X_test, y_test, y_pred_best, y_proba_flat,
+                best_threshold, output_dir, version, test_files
             )
-        
+
+        # Generate track-level prediction visualizations if we have filenames
+        track_vis_results = None
+        if 'test_files' in test_data:
+            track_vis_results = self._generate_track_predictions_viz(
+                test_data['test_files'], y_test, y_pred_best, output_dir, version
+            )
+
+        # Generate P-V map showing test set track locations
+        pv_map_results = None
+        if 'test_files' in test_data:
+            pv_map_results = self._generate_pv_map_for_test_set(
+                test_data['test_files'], output_dir, version
+            )
+
         # Compile comprehensive results
         evaluation_results = {
             'version': version,
@@ -858,6 +890,8 @@ class FinalModelTrainer:
             'classification_report': class_report,
             'threshold_optimization': threshold_results,
             'gradcam_results': gradcam_results,
+            'track_predictions': track_vis_results,
+            'pv_map': pv_map_results,
             'output_files': {
                 'threshold_csv': str(threshold_csv),
                 'threshold_plot': str(Path(output_dir) / f'threshold_optimization_{version}.png'),
@@ -867,26 +901,33 @@ class FinalModelTrainer:
         }
         
         # Save comprehensive results as JSON
+        # Convert numpy types to Python native types for JSON serialization
+        evaluation_results_converted = convert_numpy_types(evaluation_results)
         results_json = Path(output_dir) / f'comprehensive_evaluation_{version}.json'
         with open(results_json, 'w') as f:
-            json.dump(evaluation_results, f, indent=2, default=str)
+            json.dump(evaluation_results_converted, f, indent=2, default=str)
         
         print(f"📊 Evaluation complete!")
         print(f"   Results saved to: {results_json}")
         if gradcam_results:
             print(f"   Grad-CAM analysis: {gradcam_results['total_images']} images analyzed")
+        if track_vis_results:
+            print(f"   Track predictions: {track_vis_results['figures_generated']} tracks visualized")
+        if pv_map_results:
+            print(f"   P-V map: {pv_map_results['unique_tracks']} tracks plotted")
         
         return evaluation_results
 
-    def _generate_comprehensive_gradcam(self, model, X_test, y_test, y_pred, y_proba, threshold, output_dir, version):
+    def _generate_comprehensive_gradcam(self, model, X_test, y_test, y_pred, y_proba, threshold, output_dir, version, test_files=None):
         """Generate comprehensive Grad-CAM analysis with class-specific folders and averages."""
         import tensorflow as tf
         from tensorflow.keras.models import Model
-        
+        import re
+
         print(f"🔥 Generating comprehensive Grad-CAM analysis...")
-        
+
         gradcam_dir = Path(output_dir) / f'gradcam_analysis_{version}'
-        
+
         # Create class-specific directories
         class_dirs = {}
         for class_label in [0, 1]:
@@ -897,23 +938,23 @@ class FinalModelTrainer:
             }
             for dir_path in class_dirs[class_label].values():
                 dir_path.mkdir(parents=True, exist_ok=True)
-        
+
         # Create summary directory
         summary_dir = gradcam_dir / 'class_averages'
         summary_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Find the best layer for Grad-CAM (last convolutional layer)
         conv_layers = [layer for layer in model.layers if 'conv' in layer.name.lower()]
         if not conv_layers:
             print("Warning: No convolutional layers found for Grad-CAM")
             return None
-            
+
         target_layer = conv_layers[-1]
         print(f"Using layer '{target_layer.name}' for Grad-CAM analysis")
-        
+
         # Create Grad-CAM model
         gradcam_model = Model(inputs=model.input, outputs=[target_layer.output, model.output])
-        
+
         # Store heatmaps for averaging
         class_heatmaps = {0: [], 1: []}
         gradcam_results = {
@@ -923,25 +964,42 @@ class FinalModelTrainer:
             'class_analysis': {0: {'correct': 0, 'incorrect': 0}, 1: {'correct': 0, 'incorrect': 0}},
             'saved_images': 0
         }
-        
+
         for i in range(len(X_test)):
             true_label = int(y_test[i])
             pred_label = int(y_pred[i])
             confidence = float(y_proba[i])
             is_correct = (true_label == pred_label)
-            
+
             # Generate Grad-CAM heatmap
             heatmap = self._generate_gradcam_heatmap(
                 gradcam_model, X_test[i:i+1], target_layer_idx=-2
             )
-            
+
             if heatmap is not None:
                 # Store for class averaging
                 class_heatmaps[true_label].append(heatmap)
-                
-                # Save individual image
+
+                # Create filename with track ID and window if available
                 prediction_type = 'correct' if is_correct else 'incorrect'
-                filename = f'sample_{i:04d}_true_{true_label}_pred_{pred_label}_conf_{confidence:.3f}.png'
+
+                if test_files is not None and i < len(test_files):
+                    # Extract track ID and window from filename
+                    # Example: 0105_01_0.2-1.2ms.png -> track_id = "0105_01", window = "0.2-1.2ms"
+                    original_filename = Path(test_files[i]).name
+                    parts = original_filename.split('_')
+
+                    if len(parts) >= 2:
+                        track_id = f"{parts[0]}_{parts[1]}"  # e.g., "0105_01"
+                        # Extract window info (everything after second underscore, before extension)
+                        window_info = '_'.join(parts[2:]).replace('.png', '')  # e.g., "0.2-1.2ms"
+                        filename = f'{track_id}_{window_info}_true_{true_label}_pred_{pred_label}_conf_{confidence:.3f}.png'
+                    else:
+                        # Fallback if filename doesn't match expected pattern
+                        filename = f'{original_filename.replace(".png", "")}_true_{true_label}_pred_{pred_label}_conf_{confidence:.3f}.png'
+                else:
+                    # Fallback if no test_files provided
+                    filename = f'sample_{i:04d}_true_{true_label}_pred_{pred_label}_conf_{confidence:.3f}.png'
                 
                 # Save to class-specific directories
                 self._save_gradcam_image(
@@ -963,43 +1021,137 @@ class FinalModelTrainer:
         for class_label in [0, 1]:
             if class_heatmaps[class_label]:
                 avg_heatmap = np.mean(class_heatmaps[class_label], axis=0)
-                
+
                 # Create a representative image (mean of class images)
                 class_indices = np.where(y_test == class_label)[0]
                 representative_img = np.mean(X_test[class_indices], axis=0)
-                
+
                 self._save_gradcam_image(
                     representative_img, avg_heatmap,
                     summary_dir / f'class_{class_label}_average_gradcam.png',
-                    title=f'Class {class_label} Average Grad-CAM (n={len(class_heatmaps[class_label])})'
+                    title=f'Class {class_label} Average Grad-CAM (n={len(class_heatmaps[class_label])})',
+                    enhance_contrast=True  # Enhance contrast for class averages
                 )
         
         # Generate difference heatmap (Class 1 - Class 0)
         if class_heatmaps[0] and class_heatmaps[1]:
             avg_heatmap_0 = np.mean(class_heatmaps[0], axis=0)
             avg_heatmap_1 = np.mean(class_heatmaps[1], axis=0)
-            diff_heatmap = avg_heatmap_1 - avg_heatmap_0
-            
-            # Create difference visualization
-            plt.figure(figsize=(15, 5))
-            
-            plt.subplot(1, 3, 1)
-            plt.imshow(avg_heatmap_0, cmap='viridis')
-            plt.title('Class 0 Average')
-            plt.colorbar()
-            
-            plt.subplot(1, 3, 2)
-            plt.imshow(avg_heatmap_1, cmap='viridis')
-            plt.title('Class 1 Average')
-            plt.colorbar()
-            
-            plt.subplot(1, 3, 3)
-            plt.imshow(diff_heatmap, cmap='RdBu_r', vmin=-np.max(np.abs(diff_heatmap)), vmax=np.max(np.abs(diff_heatmap)))
-            plt.title('Difference (Class 1 - Class 0)')
-            plt.colorbar()
-            
+
+            # Enhance contrast by stretching to full range (for class averages)
+            avg_heatmap_0_enhanced = avg_heatmap_0.copy()
+            avg_heatmap_1_enhanced = avg_heatmap_1.copy()
+
+            if avg_heatmap_0_enhanced.max() > 0:
+                avg_heatmap_0_enhanced = (avg_heatmap_0_enhanced - avg_heatmap_0_enhanced.min()) / (avg_heatmap_0_enhanced.max() - avg_heatmap_0_enhanced.min())
+            if avg_heatmap_1_enhanced.max() > 0:
+                avg_heatmap_1_enhanced = (avg_heatmap_1_enhanced - avg_heatmap_1_enhanced.min()) / (avg_heatmap_1_enhanced.max() - avg_heatmap_1_enhanced.min())
+
+            diff_heatmap = avg_heatmap_1_enhanced - avg_heatmap_0_enhanced
+
+            # Get image dimensions
+            img_height = avg_heatmap_0.shape[0]
+            img_width = avg_heatmap_0.shape[1]
+
+            # CWT frequency range: 1 kHz to 50 kHz (logarithmic)
+            freq_min_khz = 1
+            freq_max_khz = 50
+            freq_ticks_khz = [1, 2, 4, 8, 16, 32, 50]
+
+            freq_ticks_pos = []
+            for f in freq_ticks_khz:
+                log_pos = (np.log(f) - np.log(freq_min_khz)) / (np.log(freq_max_khz) - np.log(freq_min_khz))
+                pixel_pos = img_height * (1 - log_pos)
+                freq_ticks_pos.append(pixel_pos)
+
+            # Time axis: 0 to 1 ms
+            time_ticks_ms = [0, 0.25, 0.5, 0.75, 1.0]
+
+            # Calculate figure size for half A4 width at 600 dpi
+            # A4 width = 210 mm = 8.27 inches
+            # Half A4 width = 4.135 inches at 600 dpi
+            # Aspect ratio of CWT images: 256/100 = 2.56
+            half_a4_width = 4.135  # inches
+            aspect_ratio = img_height / img_width  # 256/100 = 2.56
+
+            # Each subplot width (3 subplots with small spacing)
+            subplot_width = half_a4_width / 3.3  # ~1.25 inches per subplot
+            subplot_height = subplot_width * aspect_ratio  # ~3.2 inches
+
+            # Total figure size
+            fig_width = half_a4_width
+            fig_height = subplot_height + 0.4  # Add space for labels
+
+            # Font sizes for 600 dpi display
+            title_fontsize = 7
+            label_fontsize = 6
+            tick_fontsize = 5
+
+            # Create difference visualization with frequency and time axes
+            fig, axes = plt.subplots(1, 3, figsize=(fig_width, fig_height))
+
+            # Saturate values above 0.8 for better contrast
+            saturation_threshold = 0.8
+
+            # Class 0 average with saturation
+            im0 = axes[0].imshow(avg_heatmap_0_enhanced, cmap='viridis',
+                                extent=[0, 1, 0, img_height], vmin=0, vmax=saturation_threshold)
+            axes[0].set_title('Class 0 (No Porosity)', fontsize=title_fontsize, fontweight='bold', pad=3)
+            axes[0].set_xlabel('Time (ms)', fontsize=label_fontsize)
+            axes[0].set_ylabel('Frequency (kHz)', fontsize=label_fontsize)
+            axes[0].set_xticks(time_ticks_ms)
+            axes[0].set_yticks(freq_ticks_pos)
+            axes[0].set_yticklabels(freq_ticks_khz[::-1], fontsize=tick_fontsize)  # Reverse order for image coordinates
+            axes[0].tick_params(axis='x', labelsize=tick_fontsize)
+            axes[0].set_aspect('auto')
+            axes[0].grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
+
+            # Class 1 average with saturation
+            im1 = axes[1].imshow(avg_heatmap_1_enhanced, cmap='viridis',
+                                extent=[0, 1, 0, img_height], vmin=0, vmax=saturation_threshold)
+            axes[1].set_title('Class 1 (Porosity)', fontsize=title_fontsize, fontweight='bold', pad=3)
+            axes[1].set_xlabel('Time (ms)', fontsize=label_fontsize)
+            axes[1].set_ylabel('Frequency (kHz)', fontsize=label_fontsize)
+            axes[1].set_xticks(time_ticks_ms)
+            axes[1].set_yticks(freq_ticks_pos)
+            axes[1].set_yticklabels(freq_ticks_khz[::-1], fontsize=tick_fontsize)  # Reverse order for image coordinates
+            axes[1].tick_params(axis='x', labelsize=tick_fontsize)
+            axes[1].set_aspect('auto')
+            axes[1].grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
+
+            # Shared colorbar for class 0 and 1 with extend arrow
+            # Position: right of axes[1]
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+            divider = make_axes_locatable(axes[1])
+            cax = divider.append_axes("right", size="5%", pad=0.03)
+            cbar_shared = plt.colorbar(im1, cax=cax, extend='max')
+            cbar_shared.set_label('Activation', fontsize=label_fontsize)
+            cbar_shared.ax.tick_params(labelsize=tick_fontsize)
+
+            # Difference with separate colorbar
+            max_abs_diff = np.max(np.abs(diff_heatmap))
+            im_diff = axes[2].imshow(diff_heatmap, cmap='RdBu_r',
+                                    vmin=-max_abs_diff, vmax=max_abs_diff,
+                                    extent=[0, 1, 0, img_height])
+            axes[2].set_title('Difference (1 - 0)', fontsize=title_fontsize, fontweight='bold', pad=3)
+            axes[2].set_xlabel('Time (ms)', fontsize=label_fontsize)
+            axes[2].set_ylabel('Frequency (kHz)', fontsize=label_fontsize)
+            axes[2].set_xticks(time_ticks_ms)
+            axes[2].set_yticks(freq_ticks_pos)
+            axes[2].set_yticklabels(freq_ticks_khz[::-1], fontsize=tick_fontsize)  # Reverse order for image coordinates
+            axes[2].tick_params(axis='x', labelsize=tick_fontsize)
+            axes[2].set_aspect('auto')
+            axes[2].grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
+
+            # Colorbar for difference
+            divider_diff = make_axes_locatable(axes[2])
+            cax_diff = divider_diff.append_axes("right", size="5%", pad=0.03)
+            cbar_diff = plt.colorbar(im_diff, cax=cax_diff)
+            cbar_diff.set_label('Difference', fontsize=label_fontsize)
+            cbar_diff.ax.tick_params(labelsize=tick_fontsize)
+
             plt.tight_layout()
-            plt.savefig(summary_dir / 'class_difference_analysis.png', dpi=300, bbox_inches='tight')
+            plt.savefig(summary_dir / 'class_difference_analysis.png', dpi=600, bbox_inches='tight')
             plt.close()
         
         print(f"   Grad-CAM images saved to: {gradcam_dir}")
@@ -1037,50 +1189,251 @@ class FinalModelTrainer:
             print(f"Warning: Could not generate Grad-CAM for image: {e}")
             return None
 
-    def _save_gradcam_image(self, original_img, heatmap, filepath, title=None):
-        """Save Grad-CAM visualization combining original image and heatmap."""
+    def _save_gradcam_image(self, original_img, heatmap, filepath, title=None, enhance_contrast=False):
+        """Save Grad-CAM visualization combining original image and heatmap with frequency axis.
+
+        Args:
+            original_img: Original CWT image
+            heatmap: Grad-CAM heatmap
+            filepath: Output file path
+            title: Optional title for the figure
+            enhance_contrast: If True, enhance contrast by stretching values to full range
+        """
         import matplotlib.pyplot as plt
         import cv2
-        
+
         try:
             # Prepare original image for display
             if len(original_img.shape) == 3 and original_img.shape[-1] == 1:
                 display_img = original_img.squeeze()
             else:
                 display_img = original_img
-            
+
+            # Apply optional contrast enhancement
+            heatmap_processed = heatmap.copy()
+
+            # Enhance contrast if requested (for class averages)
+            if enhance_contrast and heatmap_processed.max() > 0:
+                # Stretch values to full 0-1 range
+                heatmap_processed = (heatmap_processed - heatmap_processed.min()) / (heatmap_processed.max() - heatmap_processed.min())
+
             # Resize heatmap to match image dimensions
-            heatmap_resized = cv2.resize(heatmap, (display_img.shape[1], display_img.shape[0]))
-            
-            # Create visualization
-            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-            
-            # Original image
-            axes[0].imshow(display_img, cmap='gray')
-            axes[0].set_title('Original Image')
-            axes[0].axis('off')
-            
-            # Heatmap
-            im1 = axes[1].imshow(heatmap_resized, cmap='viridis')
+            heatmap_resized = cv2.resize(heatmap_processed, (display_img.shape[1], display_img.shape[0]))
+
+            # Get image dimensions
+            img_height = display_img.shape[0]
+            img_width = display_img.shape[1]
+
+            # CWT frequency range: 1 kHz to 50 kHz (logarithmic)
+            # Create logarithmic frequency labels
+            freq_min_khz = 1    # 1 kHz
+            freq_max_khz = 50   # 50 kHz
+
+            # Logarithmic tick positions (powers of 2: 1, 2, 4, 8, 16, 32, 50)
+            freq_ticks_khz = [1, 2, 4, 8, 16, 32, 50]
+
+            # Convert to pixel positions (inverted - high freq at top)
+            # Frequency increases from bottom to top, so we need to invert
+            import numpy as np
+            freq_ticks_pos = []
+            for f in freq_ticks_khz:
+                # Logarithmic mapping: log scale from 1 to 50
+                log_pos = (np.log(f) - np.log(freq_min_khz)) / (np.log(freq_max_khz) - np.log(freq_min_khz))
+                # Invert (0 at top, 1 at bottom for image coordinates)
+                pixel_pos = img_height * (1 - log_pos)
+                freq_ticks_pos.append(pixel_pos)
+
+            # Time axis: 0 to 1 ms
+            # Create time tick positions and labels
+            time_ticks_ms = [0, 0.25, 0.5, 0.75, 1.0]
+            time_ticks_pos = [t * img_width for t in time_ticks_ms]
+
+            # Calculate figure size to maintain aspect ratio
+            # Image is img_width x img_height (100 x 256)
+            # Each subplot should maintain this aspect ratio
+            aspect_ratio = img_height / img_width  # 256/100 = 2.56
+            subplot_width = 3.5  # Width per subplot in inches
+            subplot_height = subplot_width * aspect_ratio
+            total_width = subplot_width * 3 + 2  # 3 subplots plus spacing
+
+            # Create visualization with narrower figure
+            fig, axes = plt.subplots(1, 3, figsize=(total_width, subplot_height + 1))
+
+            # Original image with frequency and time axes
+            axes[0].imshow(display_img, cmap='gray', extent=[0, 1, 0, img_height])
+            axes[0].set_title('Original CWT Image')
+            axes[0].set_xlabel('Time (ms)')
+            axes[0].set_ylabel('Frequency (kHz)')
+            axes[0].set_xticks(time_ticks_ms)
+            axes[0].set_yticks(freq_ticks_pos)
+            axes[0].set_yticklabels(freq_ticks_khz[::-1])  # Reverse order for image coordinates
+            axes[0].set_aspect('auto')
+            axes[0].grid(True, alpha=0.3, linestyle='--')
+
+            # Heatmap with frequency and time axes
+            im1 = axes[1].imshow(heatmap_resized, cmap='viridis', extent=[0, 1, 0, img_height])
             axes[1].set_title('Grad-CAM Heatmap')
-            axes[1].axis('off')
-            plt.colorbar(im1, ax=axes[1])
-            
-            # Overlay
-            axes[2].imshow(display_img, cmap='gray', alpha=0.7)
-            axes[2].imshow(heatmap_resized, cmap='viridis', alpha=0.3)
+            axes[1].set_xlabel('Time (ms)')
+            axes[1].set_ylabel('Frequency (kHz)')
+            axes[1].set_xticks(time_ticks_ms)
+            axes[1].set_yticks(freq_ticks_pos)
+            axes[1].set_yticklabels(freq_ticks_khz[::-1])  # Reverse order for image coordinates
+            axes[1].set_aspect('auto')
+            axes[1].grid(True, alpha=0.3, linestyle='--')
+            plt.colorbar(im1, ax=axes[1], label='Activation')
+
+            # Overlay with frequency and time axes
+            axes[2].imshow(display_img, cmap='gray', alpha=0.7, extent=[0, 1, 0, img_height])
+            axes[2].imshow(heatmap_resized, cmap='viridis', alpha=0.3, extent=[0, 1, 0, img_height])
             axes[2].set_title('Overlay')
-            axes[2].axis('off')
-            
+            axes[2].set_xlabel('Time (ms)')
+            axes[2].set_ylabel('Frequency (kHz)')
+            axes[2].set_xticks(time_ticks_ms)
+            axes[2].set_yticks(freq_ticks_pos)
+            axes[2].set_yticklabels(freq_ticks_khz[::-1])  # Reverse order for image coordinates
+            axes[2].set_aspect('auto')
+            axes[2].grid(True, alpha=0.3, linestyle='--')
+
             if title:
-                fig.suptitle(title, fontsize=12)
-            
+                fig.suptitle(title, fontsize=12, y=1.02)
+
             plt.tight_layout()
             plt.savefig(filepath, dpi=150, bbox_inches='tight')
             plt.close()
             
         except Exception as e:
             print(f"Warning: Could not save Grad-CAM image to {filepath}: {e}")
+
+    def _generate_track_predictions_viz(self, test_files, y_true, y_pred, output_dir, version):
+        """
+        Generate track-level prediction visualizations.
+
+        Creates one figure per track showing:
+        - Top row: actual labels (colored boxes, 1=porosity, 0=no porosity)
+        - Bottom row: predicted labels (colored boxes)
+        Each column represents a time window.
+
+        Args:
+            test_files: List of test file paths
+            y_true: True labels
+            y_pred: Predicted labels
+            output_dir: Output directory path
+            version: Version string
+
+        Returns:
+            dict: Summary of generated visualizations
+        """
+        import re
+        from collections import defaultdict
+
+        print(f"\n📊 Generating track-level prediction visualizations...")
+
+        # Create output directory for track visualizations
+        track_viz_dir = Path(output_dir) / 'track_predictions'
+        track_viz_dir.mkdir(exist_ok=True, parents=True)
+
+        # Extract track IDs from filenames (format: TRACKID_layerinfo_timewindow.png)
+        # Example: 0105_01_0.2-1.2ms.png -> track_id = "0105_01"
+        track_data = defaultdict(lambda: {'files': [], 'true_labels': [], 'pred_labels': [], 'windows': []})
+
+        for i, filepath in enumerate(test_files):
+            filename = Path(filepath).name
+
+            # Extract track ID (first two underscore-separated parts)
+            parts = filename.split('_')
+            if len(parts) >= 2:
+                track_id = f"{parts[0]}_{parts[1]}"
+
+                # Extract time window info for sorting
+                window_match = re.search(r'(\d+\.\d+)-(\d+\.\d+)ms', filename)
+                if window_match:
+                    window_start = float(window_match.group(1))
+                else:
+                    window_start = i  # Fallback to index
+
+                track_data[track_id]['files'].append(filename)
+                track_data[track_id]['true_labels'].append(y_true[i])
+                track_data[track_id]['pred_labels'].append(y_pred[i])
+                track_data[track_id]['windows'].append(window_start)
+
+        print(f"Found {len(track_data)} unique tracks")
+
+        # Generate visualization for each track
+        figures_generated = []
+        for track_id, data in sorted(track_data.items()):
+            try:
+                # Sort by window start time
+                sorted_indices = np.argsort(data['windows'])
+                true_labels = np.array(data['true_labels'])[sorted_indices]
+                pred_labels = np.array(data['pred_labels'])[sorted_indices]
+                windows = np.array(data['windows'])[sorted_indices]
+
+                n_windows = len(true_labels)
+
+                # Create figure
+                fig, (ax_true, ax_pred) = plt.subplots(2, 1, figsize=(max(12, n_windows * 0.3), 3))
+
+                # Color mapping: 0=blue (no porosity), 1=red (porosity)
+                colors = {0: '#3498db', 1: '#e74c3c'}  # blue, red
+
+                # Plot actual labels (top row)
+                for i in range(n_windows):
+                    color = colors[true_labels[i]]
+                    ax_true.add_patch(plt.Rectangle((i, 0), 1, 1, facecolor=color, edgecolor='black', linewidth=0.5))
+
+                ax_true.set_xlim(0, n_windows)
+                ax_true.set_ylim(0, 1)
+                ax_true.set_ylabel('Actual', fontsize=10, fontweight='bold')
+                ax_true.set_yticks([])
+                ax_true.set_xticks([])
+                ax_true.set_title(f'Track: {track_id} - Prediction Comparison', fontsize=12, fontweight='bold')
+
+                # Plot predicted labels (bottom row)
+                for i in range(n_windows):
+                    color = colors[pred_labels[i]]
+                    ax_pred.add_patch(plt.Rectangle((i, 0), 1, 1, facecolor=color, edgecolor='black', linewidth=0.5))
+
+                ax_pred.set_xlim(0, n_windows)
+                ax_pred.set_ylim(0, 1)
+                ax_pred.set_ylabel('Predicted', fontsize=10, fontweight='bold')
+                ax_pred.set_yticks([])
+                ax_pred.set_xlabel('Time Window Index', fontsize=10)
+                ax_pred.set_xticks(np.arange(0.5, n_windows, 1))
+                ax_pred.set_xticklabels(range(n_windows), fontsize=8)
+
+                # Add legend
+                from matplotlib.patches import Patch
+                legend_elements = [
+                    Patch(facecolor=colors[0], edgecolor='black', label='No Porosity (0)'),
+                    Patch(facecolor=colors[1], edgecolor='black', label='Porosity (1)')
+                ]
+                fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98), fontsize=9)
+
+                # Add accuracy info
+                accuracy = np.mean(true_labels == pred_labels)
+                fig.text(0.02, 0.98, f'Accuracy: {accuracy:.1%}', fontsize=9,
+                        verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+                plt.tight_layout()
+
+                # Save figure
+                output_file = track_viz_dir / f'track_{track_id}_predictions.png'
+                plt.savefig(output_file, dpi=150, bbox_inches='tight')
+                plt.close()
+
+                figures_generated.append(str(output_file))
+
+            except Exception as e:
+                print(f"Warning: Could not generate visualization for track {track_id}: {e}")
+                continue
+
+        print(f"✅ Generated {len(figures_generated)} track prediction visualizations")
+
+        return {
+            'total_tracks': len(track_data),
+            'figures_generated': len(figures_generated),
+            'output_directory': str(track_viz_dir)
+        }
 
     def train_final_model(self, config, source_version):
         """Train final model with test set holdout and evaluation."""
@@ -1120,12 +1473,28 @@ class FinalModelTrainer:
             output_base_dir = PD_OUTPUTS_DIR
             
         output_version_dir = str(output_base_dir / version_str)
-        
+
+        # Copy dataset config for traceability if using dataset variant
+        if self.dataset_variant:
+            try:
+                import shutil
+                dataset_info = load_dataset_variant_info(self.dataset_variant)
+                dataset_config_src = dataset_info['dataset_dir'] / 'dataset_config.json'
+                dataset_config_dst = Path(output_version_dir) / 'dataset_config.json'
+                Path(output_version_dir).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(dataset_config_src, dataset_config_dst)
+                if self.verbose:
+                    print(f"Copied dataset config to: {dataset_config_dst}")
+            except Exception as e:
+                print(f"Warning: Could not copy dataset config: {e}")
+
         try:
-            # Use unified holdout logic for both PD and CWT classifiers
+            # Handle test holdout for random sampling mode
             test_data_file, exclusion_file = self.holdout_test_set(config, output_version_dir)
-            if test_data_file is None:  # User cancelled due to memory warning
-                return False
+            if self.dataset_variant:
+                # Dataset variant mode - no exclusion file needed (classifier handles it)
+                test_data_file = None
+                exclusion_file = None
         except Exception as e:
             self.logger.error(f"Failed to create test set holdout: {e}", exc_info=True)
             print(f"❌ Failed to create test set holdout: {e}")
@@ -1151,9 +1520,14 @@ class FinalModelTrainer:
             # For PD classifiers, default to k_folds=1 for final training
             cmd.extend(['--k_folds', '1'])
         # For CWT classifiers without override, use original k_folds from config (keep 5-fold CV)
-        
-        # Add exclusion logic for both PD and CWT classifiers
-        cmd.extend(['--exclude_files', str(exclusion_file)])  # Skip test set files
+
+        # Add test exclusion logic
+        if self.dataset_variant:
+            # Pass dataset variant - classifier will auto-load test exclusion
+            cmd.extend(['--dataset_variant', str(self.dataset_variant)])
+        elif exclusion_file:
+            # Random sampling mode - pass explicit exclusion file
+            cmd.extend(['--exclude_files', str(exclusion_file)])
         
         # Add verbosity if requested
         if self.verbose:
@@ -1189,13 +1563,17 @@ class FinalModelTrainer:
             return False
         
         print(f"\n✅ Model training completed successfully!")
-        
-        # Step 3: Find the trained model and run test evaluation (only for PD classifiers)
-        if self.classifier_type == 'pd_signal' and test_data_file is not None:
+
+        # Step 3: Run test evaluation if test data available
+        if test_data_file is not None:
+            # Random sampling mode - test data pre-loaded into pickle
             return self.run_test_evaluation(source_version, test_data_file)
+        elif self.dataset_variant:
+            # Dataset variant mode - load test data from CSV
+            return self.run_test_evaluation_from_variant(source_version)
         else:
             print(f"\n✅ Final model training completed successfully!")
-            print(f"Note: Test evaluation not available for {self.classifier_type} classifier type")
+            print(f"Note: No test evaluation configured")
             return True
     
     def run_test_evaluation(self, source_version, test_data_file):
@@ -1265,10 +1643,365 @@ class FinalModelTrainer:
                 traceback.print_exc()
             return False
 
-    def test_latest_model(self):
-        """Test the latest existing model without training."""
+    def run_test_evaluation_from_variant(self, source_version):
+        """Run test evaluation by loading test data from dataset variant CSV."""
         from config import get_next_version_from_log, format_version
-        
+        from tensorflow.keras.models import load_model
+
+        print(f"\n🧪 Running test evaluation from dataset variant...")
+
+        # Get the version that was just created
+        current_version = get_next_version_from_log(classifier_type=self.classifier_type) - 1
+        version_str = format_version(current_version)
+
+        # Use proper output directory based on classifier type
+        if self.classifier_type == 'cwt_image':
+            output_base_dir = CWT_OUTPUTS_DIR
+        else:
+            output_base_dir = PD_OUTPUTS_DIR
+
+        model_dir = output_base_dir / version_str
+
+        # Find the best model file
+        if self.classifier_type == 'cwt_image':
+            model_files = list(model_dir.glob('best_model*.h5'))
+            if not model_files:
+                model_files = list(model_dir.glob('models/*.h5')) + list(model_dir.glob('models/*.keras'))
+        else:
+            model_files = list(model_dir.glob('models/*.h5')) + list(model_dir.glob('models/*.keras'))
+
+        if not model_files:
+            print(f"❌ No trained model found in {model_dir}")
+            return False
+
+        model_file = sorted(model_files)[-1]
+
+        if self.verbose:
+            print(f"Loading trained model: {model_file}")
+
+        try:
+            # Load the trained model
+            model = load_model(model_file)
+
+            # Load dataset variant info
+            dataset_info = load_dataset_variant_info(self.dataset_variant)
+            test_csv = dataset_info['dataset_dir'] / 'test.csv'
+
+            if not test_csv.exists():
+                print(f"❌ Test CSV not found: {test_csv}")
+                return False
+
+            # Read test CSV
+            df_test = pd.read_csv(test_csv, encoding='utf-8')
+
+            # Get config info for loading images
+            dataset_config_path = model_dir / 'dataset_config.json'
+            if dataset_config_path.exists():
+                import json
+                with open(dataset_config_path, 'r', encoding='utf-8') as f:
+                    dataset_config = json.load(f)
+                data_dir = dataset_config.get('data_dir')
+            else:
+                # Fallback - use data_dir from dataset variant
+                data_dir = dataset_info['config'].get('data_dir')
+                if not data_dir:
+                    print(f"❌ Cannot determine data directory")
+                    return False
+
+            print(f"Loading test images from: {data_dir}")
+
+            # Build file paths and load images
+            test_files = []
+            test_labels = []
+
+            for _, row in df_test.iterrows():
+                filename = row['filename']
+                label = int(row['has_porosity'])
+                file_path = Path(data_dir) / filename
+
+                if file_path.exists():
+                    test_files.append(str(file_path))
+                    test_labels.append(label)
+
+            if not test_files:
+                print(f"❌ No test files found matching CSV paths")
+                return False
+
+            print(f"Found {len(test_files)} test images")
+
+            # Load images based on classifier type
+            test_files_arr = np.array(test_files)
+            test_labels_arr = np.array(test_labels)
+
+            if self.classifier_type == 'cwt_image':
+                # Get image dimensions from model
+                img_shape = model.input_shape
+                img_height, img_width = img_shape[1], img_shape[2]
+                img_channels = img_shape[3] if len(img_shape) > 3 else 1
+                X_test, y_test_filtered, test_files_filtered = self._load_cwt_test_images(
+                    test_files_arr, test_labels_arr, img_width, img_height, img_channels
+                )
+            else:
+                # PD signal
+                img_width = model.input_shape[0][1]  # First input branch
+                X_test, y_test_filtered, test_files_filtered = self._load_pd_test_images(
+                    test_files_arr, test_labels_arr, img_width
+                )
+
+            # Create test data dict for evaluation (include filenames for track visualization)
+            test_data = {
+                'X_test': X_test,
+                'y_test': np.array(y_test_filtered),
+                'test_files': test_files_filtered,  # Use filtered files that match X_test/y_test order
+                'classifier_type': self.classifier_type,
+                'dataset_variant': self.dataset_variant
+            }
+
+            # Run evaluation
+            evaluation_results = self.evaluate_with_threshold_optimization(
+                model, test_data, model_dir, version_str
+            )
+
+            print(f"✅ Test evaluation completed!")
+            print(f"   Best threshold: {evaluation_results['best_threshold']:.3f}")
+            print(f"   Test accuracy: {evaluation_results['best_metrics']['accuracy']:.4f}")
+            print(f"   Test F1-score: {evaluation_results['best_metrics']['f1_score']:.4f}")
+
+            return True
+
+        except Exception as e:
+            print(f"❌ Test evaluation failed: {e}")
+            if self.verbose:
+                import traceback
+                traceback.print_exc()
+            return False
+
+    def _generate_pv_map_for_test_set(self, test_files, output_dir, version):
+        """
+        Generate P-V map showing the test set track locations.
+
+        Args:
+            test_files: List of test file paths
+            output_dir: Output directory for saving the figure
+            version: Version string for naming the output file
+
+        Returns:
+            Dictionary with P-V map generation results
+        """
+        import re
+        from pathlib import Path
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from tools import generate_pv_map
+
+        print(f"\n🗺️  Generating P-V map for test set...")
+
+        # Extract unique track IDs from test files
+        test_trackids = set()
+        for filepath in test_files:
+            filename = Path(filepath).name
+            # Extract track ID from filename (e.g., "0105_01_0.2-1.2ms.png" -> "0105_01")
+            parts = filename.split('_')
+            if len(parts) >= 2:
+                track_id = f"{parts[0]}_{parts[1]}"
+                test_trackids.add(track_id)
+
+        test_trackids = sorted(list(test_trackids))
+
+        if not test_trackids:
+            print("Warning: Could not extract track IDs from test files")
+            return None
+
+        print(f"   Found {len(test_trackids)} unique tracks in test set")
+
+        # Generate P-V map with test set highlighted
+        output_path = Path(output_dir) / f'pv_map_test_set_{version}.png'
+
+        try:
+            # Get all track IDs from the same dataset for background
+            # (AlSi10Mg, CW, Layer 1, powder)
+            from tools import get_logbook
+            logbook = get_logbook()
+            AlSi10Mg = logbook['Substrate material'] == 'AlSi10Mg'
+            L1 = logbook['Layer'] == 1
+            cw = logbook['Point jump delay [us]'] == 0
+            powder = logbook['Powder material'] != 'None'
+
+            background_trackids = logbook[AlSi10Mg & L1 & cw & powder]['trackid'].unique().tolist()
+
+            # Generate P-V map
+            fig, ax = generate_pv_map(
+                trackids=background_trackids,  # All possible tracks (shown in grey)
+                output_path=output_path,
+                highlight_trackids=test_trackids,  # Test set (highlighted with red ring)
+                figsize=(4, 3.2),
+                dpi=300,
+                font_size=8,
+                show_background_points=True,
+                show_led_contours=False
+            )
+
+            results = {
+                'unique_tracks': len(test_trackids),
+                'track_ids': test_trackids,
+                'output_file': str(output_path)
+            }
+
+            print(f"   P-V map saved to: {output_path}")
+
+            return results
+
+        except Exception as e:
+            print(f"Warning: Could not generate P-V map: {e}")
+            if self.verbose:
+                import traceback
+                traceback.print_exc()
+            return None
+
+    def _select_best_fold_model(self, version_dir, fold_models):
+        """
+        Select the best fold model based on validation F1-score from experiment summary.
+
+        Args:
+            version_dir: Path to version directory
+            fold_models: List of fold model file paths
+
+        Returns:
+            Path to best fold model, or None if couldn't determine
+        """
+        import json
+
+        try:
+            # Try to load experiment summary JSON
+            summary_json = version_dir / 'logs' / f'experiment_summary_{version_dir.name}.json'
+
+            if not summary_json.exists():
+                print(f"   No experiment summary found at {summary_json}")
+                return None
+
+            with open(summary_json, 'r') as f:
+                summary = json.load(f)
+
+            # Extract fold F1 scores from results
+            if 'results' not in summary or 'fold_f1_scores' not in summary['results']:
+                print("   No fold_f1_scores in experiment summary")
+                return None
+
+            fold_f1_scores = summary['results']['fold_f1_scores']
+
+            # Find fold with highest F1 score (folds are 1-indexed)
+            best_fold_idx = None
+            best_f1 = -1
+
+            for idx, f1_score in enumerate(fold_f1_scores):
+                if f1_score > best_f1:
+                    best_f1 = f1_score
+                    best_fold_idx = idx + 1  # Convert to 1-indexed
+
+            if best_fold_idx is None:
+                print("   Could not find F1 scores in fold results")
+                return None
+
+            # Find the model file for the best fold
+            best_model_pattern = f'best_model_fold_{best_fold_idx}'
+            for model_path in fold_models:
+                if best_model_pattern in model_path.name:
+                    print(f"✅ Selected best performing fold: {best_fold_idx} (F1={best_f1:.4f})")
+                    print(f"   Using model: {model_path.name}")
+                    return model_path
+
+            print(f"   Could not find model file for best fold {best_fold_idx}")
+            return None
+
+        except Exception as e:
+            print(f"   Error selecting best fold: {e}")
+            if self.verbose:
+                import traceback
+                traceback.print_exc()
+            return None
+
+    def eval_latest_model(self, version_num=None):
+        """
+        Evaluate an existing model using dataset variant test set.
+        Runs full evaluation with threshold optimization and Grad-CAM.
+
+        Args:
+            version_num (int, optional): Specific version number to evaluate.
+                                        If None, uses latest version.
+        """
+        from config import format_version
+
+        # Use proper output directory based on classifier type
+        if self.classifier_type == 'cwt_image':
+            output_base_dir = CWT_OUTPUTS_DIR
+        else:
+            output_base_dir = PD_OUTPUTS_DIR
+
+        if version_num is not None:
+            # Use specific version
+            version_str = format_version(version_num)
+            version_dir = output_base_dir / version_str
+
+            if not version_dir.exists():
+                print(f"❌ Model version {version_str} not found in {output_base_dir}")
+                return False
+
+            print(f"Using specified model version: {version_str}")
+        else:
+            # Find the latest version directory
+            print(f"\n🔍 Finding latest trained model...")
+            version_dirs = [d for d in output_base_dir.iterdir() if d.is_dir() and d.name.startswith('v')]
+            if not version_dirs:
+                print(f"❌ No model versions found in {output_base_dir}")
+                return False
+
+            # Sort by version number and get the latest
+            version_dir = sorted(version_dirs, key=lambda x: int(x.name[1:]))[-1]
+            version_str = version_dir.name
+            print(f"Found latest model version: {version_str}")
+
+        # Find the final model file (or best fold model as fallback)
+        model_files = list(version_dir.glob('models/final_model*.h5')) + \
+                     list(version_dir.glob('models/final_model*.keras'))
+
+        if not model_files:
+            # No final model - try to find best fold model
+            print(f"ℹ️  No final retrained model found, looking for k-fold models...")
+            fold_models = list(version_dir.glob('models/best_model_fold_*.h5')) + \
+                         list(version_dir.glob('models/best_model_fold_*.keras'))
+
+            if not fold_models:
+                print(f"❌ No models found in {version_dir}/models/")
+                print("   Tried: final_model*.h5/keras and best_model_fold_*.h5/keras")
+                return False
+
+            # Select the best fold based on validation performance from experiment summary
+            best_fold_model = self._select_best_fold_model(version_dir, fold_models)
+            if best_fold_model:
+                model_file = best_fold_model
+            else:
+                # Fallback to alphabetically first if can't determine best
+                model_file = sorted(fold_models)[0]
+                print(f"⚠️  Could not determine best fold from results, using: {model_file.name}")
+
+            print(f"⚠️  Note: This is a k-fold CV model, not the final retrained model")
+        else:
+            # Use the final retrained model
+            model_file = sorted(model_files)[-1]
+            print(f"Using final model: {model_file.name}")
+
+        # Run test evaluation from dataset variant
+        if self.classifier_type == 'cwt_image':
+            return self.run_test_evaluation_from_variant(version_str)
+        else:
+            # For PD signal classifier, would need similar implementation
+            print("❌ Evaluation mode not yet implemented for PD signal classifier")
+            return False
+
+    def test_latest_model(self):
+        """Test the latest existing model without training (visualization regeneration only)."""
+        from config import get_next_version_from_log, format_version
+
         print(f"\n🔍 Finding latest trained model...")
         
         # Use proper output directory based on classifier type
@@ -1350,36 +2083,59 @@ class FinalModelTrainer:
 
 def main():
     parser = argparse.ArgumentParser(description='Train final production model using best hyperparameters')
-    parser.add_argument('--version', type=int, 
-                       help='Version number to use (if not specified, uses best config)')
+    parser.add_argument('--version', type=int,
+                       help='Version number to use (for training: uses this config; for --eval_only: evaluates this model)')
     parser.add_argument('--classifier_type', type=str, choices=['pd_signal', 'cwt_image'], 
                        default='pd_signal', help='Type of classifier to train (default: pd_signal)')
     parser.add_argument('--verbose', action='store_true',
                        help='Show detailed training output')
-    parser.add_argument('--test', action='store_true',
-                       help='Skip training and just test the latest model')
+    parser.add_argument('--test_vis', action='store_true',
+                       help='Regenerate visualizations from existing test data (old --test behavior)')
+    parser.add_argument('--eval_only', action='store_true',
+                       help='Skip training and run evaluation on latest model using dataset variant test set')
     parser.add_argument('--k_folds', type=int,
                        help='Override number of k-folds for cross-validation')
-    parser.add_argument('--test_holdout_file', type=str,
-                       help='Path to preexisting test holdout file with trackids (instead of random sampling)')
-    
+    parser.add_argument('--dataset_variant', type=str,
+                       help='Dataset variant name to use for test holdout (instead of random sampling)')
+
     args = parser.parse_args()
-    
+
     # Initialize trainer
-    trainer = FinalModelTrainer(classifier_type=args.classifier_type, verbose=args.verbose, k_folds_override=args.k_folds, test_holdout_file=args.test_holdout_file)
+    trainer = FinalModelTrainer(classifier_type=args.classifier_type, verbose=args.verbose, k_folds_override=args.k_folds, dataset_variant=args.dataset_variant)
     
     try:
-        if args.test:
-            # Test mode: skip training and just test the latest model
-            print("🧪 Test mode: Skipping training and testing latest model...")
+        if args.test_vis:
+            # Visualization regeneration mode: regenerate visualizations from existing test_data.pkl
+            print("🧪 Visualization mode: Regenerating visualizations from existing test data...")
             success = trainer.test_latest_model()
-            
+
             if success:
-                print("\n🎉 Model testing completed successfully!")
+                print("\n🎉 Visualization regeneration completed successfully!")
                 sys.exit(0)
             else:
-                print("\n❌ Model testing failed!")
+                print("\n❌ Visualization regeneration failed!")
                 sys.exit(1)
+
+        elif args.eval_only:
+            # Evaluation-only mode: run full evaluation on model using dataset variant
+            if not args.dataset_variant:
+                print("❌ --eval_only requires --dataset_variant to be specified")
+                sys.exit(1)
+
+            if args.version:
+                print(f"🧪 Evaluation mode: Running test evaluation on version {args.version}...")
+            else:
+                print("🧪 Evaluation mode: Running test evaluation on latest model...")
+
+            success = trainer.eval_latest_model(version_num=args.version)
+
+            if success:
+                print("\n🎉 Model evaluation completed successfully!")
+                sys.exit(0)
+            else:
+                print("\n❌ Model evaluation failed!")
+                sys.exit(1)
+
         else:
             # Training mode: normal operation
             if args.version is None:
