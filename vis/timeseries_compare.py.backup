@@ -1,0 +1,3341 @@
+#!/usr/bin/env python
+"""
+Enhanced Time Series Comparison Script
+
+This script provides comprehensive time series analysis and comparison capabilities
+for an arbitrary number of curves stored in HDF5 datasets. It includes advanced
+signal processing options and statistical analysis.
+
+Author: AI Assistant
+Version: 2.1
+Based on: timeseries_compare.py
+"""
+
+import os
+import sys
+import h5py
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional, Union
+from dataclasses import dataclass
+from scipy import signal
+from scipy.stats import pearsonr, spearmanr
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+import warnings
+
+# Try to import statsmodels for cross-correlation function
+try:
+    from statsmodels.tsa.stattools import ccf
+    STATSMODELS_AVAILABLE = True
+except ImportError:
+    STATSMODELS_AVAILABLE = False
+    print("Warning: statsmodels not available. Cross-correlation analysis will be limited.")
+
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+from tools import get_paths
+
+# Suppress warnings for cleaner output
+warnings.filterwarnings('ignore')
+
+# Set plotting style
+plt.style.use('seaborn-v0_8')
+sns.set_palette("magma")
+
+@dataclass
+class DatasetConfig:
+    """Configuration for dataset groups and names in HDF5 file"""
+    group: str
+    name: str
+    label: str
+    color: Optional[str] = None
+    linestyle: Optional[str] = None
+    # Time vector configuration
+    time_group: Optional[str] = None  # Group containing time vector (can be same as data group)
+    time_name: Optional[str] = None   # Name of time vector dataset
+    sampling_rate: Optional[float] = None  # If no time vector, use this sampling rate
+    time_units: str = 's'  # Units for time vector ('s', 'ms', 'us', etc.)
+    # Phase alignment
+    time_shift: float = 0.0  # Time shift in seconds to align with other series (positive = delay, negative = advance)
+
+@dataclass
+class ProcessingConfig:
+    """Configuration for signal processing options"""
+    # Reference sampling rate for time-based window calculations
+    reference_sampling_rate: float = 100000.0  # Hz (100 kHz - typical AMPM rate)
+
+    # Filtering options
+    apply_savgol: bool = False
+    savgol_window: int = 51  # Will be scaled based on sampling rate
+    savgol_polyorder: int = 3
+    
+    # Low-pass filtering
+    apply_lowpass: bool = False
+    lowpass_cutoff: float = 0.1  # Normalized frequency (0-1)
+    lowpass_order: int = 4
+    
+    # High-pass filtering
+    apply_highpass: bool = False
+    highpass_cutoff: float = 0.01  # Normalized frequency (0-1)
+    highpass_order: int = 4
+    
+    # Bandpass filtering
+    apply_bandpass: bool = False
+    bandpass_low: float = 0.01
+    bandpass_high: float = 0.1
+    bandpass_order: int = 4
+    
+    # Smoothing
+    apply_smoothing: bool = False
+    smoothing_window: int = 3  # Will be scaled based on sampling rate
+    smoothing_method: str = 'uniform'  # 'gaussian', 'uniform', 'exponential'
+    
+    # Detrending
+    apply_detrend: bool = False
+    detrend_method: str = 'linear'  # 'linear', 'constant'
+    
+    # Normalization
+    apply_normalization: bool = False
+    normalization_method: str = 'standard'  # 'standard', 'minmax', 'robust'
+    
+    # Resampling
+    apply_resampling: bool = False
+    target_samples: int = 1000
+    resampling_method: str = 'linear'  # 'linear', 'cubic', 'nearest'
+
+    # Outlier removal
+    remove_outliers: bool = False
+    outlier_method: str = 'iqr'  # 'iqr', 'zscore', 'mad' (median absolute deviation)
+    outlier_threshold: float = 3.0  # IQR multiplier (1.5=mild, 3.0=extreme) or z-score threshold
+    outlier_window: int = 50  # Will be scaled based on sampling rate (0=global)
+    handle_nans: bool = True  # Handle NaN values by default
+
+class TimeSeriesProcessor:
+    """Advanced time series processing and analysis class"""
+    
+    def __init__(self, processing_config: ProcessingConfig):
+        self.config = processing_config
+
+    def _scale_window_to_sampling_rate(self, window_samples: int, sampling_rate: float) -> int:
+        """
+        Scale window size to account for different sampling rates.
+
+        Ensures that filters have the same temporal characteristics across signals
+        with different sampling rates.
+
+        Args:
+            window_samples: Window size at reference sampling rate
+            sampling_rate: Actual sampling rate of the signal
+
+        Returns:
+            Scaled window size (odd number for Savgol compatibility)
+        """
+        scaling_factor = sampling_rate / self.config.reference_sampling_rate
+        scaled_window = int(window_samples * scaling_factor)
+
+        # Ensure odd number for Savgol filter
+        if scaled_window % 2 == 0:
+            scaled_window += 1
+
+        # Ensure minimum window size
+        scaled_window = max(3, scaled_window)
+
+        return scaled_window
+
+    def process_signal(self, data: np.ndarray, sampling_rate: float = 1.0) -> np.ndarray:
+        """
+        Apply comprehensive signal processing pipeline
+        
+        Args:
+            data: Input signal array
+            sampling_rate: Sampling rate of the signal
+            
+        Returns:
+            Processed signal array
+        """
+        processed_data = data.copy()
+
+        # Remove NaN values
+        if self.config.handle_nans:
+            processed_data = self._handle_nan_values(processed_data)
+
+        # Remove statistical outliers (measurement errors)
+        if self.config.remove_outliers:
+            processed_data = self._remove_outliers(processed_data, sampling_rate)
+
+        # Apply detrending
+        if self.config.apply_detrend:
+            processed_data = self._apply_detrending(processed_data)
+        
+        # Apply filtering
+        if self.config.apply_savgol:
+            processed_data = self._apply_savgol_filter(processed_data, sampling_rate)
+            
+        if self.config.apply_lowpass:
+            processed_data = self._apply_lowpass_filter(processed_data, sampling_rate)
+            
+        if self.config.apply_highpass:
+            processed_data = self._apply_highpass_filter(processed_data, sampling_rate)
+            
+        if self.config.apply_bandpass:
+            processed_data = self._apply_bandpass_filter(processed_data, sampling_rate)
+        
+        # Apply smoothing
+        if self.config.apply_smoothing:
+            processed_data = self._apply_smoothing(processed_data, sampling_rate)
+        
+        # Apply resampling
+        if self.config.apply_resampling:
+            processed_data = self._apply_resampling(processed_data)
+        
+        # Apply normalization
+        if self.config.apply_normalization:
+            processed_data = self._apply_normalization(processed_data)
+            
+        return processed_data
+    
+    def _handle_nan_values(self, data: np.ndarray) -> np.ndarray:
+        """Handle NaN values using interpolation"""
+        if np.any(np.isnan(data)):
+            mask = ~np.isnan(data)
+            if np.sum(mask) > 0:
+                # Linear interpolation for NaN values
+                indices = np.arange(len(data))
+                data = np.interp(indices, indices[mask], data[mask])
+        return data
+
+    def _remove_outliers(self, data: np.ndarray, sampling_rate: float) -> np.ndarray:
+        """
+        Remove statistical outliers using IQR, Z-score, or MAD methods.
+        Can operate globally or on local windows for time series data.
+
+        Window size is scaled based on sampling rate to ensure consistent
+        temporal characteristics across signals with different sampling rates.
+
+        Args:
+            data: Input signal array
+            sampling_rate: Sampling rate in Hz
+
+        Returns:
+            Signal array with outliers replaced by interpolated values
+        """
+        data_cleaned = data.copy()
+        outlier_mask = np.zeros(len(data), dtype=bool)
+
+        # Global outlier detection
+        if self.config.outlier_window == 0:
+            outlier_mask = self._detect_outliers_global(data)
+
+        # Local (windowed) outlier detection
+        else:
+            # Scale window based on sampling rate
+            window = self._scale_window_to_sampling_rate(self.config.outlier_window, sampling_rate)
+            half_window = window // 2
+
+            for i in range(len(data)):
+                # Define window boundaries
+                start_idx = max(0, i - half_window)
+                end_idx = min(len(data), i + half_window + 1)
+                window_data = data[start_idx:end_idx]
+
+                # Detect outliers within this window
+                local_outliers = self._detect_outliers_global(window_data)
+
+                # Map back to position in window
+                local_i = i - start_idx
+                if local_i < len(local_outliers):
+                    outlier_mask[i] = local_outliers[local_i]
+
+        # Count and report outliers
+        n_outliers = np.sum(outlier_mask)
+        outlier_percentage = 100 * n_outliers / len(data)
+
+        if n_outliers > 0:
+            if self.config.outlier_window == 0:
+                mode_str = "global"
+            else:
+                mode_str = f"local (window={window} samples, {window/sampling_rate*1000:.1f}ms)"
+            print(f"  Outlier removal ({self.config.outlier_method}, {mode_str}, threshold={self.config.outlier_threshold}): "
+                  f"{n_outliers} outliers detected ({outlier_percentage:.2f}%) - interpolating...")
+
+            # Get outlier statistics
+            outlier_values = data[outlier_mask]
+            if len(outlier_values) > 0:
+                print(f"    Outlier range: [{np.min(outlier_values):.4f}, {np.max(outlier_values):.4f}]")
+                print(f"    Signal range: [{np.min(data):.4f}, {np.max(data):.4f}]")
+        else:
+            print(f"  Outlier removal ({self.config.outlier_method}): No outliers detected")
+
+        # Replace outliers with NaN for interpolation
+        data_cleaned[outlier_mask] = np.nan
+
+        # Interpolate the outliers
+        if np.any(np.isnan(data_cleaned)):
+            mask = ~np.isnan(data_cleaned)
+            if np.sum(mask) > 1:
+                indices = np.arange(len(data_cleaned))
+                data_cleaned = np.interp(indices, indices[mask], data_cleaned[mask])
+
+        return data_cleaned
+
+    def _detect_outliers_global(self, data: np.ndarray) -> np.ndarray:
+        """
+        Detect outliers using specified statistical method.
+
+        Args:
+            data: Input signal array
+
+        Returns:
+            Boolean mask where True indicates outlier
+        """
+        method = self.config.outlier_method
+        threshold = self.config.outlier_threshold
+
+        if method == 'iqr':
+            # Interquartile Range method
+            q1 = np.percentile(data, 25)
+            q3 = np.percentile(data, 75)
+            iqr = q3 - q1
+            lower_bound = q1 - threshold * iqr
+            upper_bound = q3 + threshold * iqr
+            outliers = (data < lower_bound) | (data > upper_bound)
+
+        elif method == 'zscore':
+            # Z-score method
+            mean = np.mean(data)
+            std = np.std(data)
+            if std > 0:
+                z_scores = np.abs((data - mean) / std)
+                outliers = z_scores > threshold
+            else:
+                outliers = np.zeros(len(data), dtype=bool)
+
+        elif method == 'mad':
+            # Median Absolute Deviation method
+            median = np.median(data)
+            mad = np.median(np.abs(data - median))
+            if mad > 0:
+                # Modified z-score using MAD
+                modified_z_scores = 0.6745 * (data - median) / mad
+                outliers = np.abs(modified_z_scores) > threshold
+            else:
+                outliers = np.zeros(len(data), dtype=bool)
+
+        else:
+            raise ValueError(f"Unknown outlier detection method: {method}")
+
+        return outliers
+
+    def _apply_detrending(self, data: np.ndarray) -> np.ndarray:
+        """Apply detrending to remove linear or constant trends"""
+        if self.config.detrend_method == 'linear':
+            return signal.detrend(data, type='linear')
+        elif self.config.detrend_method == 'constant':
+            return signal.detrend(data, type='constant')
+        return data
+    
+    def _apply_savgol_filter(self, data: np.ndarray, sampling_rate: float) -> np.ndarray:
+        """
+        Apply Savitzky-Golay filter for smoothing.
+
+        Window size is scaled based on sampling rate to ensure consistent
+        temporal characteristics across signals with different sampling rates.
+        """
+        # Scale window based on sampling rate
+        window_length = self._scale_window_to_sampling_rate(self.config.savgol_window, sampling_rate)
+        window_length = min(window_length, len(data))
+
+        # Ensure window is valid
+        if window_length >= self.config.savgol_polyorder + 1:
+            print(f"  Savgol filter: window={window_length} samples ({window_length/sampling_rate*1000:.1f}ms), order={self.config.savgol_polyorder}")
+            return signal.savgol_filter(data, window_length, self.config.savgol_polyorder)
+        return data
+    
+    def _apply_lowpass_filter(self, data: np.ndarray, sampling_rate: float) -> np.ndarray:
+        """
+        Apply low-pass Butterworth filter using zero-phase filtering (filtfilt).
+
+        Uses filtfilt instead of sosfilt to:
+        - Eliminate phase distortion
+        - Reduce ringing artifacts (Gibbs phenomenon) at step changes
+        - Double the effective filter order (forward + backward pass)
+
+        Note: If you see sharp oscillations/spikes at step changes, try:
+        - Lower filter order (e.g., order=2 instead of 4)
+        - Higher cutoff frequency (less aggressive filtering)
+        - Use Savitzky-Golay filter instead (apply_savgol=True)
+        """
+        # Calculate actual frequency cutoff
+        nyquist = sampling_rate / 2
+        cutoff_freq = self.config.lowpass_cutoff * nyquist
+
+        print(f"  Lowpass filter (order={self.config.lowpass_order}): "
+              f"cutoff = {cutoff_freq:.2f} Hz "
+              f"(normalized: {self.config.lowpass_cutoff}, Nyquist: {nyquist:.2f} Hz)")
+
+        sos = signal.butter(self.config.lowpass_order,
+                           self.config.lowpass_cutoff,
+                           btype='low', output='sos')
+
+        # Use filtfilt for zero-phase filtering (reduces ringing artifacts)
+        return signal.sosfiltfilt(sos, data)
+    
+    def _apply_highpass_filter(self, data: np.ndarray, sampling_rate: float) -> np.ndarray:
+        """Apply high-pass Butterworth filter"""
+        # Calculate actual frequency cutoff
+        nyquist = sampling_rate / 2
+        cutoff_freq = self.config.highpass_cutoff * nyquist
+
+        print(f"  Highpass filter (order={self.config.highpass_order}): "
+              f"cutoff = {cutoff_freq:.2f} Hz "
+              f"(normalized: {self.config.highpass_cutoff}, Nyquist: {nyquist:.2f} Hz)")
+
+        sos = signal.butter(self.config.highpass_order,
+                           self.config.highpass_cutoff,
+                           btype='high', output='sos')
+        return signal.sosfilt(sos, data)
+
+    def _apply_bandpass_filter(self, data: np.ndarray, sampling_rate: float) -> np.ndarray:
+        """Apply band-pass Butterworth filter"""
+        # Calculate actual frequency cutoffs
+        nyquist = sampling_rate / 2
+        low_freq = self.config.bandpass_low * nyquist
+        high_freq = self.config.bandpass_high * nyquist
+
+        print(f"  Bandpass filter (order={self.config.bandpass_order}): "
+              f"band = [{low_freq:.2f}, {high_freq:.2f}] Hz "
+              f"(normalized: [{self.config.bandpass_low}, {self.config.bandpass_high}], Nyquist: {nyquist:.2f} Hz)")
+
+        sos = signal.butter(self.config.bandpass_order,
+                           [self.config.bandpass_low, self.config.bandpass_high],
+                           btype='band', output='sos')
+        return signal.sosfilt(sos, data)
+    
+    def _apply_smoothing(self, data: np.ndarray, sampling_rate: float) -> np.ndarray:
+        """
+        Apply smoothing using specified method.
+
+        Window size is scaled based on sampling rate to ensure consistent
+        temporal characteristics across signals with different sampling rates.
+        """
+        # Scale window based on sampling rate
+        window = self._scale_window_to_sampling_rate(self.config.smoothing_window, sampling_rate)
+
+        print(f"  Smoothing ({self.config.smoothing_method}): window={window} samples ({window/sampling_rate*1000:.1f}ms)")
+
+        if self.config.smoothing_method == 'gaussian':
+            # Gaussian smoothing
+            kernel = signal.gaussian(window, std=window/6)
+            kernel = kernel / np.sum(kernel)
+            return np.convolve(data, kernel, mode='same')
+        elif self.config.smoothing_method == 'uniform':
+            # Uniform (moving average) smoothing
+            kernel = np.ones(window) / window
+            return np.convolve(data, kernel, mode='same')
+        elif self.config.smoothing_method == 'exponential':
+            # Exponential smoothing
+            alpha = 2.0 / (window + 1)
+            smoothed = np.zeros_like(data)
+            smoothed[0] = data[0]
+            for i in range(1, len(data)):
+                smoothed[i] = alpha * data[i] + (1 - alpha) * smoothed[i-1]
+            return smoothed
+        return data
+    
+    def _apply_resampling(self, data: np.ndarray) -> np.ndarray:
+        """Apply resampling to change the number of samples"""
+        if len(data) == self.config.target_samples:
+            return data
+        return signal.resample(data, self.config.target_samples)
+    
+    def _apply_normalization(self, data: np.ndarray) -> np.ndarray:
+        """Apply normalization using specified method"""
+        data_reshaped = data.reshape(-1, 1)
+
+        if self.config.normalization_method == 'standard':
+            # Create fresh scaler for each signal
+            scaler = StandardScaler()
+            normalized = scaler.fit_transform(data_reshaped)
+        elif self.config.normalization_method == 'minmax':
+            # Create fresh scaler for each signal
+            scaler = MinMaxScaler()
+            normalized = scaler.fit_transform(data_reshaped)
+        elif self.config.normalization_method == 'robust':
+            # Robust scaling using median and IQR
+            median = np.median(data)
+            q75, q25 = np.percentile(data, [75, 25])
+            iqr = q75 - q25
+            if iqr > 0:
+                normalized = (data_reshaped - median) / iqr
+            else:
+                normalized = data_reshaped - median
+        else:
+            normalized = data_reshaped
+
+        return normalized.flatten()
+
+class TimeSeriesComparator:
+    """Main class for comparing multiple time series"""
+    
+    def __init__(self, hdf5_path: str, datasets: List[DatasetConfig], 
+                 processing_config: ProcessingConfig, default_sampling_rate: float = 100.0):
+        """
+        Initialize the time series comparator
+        
+        Args:
+            hdf5_path: Path to HDF5 file
+            datasets: List of dataset configurations
+            processing_config: Signal processing configuration
+            default_sampling_rate: Default sampling rate in Hz (used as fallback)
+        """
+        self.hdf5_path = Path(hdf5_path)
+        self.datasets = datasets
+        self.processing_config = processing_config
+        self.default_sampling_rate = default_sampling_rate
+        self.processor = TimeSeriesProcessor(processing_config)
+        
+        self.raw_data = {}
+        self.processed_data = {}
+        self.time_vectors = {}
+        self.original_time_vectors = {}  # Store original time vectors before shifting
+        self.sampling_rates = {}  # Store individual sampling rates
+        self.statistics = {}
+        self.alignment_info = {}  # Store time shift information
+        
+        # For cropping functionality
+        self.original_raw_data = {}
+        self.original_processed_data = {}  # This stores cropped→original restoration
+        self.full_processed_data = {}      # This stores the full filtered signals
+        self.last_cropping_info = {}
+        
+    def _convert_time_units(self, time_vector: np.ndarray, units: str) -> np.ndarray:
+        """Convert time vector to seconds based on specified units"""
+        conversion_factors = {
+            's': 1.0,
+            'ms': 1e-3,
+            'us': 1e-6,
+            'μs': 1e-6,
+            'ns': 1e-9
+        }
+        
+        factor = conversion_factors.get(units.lower(), 1.0)
+        return time_vector * factor
+    
+    def _calculate_sampling_rate(self, time_vector: np.ndarray) -> float:
+        """Calculate sampling rate from time vector"""
+        if len(time_vector) < 2:
+            return self.default_sampling_rate
+        
+        # Calculate average time step
+        dt = np.mean(np.diff(time_vector))
+        if dt <= 0:
+            return self.default_sampling_rate
+        
+        return 1.0 / dt
+
+    def _compute_cross_correlation(self, signal1: np.ndarray, signal2: np.ndarray,
+                                  max_lag: Optional[int] = None,
+                                  method: str = 'statsmodels') -> Tuple[np.ndarray, np.ndarray, int]:
+        """
+        Compute cross-correlation between two signals with lag detection.
+
+        This is a unified cross-correlation function used for:
+        - Signal alignment/synchronization
+        - Lag detection and plotting
+        - Cross-correlation analysis
+
+        Checks both positive and negative lags to find the optimal alignment.
+
+        Args:
+            signal1: Reference signal (y = signal1)
+            signal2: Target signal (x = signal2)
+            max_lag: Maximum lag to check (in samples). If None, uses full signal length
+            method: 'statsmodels' (robust, uses CCF) or 'numpy' (fast, uses correlate)
+
+        Returns:
+            Tuple of (lags, correlation_values, peak_lag):
+            - lags: Array of lag values (negative = signal2 leads, positive = signal2 lags)
+            - correlation_values: Cross-correlation at each lag
+            - peak_lag: Lag with maximum correlation (samples to shift signal2)
+        """
+        n1, n2 = len(signal1), len(signal2)
+
+        # Determine max lag
+        if max_lag is None:
+            max_lag = min(n1, n2) - 1
+        else:
+            max_lag = min(max_lag, min(n1, n2) - 1)
+
+        if method == 'statsmodels' and STATSMODELS_AVAILABLE:
+            # Use statsmodels CCF (most robust, handles normalization properly)
+            ccf_result = ccf(signal2, signal1, nlags=max_lag, adjusted=False)
+
+            # CCF returns [0, 1, 2, ...max_lag] for positive lags
+            # We need to compute negative lags by reversing signal roles
+            ccf_negative = ccf(signal1, signal2, nlags=max_lag, adjusted=False)
+
+            # Combine: negative lags (reversed, excluding zero) + positive lags (including zero)
+            # ccf_negative[max_lag:0:-1] gives us lags from -1 to -max_lag
+            # ccf_result gives us lags from 0 to max_lag
+            correlation_values = np.concatenate([ccf_negative[max_lag:0:-1], ccf_result])
+
+            # Create symmetric lags array to match correlation_values length
+            lags = np.arange(-max_lag, max_lag + 1)
+
+            # Ensure lags and correlation_values have the same length
+            if len(lags) != len(correlation_values):
+                min_len = min(len(lags), len(correlation_values))
+                lags = lags[:min_len]
+                correlation_values = correlation_values[:min_len]
+
+        else:
+            # Fallback to numpy correlate (faster but less robust)
+            s1_zm = signal1 - np.mean(signal1)
+            s2_zm = signal2 - np.mean(signal2)
+
+            # Normalize by standard deviations
+            std1, std2 = np.std(s1_zm), np.std(s2_zm)
+            if std1 > 0:
+                s1_zm /= std1
+            if std2 > 0:
+                s2_zm /= std2
+
+            # Full cross-correlation
+            correlation_full = np.correlate(s1_zm, s2_zm, mode='full')
+
+            # Extract relevant portion based on max_lag
+            center_idx = len(correlation_full) // 2
+            start_idx = max(0, center_idx - max_lag)
+            end_idx = min(len(correlation_full), center_idx + max_lag + 1)
+
+            correlation_values = correlation_full[start_idx:end_idx]
+            lags = np.arange(-max_lag, max_lag + 1)[:len(correlation_values)]
+
+            # Normalize correlation
+            n_overlap = min(n1, n2)
+            correlation_values /= n_overlap
+
+        # Find peak correlation (best alignment)
+        peak_idx = np.argmax(np.abs(correlation_values))
+        peak_lag = lags[peak_idx]
+
+        return lags, correlation_values, peak_lag
+
+    def load_data(self) -> None:
+        """Load data from HDF5 file with individual time vectors"""
+        print(f"Loading data from {self.hdf5_path}")
+        
+        with h5py.File(self.hdf5_path, 'r') as file:
+            for dataset_config in self.datasets:
+                try:
+                    # Load the main dataset
+                    if dataset_config.group:
+                        group = file[dataset_config.group]
+                        data = np.array(group[dataset_config.name])
+                    else:
+                        data = np.array(file[dataset_config.name])
+                    
+                    self.raw_data[dataset_config.label] = data
+                    
+                    # Load or generate time vector
+                    time_vector = None
+                    
+                    # Try to load explicit time vector
+                    if dataset_config.time_name:
+                        try:
+                            if dataset_config.time_group:
+                                time_group = file[dataset_config.time_group]
+                                time_vector = np.array(time_group[dataset_config.time_name])
+                            else:
+                                # Try in same group as data
+                                if dataset_config.group:
+                                    group = file[dataset_config.group]
+                                    time_vector = np.array(group[dataset_config.time_name])
+                                else:
+                                    time_vector = np.array(file[dataset_config.time_name])
+                            
+                            # Convert time units to seconds
+                            time_vector = self._convert_time_units(time_vector, dataset_config.time_units)
+                            
+                            # Ensure time vector matches data length
+                            if len(time_vector) != len(data):
+                                print(f"Warning: Time vector length ({len(time_vector)}) doesn't match data length ({len(data)}) for {dataset_config.label}")
+                                # Take minimum length
+                                min_len = min(len(time_vector), len(data))
+                                time_vector = time_vector[:min_len]
+                                data = data[:min_len]
+                                self.raw_data[dataset_config.label] = data
+                            
+                            print(f"✓ Loaded time vector for {dataset_config.label}")
+                            
+                        except KeyError as e:
+                            print(f"Warning: Could not load time vector for {dataset_config.label}: {e}")
+                            time_vector = None
+                    
+                    # Generate time vector if not loaded
+                    if time_vector is None:
+                        # Use individual sampling rate or default
+                        sr = dataset_config.sampling_rate if dataset_config.sampling_rate else self.default_sampling_rate
+                        time_vector = np.arange(len(data)) / sr
+                        print(f"✓ Generated time vector for {dataset_config.label} at {sr} Hz")
+                    
+                    # Store original time vector
+                    self.original_time_vectors[dataset_config.label] = time_vector.copy()
+                    
+                    # Apply time shift for phase alignment
+                    if dataset_config.time_shift != 0.0:
+                        time_vector = time_vector + dataset_config.time_shift
+                        print(f"✓ Applied time shift of {dataset_config.time_shift:.3f}s to {dataset_config.label}")
+                        self.alignment_info[dataset_config.label] = {
+                            'time_shift': dataset_config.time_shift,
+                            'shift_type': 'manual'
+                        }
+                    else:
+                        self.alignment_info[dataset_config.label] = {
+                            'time_shift': 0.0,
+                            'shift_type': 'none'
+                        }
+                    
+                    # Store time vector and calculate actual sampling rate
+                    self.time_vectors[dataset_config.label] = time_vector
+                    actual_sr = self._calculate_sampling_rate(time_vector)
+                    self.sampling_rates[dataset_config.label] = actual_sr
+                    
+                    print(f"✓ Loaded {dataset_config.label}: {len(data)} samples, SR: {actual_sr:.2f} Hz")
+                    
+                except KeyError as e:
+                    print(f"✗ Failed to load {dataset_config.label}: {e}")
+                    continue
+    
+    def process_data(self, preserve_full_processed: bool = True) -> None:
+        """Process all loaded datasets using individual sampling rates"""
+        print("\nProcessing signals...")
+        
+        # Clear any existing processed data backups
+        if preserve_full_processed:
+            self.full_processed_data = {}  # Store uncropped processed signals
+        
+        for label, data in self.raw_data.items():
+            print(f"Processing {label}...")
+            # Use individual sampling rate for processing
+            sr = self.sampling_rates[label]
+            processed = self.processor.process_signal(data, sr)
+            
+            # Store the full processed signal
+            self.processed_data[label] = processed
+            
+            # Preserve full processed signal before any cropping
+            if preserve_full_processed:
+                self.full_processed_data[label] = processed.copy()
+                print(f"✓ Preserved full processed signal for {label}: {len(processed)} samples")
+            
+            # Update time vector if resampling was applied
+            if self.processing_config.apply_resampling:
+                # Create new time vector for resampled data
+                original_duration = self.time_vectors[label][-1] - self.time_vectors[label][0]
+                self.time_vectors[label] = np.linspace(
+                    self.time_vectors[label][0], 
+                    self.time_vectors[label][-1], 
+                    len(processed)
+                )
+                # Update sampling rate
+                self.sampling_rates[label] = len(processed) / original_duration
+    
+    def calculate_statistics(self) -> None:
+        """Calculate comprehensive statistics for all datasets"""
+        print("\nCalculating statistics...")
+        
+        for label, data in self.processed_data.items():
+            stats = {
+                'mean': np.mean(data),
+                'median': np.median(data),
+                'std': np.std(data),
+                'var': np.var(data),
+                'min': np.min(data),
+                'max': np.max(data),
+                'range': np.ptp(data),
+                'skewness': self._calculate_skewness(data),
+                'kurtosis': self._calculate_kurtosis(data),
+                'rms': np.sqrt(np.mean(data**2)),
+                'energy': np.sum(data**2),
+                'zero_crossings': self._count_zero_crossings(data)
+            }
+            self.statistics[label] = stats
+    
+    def _calculate_skewness(self, data: np.ndarray) -> float:
+        """Calculate skewness of the data"""
+        mean = np.mean(data)
+        std = np.std(data)
+        if std == 0:
+            return 0
+        return np.mean(((data - mean) / std) ** 3)
+    
+    def _calculate_kurtosis(self, data: np.ndarray) -> float:
+        """Calculate kurtosis of the data"""
+        mean = np.mean(data)
+        std = np.std(data)
+        if std == 0:
+            return 0
+        return np.mean(((data - mean) / std) ** 4) - 3
+    
+    def _count_zero_crossings(self, data: np.ndarray) -> int:
+        """Count zero crossings in the signal"""
+        return len(np.where(np.diff(np.signbit(data)))[0])
+    
+    def _calculate_effective_sample_size(self, data: np.ndarray) -> Tuple[float, float]:
+        """
+        Calculate effective sample size for autocorrelated time series
+
+        Uses the Bretherton et al. (1999) / Bayley-Hammersley correction:
+        n_eff = n * (1 - ρ₁) / (1 + ρ₁)
+
+        where ρ₁ is the lag-1 autocorrelation coefficient.
+
+        Parameters:
+        -----------
+        data : np.ndarray
+            Time series data
+
+        Returns:
+        --------
+        n_eff : float
+            Effective sample size accounting for autocorrelation
+        rho_1 : float
+            Lag-1 autocorrelation coefficient
+        """
+        n = len(data)
+
+        # Calculate lag-1 autocorrelation
+        data_centered = data - np.mean(data)
+        autocorr_full = np.correlate(data_centered, data_centered, mode='full')
+        autocorr_full = autocorr_full / autocorr_full[len(autocorr_full)//2]  # Normalize
+
+        # Get lag-1 autocorrelation (index n corresponds to lag 0, so n+1 is lag 1)
+        rho_1 = autocorr_full[len(autocorr_full)//2 + 1]
+
+        # Calculate effective sample size
+        # Bound rho_1 to avoid numerical issues
+        rho_1_bounded = np.clip(rho_1, -0.99, 0.99)
+        n_eff = n * (1 - rho_1_bounded) / (1 + rho_1_bounded)
+
+        # Ensure n_eff is at least 2 (minimum for correlation)
+        n_eff = max(n_eff, 2.0)
+
+        return n_eff, rho_1
+
+    def _corrected_pearson_pvalue(self, r: float, n_eff: float) -> float:
+        """
+        Calculate p-value for Pearson correlation with effective sample size
+
+        Uses t-distribution: t = r * sqrt((n_eff - 2) / (1 - r²))
+
+        Parameters:
+        -----------
+        r : float
+            Pearson correlation coefficient
+        n_eff : float
+            Effective sample size (accounting for autocorrelation)
+
+        Returns:
+        --------
+        p_value : float
+            Two-tailed p-value corrected for autocorrelation
+        """
+        from scipy.stats import t as t_dist
+
+        # Avoid division by zero for perfect correlations
+        if abs(r) >= 0.9999:
+            return 0.0 if abs(r) > 0.9999 else 1e-16
+
+        # Calculate t-statistic
+        t_stat = r * np.sqrt((n_eff - 2) / (1 - r**2))
+
+        # Two-tailed p-value
+        p_value = 2 * t_dist.sf(abs(t_stat), n_eff - 2)
+
+        return p_value
+
+    def calculate_correlations(self) -> Dict[str, float]:
+        """
+        Calculate correlations between all pairs of datasets with autocorrelation-corrected p-values
+
+        P-values are corrected for time series autocorrelation using effective sample size
+        based on the Bretherton et al. (1999) method.
+        """
+        correlations = {}
+        labels = list(self.processed_data.keys())
+
+        for i, label1 in enumerate(labels):
+            for j, label2 in enumerate(labels[i+1:], i+1):
+                data1 = self.processed_data[label1]
+                data2 = self.processed_data[label2]
+                time1 = self.time_vectors[label1]
+                time2 = self.time_vectors[label2]
+
+                # Synchronize time series for correlation analysis
+                data1_sync, data2_sync = self._synchronize_time_series(
+                    data1, time1, data2, time2
+                )
+
+                # Calculate standard correlations and p-values (uncorrected)
+                pearson_corr, pearson_p_uncorr = pearsonr(data1_sync, data2_sync)
+                spearman_corr, spearman_p_uncorr = spearmanr(data1_sync, data2_sync)
+
+                # Calculate effective sample sizes for both series
+                n_eff_1, rho1_1 = self._calculate_effective_sample_size(data1_sync)
+                n_eff_2, rho1_2 = self._calculate_effective_sample_size(data2_sync)
+
+                # Use the more conservative (smaller) effective sample size
+                n_eff = min(n_eff_1, n_eff_2)
+
+                # Calculate corrected p-values using effective sample size
+                pearson_p_corr = self._corrected_pearson_pvalue(pearson_corr, n_eff)
+
+                # For Spearman, use the same correction approach
+                # (Spearman is just Pearson on ranks, so same correction applies)
+                spearman_p_corr = self._corrected_pearson_pvalue(spearman_corr, n_eff)
+
+                pair_key = f"{label1} vs {label2}"
+                correlations[pair_key] = {
+                    'pearson': pearson_corr,
+                    'pearson_p_uncorrected': pearson_p_uncorr,
+                    'pearson_p_corrected': pearson_p_corr,
+                    'spearman': spearman_corr,
+                    'spearman_p_uncorrected': spearman_p_uncorr,
+                    'spearman_p_corrected': spearman_p_corr,
+                    'n_actual': len(data1_sync),
+                    'n_effective': n_eff,
+                    'autocorr_lag1_series1': rho1_1,
+                    'autocorr_lag1_series2': rho1_2
+                }
+
+        return correlations
+    
+    def calculate_differences(self) -> Dict[str, Dict[str, float]]:
+        """Calculate various difference metrics between datasets using synchronized time series"""
+        differences = {}
+        labels = list(self.processed_data.keys())
+        
+        for i, label1 in enumerate(labels):
+            for j, label2 in enumerate(labels[i+1:], i+1):
+                data1 = self.processed_data[label1]
+                data2 = self.processed_data[label2]
+                time1 = self.time_vectors[label1]
+                time2 = self.time_vectors[label2]
+                
+                # Synchronize time series for difference analysis
+                data1_sync, data2_sync = self._synchronize_time_series(
+                    data1, time1, data2, time2
+                )
+                
+                # Calculate various metrics
+                mse = mean_squared_error(data1_sync, data2_sync)
+                mae = mean_absolute_error(data1_sync, data2_sync)
+                rmse = np.sqrt(mse)
+                
+                # Normalized metrics
+                range1 = np.ptp(data1_sync)
+                range2 = np.ptp(data2_sync)
+                avg_range = (range1 + range2) / 2
+                normalized_rmse = rmse / avg_range if avg_range > 0 else 0
+                
+                pair_key = f"{label1} vs {label2}"
+                differences[pair_key] = {
+                    'mse': mse,
+                    'mae': mae,
+                    'rmse': rmse,
+                    'normalized_rmse': normalized_rmse
+                }
+        
+        return differences
+    
+    def _synchronize_time_series(self, data1: np.ndarray, time1: np.ndarray,
+                                data2: np.ndarray, time2: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Synchronize two time series with potentially different sampling rates
+
+        Args:
+            data1, time1: First time series and its time vector
+            data2, time2: Second time series and its time vector
+
+        Returns:
+            Tuple of synchronized data arrays
+        """
+        # Ensure data and time arrays match in length
+        if len(data1) != len(time1):
+            min_len1 = min(len(data1), len(time1))
+            data1 = data1[:min_len1]
+            time1 = time1[:min_len1]
+
+        if len(data2) != len(time2):
+            min_len2 = min(len(data2), len(time2))
+            data2 = data2[:min_len2]
+            time2 = time2[:min_len2]
+
+        # Find common time range
+        t_start = max(time1[0], time2[0])
+        t_end = min(time1[-1], time2[-1])
+
+        if t_start >= t_end:
+            raise ValueError("Time series do not overlap")
+
+        # Create common time grid (use finer resolution of the two)
+        dt1 = np.mean(np.diff(time1)) if len(time1) > 1 else 1.0
+        dt2 = np.mean(np.diff(time2)) if len(time2) > 1 else 1.0
+        dt_common = min(dt1, dt2)
+
+        # Create common time vector
+        t_common = np.arange(t_start, t_end, dt_common)
+
+        # Interpolate both series to common time grid
+        data1_interp = np.interp(t_common, time1, data1)
+        data2_interp = np.interp(t_common, time2, data2)
+
+        return data1_interp, data2_interp
+    
+    def _calculate_group_correlation(self, ref_group_name: str, ref_group_labels: List[str],
+                                   target_group_name: str, target_group_labels: List[str],
+                                   data_dict: Dict, time_vectors: Dict,
+                                   cross_correlation_window: Optional[int],
+                                   max_shift_time: Optional[float],
+                                   correlation_method: str, normalize_signals: bool,
+                                   visualize: bool = False) -> float:
+        """
+        Calculate optimal shift between two groups of signals using composite correlation
+        
+        Args:
+            ref_group_name: Name of reference group
+            ref_group_labels: List of signal labels in reference group
+            target_group_name: Name of target group to align
+            target_group_labels: List of signal labels in target group
+            data_dict: Dictionary of signal data
+            time_vectors: Dictionary of time vectors
+            cross_correlation_window: Window size for correlation
+            max_shift_time: Maximum shift to search
+            correlation_method: Correlation method to use
+            normalize_signals: Whether to normalize signals
+            visualize: Whether to show diagnostic plots
+            
+        Returns:
+            Optimal time shift for target group
+        """
+        
+        def normalize_for_correlation(signal, method='normalized'):
+            """Normalize signal for better correlation"""
+            if method == 'zero_mean':
+                return signal - np.mean(signal)
+            elif method == 'normalized':
+                signal_zm = signal - np.mean(signal)
+                std = np.std(signal_zm)
+                return signal_zm / std if std > 0 else signal_zm
+            elif method == 'minmax':
+                signal_min, signal_max = np.min(signal), np.max(signal)
+                range_val = signal_max - signal_min
+                return (signal - signal_min) / range_val if range_val > 0 else signal - signal_min
+            else:
+                return signal
+        # Create composite signals by averaging normalized signals within each group
+        print(f"  Correlating group '{target_group_name}' against reference group '{ref_group_name}'")
+        
+        # Process reference group - use first signal as base and average others onto it
+        ref_composite_data = None
+        ref_composite_time = None
+        
+        for i, label in enumerate(ref_group_labels):
+            data = data_dict[label]
+            time_vec = time_vectors[label]
+            
+            # Ensure data and time vector have same length
+            min_len = min(len(data), len(time_vec))
+            data = data[:min_len]
+            time_vec = time_vec[:min_len]
+            
+            # Normalize individual signal before averaging
+            if normalize_signals:
+                data_norm = normalize_for_correlation(data, correlation_method)
+            else:
+                data_norm = data
+            
+            if i == 0:
+                # First signal becomes the reference
+                ref_composite_time = time_vec.copy()
+                ref_composite_data = data_norm.copy()
+                print(f"    Reference base: {label} ({len(data)} samples)")
+            else:
+                # Synchronize subsequent signals to the reference
+                try:
+                    data_sync, ref_sync = self._synchronize_time_series(data_norm, time_vec, ref_composite_data, ref_composite_time)
+                    ref_composite_data = (ref_sync + data_sync) / 2  # Running average
+                    print(f"    Added to reference: {label} (sync: {len(data_sync)} samples)")
+                except Exception as e:
+                    print(f"    Warning: Could not sync {label} to reference group: {e}")
+                    # Skip this signal if synchronization fails
+                    continue
+        
+        # Process target group - use first signal as base and average others onto it
+        target_composite_data = None
+        target_composite_time = None
+        
+        for i, label in enumerate(target_group_labels):
+            data = data_dict[label]
+            time_vec = time_vectors[label]
+            
+            # Ensure data and time vector have same length
+            min_len = min(len(data), len(time_vec))
+            data = data[:min_len]
+            time_vec = time_vec[:min_len]
+            
+            # Normalize individual signal before averaging
+            if normalize_signals:
+                data_norm = normalize_for_correlation(data, correlation_method)
+            else:
+                data_norm = data
+            
+            if i == 0:
+                # First signal becomes the target base
+                target_composite_time = time_vec.copy()
+                target_composite_data = data_norm.copy()
+                print(f"    Target base: {label} ({len(data)} samples)")
+            else:
+                # Synchronize subsequent signals to the target base
+                try:
+                    data_sync, target_sync = self._synchronize_time_series(data_norm, time_vec, target_composite_data, target_composite_time)
+                    target_composite_data = (target_sync + data_sync) / 2  # Running average
+                    print(f"    Added to target: {label} (sync: {len(data_sync)} samples)")
+                except Exception as e:
+                    print(f"    Warning: Could not sync {label} to target group: {e}")
+                    # Skip this signal if synchronization fails
+                    continue
+        
+        # Validate that we have composite signals
+        if ref_composite_data is None or target_composite_data is None:
+            print(f"    Error: Could not create composite signals for group correlation")
+            return 0.0
+        
+        if len(ref_composite_data) == 0 or len(target_composite_data) == 0:
+            print(f"    Error: Empty composite signals")
+            return 0.0
+        
+        print(f"    Composite signals: ref={len(ref_composite_data)}, target={len(target_composite_data)}")
+        
+        # Synchronize composite signals
+        try:
+            ref_sync, target_sync = self._synchronize_time_series(ref_composite_data, ref_composite_time, 
+                                                                target_composite_data, target_composite_time)
+            print(f"    Synchronized composites: ref={len(ref_sync)}, target={len(target_sync)}")
+        except Exception as e:
+            print(f"    Error synchronizing composite signals: {e}")
+            return 0.0
+        common_time = np.linspace(max(ref_composite_time[0], target_composite_time[0]), 
+                                 min(ref_composite_time[-1], target_composite_time[-1]), 
+                                 len(ref_sync))
+        
+        # Apply windowing
+        if cross_correlation_window and cross_correlation_window < len(ref_sync):
+            center = len(ref_sync) // 2
+            half_window = cross_correlation_window // 2
+            start_idx = max(0, center - half_window)
+            end_idx = min(len(ref_sync), center + half_window)
+            ref_windowed = ref_sync[start_idx:end_idx]
+            target_windowed = target_sync[start_idx:end_idx]
+            window_time = common_time[start_idx:end_idx]
+        else:
+            ref_windowed = ref_sync
+            target_windowed = target_sync
+            window_time = common_time
+        
+        # Calculate correlation using unified helper
+        # Normalize signals if requested before computing cross-correlation
+        if normalize_signals:
+            ref_for_corr = normalize_for_correlation(ref_windowed, correlation_method)
+            target_for_corr = normalize_for_correlation(target_windowed, correlation_method)
+        else:
+            ref_for_corr = ref_windowed
+            target_for_corr = target_windowed
+
+        # Determine max lag for search
+        max_lag_samples = None
+        if max_shift_time is not None:
+            dt = np.mean(np.diff(ref_composite_time))
+            max_lag_samples = int(max_shift_time / dt)
+
+        # Use unified cross-correlation helper (checks both positive and negative lags)
+        lags_samples, correlation, peak_lag = self._compute_cross_correlation(
+            ref_for_corr, target_for_corr,
+            max_lag=max_lag_samples,
+            method='statsmodels'
+        )
+
+        # Convert lags to time
+        dt = np.mean(np.diff(ref_composite_time))
+        lags_time = lags_samples * dt
+
+        # Extract results
+        time_shift = peak_lag * dt
+        peak_idx = np.where(lags_samples == peak_lag)[0][0]
+        max_corr_value = correlation[peak_idx]
+
+        # For compatibility with downstream code
+        correlation_limited = correlation
+        lags_time_limited = lags_time
+        
+        print(f"    Composite correlation: max={max_corr_value:.4f}, shift={time_shift*1000:.3f}ms")
+        
+        # Visualization for group correlation
+        if visualize:
+            import matplotlib.pyplot as plt
+            fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+            
+            # Plot composite signals
+            axes[0].plot(window_time, ref_windowed, label=f'{ref_group_name} (composite)', alpha=0.8)
+            axes[0].plot(window_time, target_windowed, label=f'{target_group_name} (composite)', alpha=0.8)
+            axes[0].set_title('Composite Group Signals')
+            axes[0].legend()
+            axes[0].grid(True, alpha=0.3)
+            
+            # Plot correlation
+            correlation_norm = correlation_limited / np.max(np.abs(correlation_limited))
+            axes[1].plot(lags_time_limited * 1000, correlation_norm, 'b-', linewidth=1)
+            axes[1].axvline(time_shift * 1000, color='red', linestyle='--', 
+                           label=f'{time_shift*1000:.3f}ms')
+            axes[1].set_xlabel('Lag [ms]')
+            axes[1].set_ylabel('Normalized Correlation')
+            axes[1].set_title(f'Group Cross-Correlation')
+            axes[1].legend()
+            axes[1].grid(True, alpha=0.3)
+            
+            # Plot aligned result
+            target_shifted = np.interp(window_time - time_shift, window_time, target_windowed)
+            axes[2].plot(window_time, ref_windowed, label=f'{ref_group_name}', alpha=0.8)
+            axes[2].plot(window_time, target_shifted, label=f'{target_group_name} (shifted)', alpha=0.8)
+            axes[2].set_title('Aligned Group Signals')
+            axes[2].legend()
+            axes[2].grid(True, alpha=0.3)
+            
+            plt.suptitle(f'Group Alignment: {ref_group_name} ↔ {target_group_name}')
+            plt.tight_layout()
+
+            plt.show()
+            plt.close()
+        
+        return time_shift
+    
+    def auto_align_time_series(self, reference_label: str = None,
+                              reference_group: str = None, 
+                              cross_correlation_window: Optional[int] = None,
+                              correlation_window_time: Optional[float] = None,
+                              use_original_positions: bool = False,
+                              use_raw_data: bool = True,
+                              visualize: bool = False,
+                              max_shift_time: float = None,
+                              normalize_signals: bool = True,
+                              correlation_method: str = 'normalized',
+                              sync_within_groups: bool = True) -> Dict[str, float]:
+        """
+        Automatically align time series using cross-correlation with group synchronization
+        
+        Args:
+            reference_label: Label of the reference time series (overrides reference_group)
+            reference_group: Group to use as reference (e.g., 'AMPM', 'KH')
+            cross_correlation_window: Window size for cross-correlation in SAMPLES
+            correlation_window_time: Window size for cross-correlation in SECONDS
+            use_original_positions: Use original or current time vectors
+            use_raw_data: Use raw (uncropped) or processed data
+            visualize: Show correlation plots for each signal pair
+            max_shift_time: Maximum shift to search in seconds
+            normalize_signals: Remove DC offset and normalize amplitude before correlation
+            correlation_method: 'normalized', 'standard', or 'zero_mean'
+            sync_within_groups: If True, maintain synchronization within dataset groups
+            
+        Returns:
+            Dictionary of calculated time shifts for each dataset/group
+        """
+        
+        def normalize_for_correlation(signal, method='normalized'):
+            """Normalize signal for better correlation"""
+            if method == 'zero_mean':
+                # Remove DC offset only
+                return signal - np.mean(signal)
+            elif method == 'normalized':
+                # Remove DC offset and normalize to unit variance
+                signal_zm = signal - np.mean(signal)
+                std = np.std(signal_zm)
+                return signal_zm / std if std > 0 else signal_zm
+            elif method == 'minmax':
+                # Scale to [0, 1] range
+                signal_min, signal_max = np.min(signal), np.max(signal)
+                range_val = signal_max - signal_min
+                return (signal - signal_min) / range_val if range_val > 0 else signal - signal_min
+            else:
+                # No normalization
+                return signal
+        # Determine reference approach
+        if reference_label and reference_label not in self.processed_data:
+            raise ValueError(f"Reference dataset '{reference_label}' not found")
+        
+        if not reference_label and not reference_group:
+            raise ValueError("Must specify either reference_label or reference_group")
+        
+        position_type = "original" if use_original_positions else "current"
+        data_type = "raw" if use_raw_data else "processed"
+        
+        if sync_within_groups:
+            if reference_group:
+                print(f"\nAuto-aligning time series using '{reference_group}' group as reference...")
+            else:
+                ref_group = next((d.group for d in self.datasets if d.label == reference_label), None)
+                print(f"\nAuto-aligning time series using '{reference_label}' (group: {ref_group}) as reference...")
+            print(f"Group sync mode: Signals within same group stay synchronized")
+        else:
+            print(f"\nAuto-aligning time series using '{reference_label}' as reference...")
+            print(f"Individual signal mode: Each signal aligned independently")
+        
+        print(f"Method: {correlation_method} correlation, normalize_signals: {normalize_signals}")
+        print(f"Using {position_type} positions with {data_type} data")
+        
+        # Choose time vectors and data [same as before]
+        if use_original_positions:
+            time_vectors = self.original_time_vectors
+        else:
+            time_vectors = self.time_vectors
+        
+        if use_raw_data and hasattr(self, 'full_processed_data') and self.full_processed_data:
+            # Use full processed data (after filtering, before cropping)
+            data_dict = self.full_processed_data
+            print("Using full processed data (filtered but not cropped)")
+        elif use_raw_data and hasattr(self, 'original_processed_data') and self.original_processed_data:
+            # Use original processed data (before cropping)
+            data_dict = self.original_processed_data
+            print("Using original processed data (before cropping)")
+        elif use_raw_data:
+            # Use raw data
+            data_dict = self.raw_data
+            print("Using raw data for correlation")
+        else:
+            # Use current processed data
+            data_dict = self.processed_data
+            print("Using current processed data for correlation")
+        
+        calculated_shifts = {}
+        
+        # Organize datasets by group
+        groups = {}
+        for dataset_config in self.datasets:
+            if dataset_config.group not in groups:
+                groups[dataset_config.group] = []
+            if dataset_config.label in data_dict:
+                groups[dataset_config.group].append(dataset_config.label)
+        
+        print(f"Dataset groups: {dict(groups)}")
+        
+        if sync_within_groups:
+            # Group-based alignment: correlate groups against each other
+            if reference_group:
+                # Use composite group signals for alignment
+                ref_group_name = reference_group
+            else:
+                # Use single reference signal but maintain group sync
+                ref_group_name = next((d.group for d in self.datasets if d.label == reference_label), None)
+
+            if ref_group_name not in groups:
+                raise ValueError(f"Reference group '{ref_group_name}' not found")
+
+            # Calculate window size using reference signal
+            ref_sample_label = reference_label if reference_label else groups[ref_group_name][0]
+            if correlation_window_time is not None:
+                ref_dt = np.mean(np.diff(time_vectors[ref_sample_label])) if len(time_vectors[ref_sample_label]) > 1 else 1.0 / self.sampling_rates[ref_sample_label]
+                cross_correlation_window = int(correlation_window_time / ref_dt)
+                print(f"Using correlation window: {correlation_window_time:.3f}s ({cross_correlation_window} samples)")
+
+            # Reference group has no shift
+            for label in groups[ref_group_name]:
+                calculated_shifts[label] = 0.0
+
+            # Align other groups to reference
+            for group_name, group_labels in groups.items():
+                if group_name == ref_group_name:
+                    continue
+
+                if reference_label and not reference_group:
+                    # Use single reference signal (not composite)
+                    # Align first signal in target group to reference, then apply to all
+                    first_target = group_labels[0]
+
+                    ref_data = data_dict[reference_label]
+                    ref_time = time_vectors[reference_label]
+                    target_data = data_dict[first_target]
+                    target_time = time_vectors[first_target]
+
+                    # Synchronize signals
+                    ref_sync, target_sync = self._synchronize_time_series(ref_data, ref_time, target_data, target_time)
+
+                    # Apply windowing
+                    if cross_correlation_window and cross_correlation_window < len(ref_sync):
+                        center = len(ref_sync) // 2
+                        half_window = cross_correlation_window // 2
+                        start_idx = max(0, center - half_window)
+                        end_idx = min(len(ref_sync), center + half_window)
+                        ref_windowed = ref_sync[start_idx:end_idx]
+                        target_windowed = target_sync[start_idx:end_idx]
+                    else:
+                        ref_windowed = ref_sync
+                        target_windowed = target_sync
+
+                    # Normalize if requested
+                    if normalize_signals:
+                        def normalize_for_correlation_local(signal, method='normalized'):
+                            if method == 'normalized':
+                                signal_zm = signal - np.mean(signal)
+                                std = np.std(signal_zm)
+                                return signal_zm / std if std > 0 else signal_zm
+                            return signal
+                        ref_for_corr = normalize_for_correlation_local(ref_windowed, correlation_method)
+                        target_for_corr = normalize_for_correlation_local(target_windowed, correlation_method)
+                    else:
+                        ref_for_corr = ref_windowed
+                        target_for_corr = target_windowed
+
+                    # Calculate shift using unified helper
+                    max_lag_samples = None
+                    if max_shift_time is not None:
+                        dt = np.mean(np.diff(time_vectors[reference_label]))
+                        max_lag_samples = int(max_shift_time / dt)
+
+                    lags_samples, correlation, peak_lag = self._compute_cross_correlation(
+                        ref_for_corr, target_for_corr,
+                        max_lag=max_lag_samples,
+                        method='statsmodels'
+                    )
+
+                    dt = np.mean(np.diff(time_vectors[reference_label]))
+                    group_shift = peak_lag * dt
+
+                    print(f"✓ Aligned {first_target} to {reference_label}: {group_shift*1000:.3f}ms shift")
+
+                    # Visualization for single reference signal alignment
+                    if visualize:
+                        import matplotlib.pyplot as plt
+
+                        # MinMax normalization for visual comparison
+                        def minmax_norm(signal):
+                            s_min, s_max = np.min(signal), np.max(signal)
+                            if s_max > s_min:
+                                return (signal - s_min) / (s_max - s_min)
+                            return signal - s_min
+
+                        ref_minmax = minmax_norm(ref_windowed)
+                        target_minmax = minmax_norm(target_windowed)
+
+                        # Get common time for plotting
+                        common_time = np.linspace(max(ref_time[0], target_time[0]),
+                                                 min(ref_time[-1], target_time[-1]),
+                                                 len(ref_sync))
+                        if cross_correlation_window and cross_correlation_window < len(ref_sync):
+                            center = len(ref_sync) // 2
+                            half_window = cross_correlation_window // 2
+                            start_idx = max(0, center - half_window)
+                            end_idx = min(len(ref_sync), center + half_window)
+                            window_time = common_time[start_idx:end_idx]
+                        else:
+                            window_time = common_time
+
+                        # Create figure
+                        fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+
+                        # Plot 1: Original signals (MinMax normalized)
+                        axes[0].plot(window_time, ref_minmax, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
+                        axes[0].plot(window_time, target_minmax, label=f'{first_target}', alpha=0.8, linewidth=1.5)
+                        axes[0].set_title(f'Signals: {reference_label} vs {first_target} (MinMax norm)')
+                        axes[0].set_ylabel('Normalized Amplitude [0-1]')
+                        axes[0].legend()
+                        axes[0].grid(True, alpha=0.3)
+
+                        # Plot 2: Signals used for correlation
+                        axes[1].plot(window_time, ref_for_corr, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
+                        axes[1].plot(window_time, target_for_corr, label=f'{first_target}', alpha=0.8, linewidth=1.5)
+                        axes[1].set_title(f'For Correlation ({correlation_method} norm)')
+                        axes[1].set_ylabel('Amplitude')
+                        axes[1].legend()
+                        axes[1].grid(True, alpha=0.3)
+
+                        # Plot 3: Cross-correlation
+                        lags_time = lags_samples * dt
+                        correlation_norm = correlation / np.max(np.abs(correlation))
+                        peak_idx = np.where(lags_samples == peak_lag)[0][0]
+                        max_corr_value = correlation[peak_idx]
+
+                        axes[2].plot(lags_time * 1000, correlation_norm, 'b-', linewidth=2)
+                        axes[2].axvline(group_shift * 1000, color='red', linestyle='--', linewidth=2,
+                                       label=f'Peak: {group_shift*1000:.3f}ms')
+                        axes[2].axvline(0, color='gray', linestyle=':', linewidth=1, alpha=0.5)
+                        axes[2].set_xlabel('Lag [ms]')
+                        axes[2].set_ylabel('Correlation')
+                        axes[2].set_title(f'Cross-Correlation (max={max_corr_value:.3f})')
+                        axes[2].legend()
+                        axes[2].grid(True, alpha=0.3)
+
+                        # Plot 4: Aligned result (MinMax normalized)
+                        target_shifted = np.interp(window_time - group_shift, window_time, target_windowed)
+                        target_shifted_minmax = minmax_norm(target_shifted)
+                        axes[3].plot(window_time, ref_minmax, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
+                        axes[3].plot(window_time, target_shifted_minmax,
+                                    label=f'{first_target} (shifted {group_shift*1000:.3f}ms)',
+                                    alpha=0.8, linewidth=1.5)
+                        axes[3].set_title(f'After Alignment (MinMax norm)\nApplied to all {group_name} signals')
+                        axes[3].set_ylabel('Normalized Amplitude [0-1]')
+                        axes[3].legend()
+                        axes[3].grid(True, alpha=0.3)
+
+                        plt.suptitle(f'Group Alignment: {reference_label} → {group_name} group (via {first_target})', fontsize=14)
+                        plt.tight_layout()
+                        plt.show()
+
+                else:
+                    # Use composite group signals for alignment
+                    group_shift = self._calculate_group_correlation(
+                        ref_group_name, groups[ref_group_name],
+                        group_name, group_labels,
+                        data_dict, time_vectors,
+                        cross_correlation_window, max_shift_time,
+                        correlation_method, normalize_signals, visualize
+                    )
+
+                # Apply same shift to all signals in the target group
+                for label in group_labels:
+                    calculated_shifts[label] = group_shift
+
+                print(f"✓ Group '{group_name}': {group_shift*1000:.3f}ms shift (applied to {len(group_labels)} signals)")
+        
+        else:
+            # Individual signal alignment (original behavior)
+            if not reference_label:
+                raise ValueError("Individual signal mode requires reference_label")
+                
+            # Calculate window size
+            if correlation_window_time is not None:
+                ref_dt = np.mean(np.diff(time_vectors[reference_label])) if len(time_vectors[reference_label]) > 1 else 1.0 / self.sampling_rates[reference_label]
+                cross_correlation_window = int(correlation_window_time / ref_dt)
+                print(f"Using correlation window: {correlation_window_time:.3f}s ({cross_correlation_window} samples)")
+            
+            ref_data = data_dict[reference_label]
+            ref_time = time_vectors[reference_label]
+            calculated_shifts[reference_label] = 0.0
+            
+            # Visualization setup for individual signal mode
+            if visualize:
+                import matplotlib.pyplot as plt
+                n_targets = len([label for label in data_dict.keys() if label != reference_label])
+                if n_targets > 0:
+                    fig, axes = plt.subplots(n_targets, 4, figsize=(20, 5*n_targets))
+                    if n_targets == 1:
+                        axes = axes.reshape(1, -1)
+                    plot_idx = 0
+            
+            # Individual signal processing loop
+            for label, data in data_dict.items():
+                if label == reference_label:
+                    continue
+                
+                time_vec = time_vectors[label]
+                
+                # Synchronize signals
+                ref_sync, data_sync = self._synchronize_time_series(ref_data, ref_time, data, time_vec)
+                common_time = np.linspace(max(ref_time[0], time_vec[0]), 
+                                         min(ref_time[-1], time_vec[-1]), 
+                                         len(ref_sync))
+                
+                # Apply windowing
+                if cross_correlation_window and cross_correlation_window < len(ref_sync):
+                    center = len(ref_sync) // 2
+                    half_window = cross_correlation_window // 2
+                    start_idx = max(0, center - half_window)
+                    end_idx = min(len(ref_sync), center + half_window)
+                    ref_windowed = ref_sync[start_idx:end_idx]
+                    data_windowed = data_sync[start_idx:end_idx]
+                    window_time = common_time[start_idx:end_idx]
+                else:
+                    ref_windowed = ref_sync
+                    data_windowed = data_sync
+                    window_time = common_time
+                
+                # Calculate correlation using unified helper
+                # Normalize signals if requested before computing cross-correlation
+                if normalize_signals:
+                    ref_for_corr = normalize_for_correlation(ref_windowed, correlation_method)
+                    data_for_corr = normalize_for_correlation(data_windowed, correlation_method)
+                else:
+                    ref_for_corr = ref_windowed
+                    data_for_corr = data_windowed
+
+                # Determine max lag for search
+                max_lag_samples = None
+                if max_shift_time is not None:
+                    dt = np.mean(np.diff(time_vectors[reference_label]))
+                    max_lag_samples = int(max_shift_time / dt)
+
+                # Use unified cross-correlation helper (checks both positive and negative lags)
+                lags_samples, correlation, peak_lag = self._compute_cross_correlation(
+                    ref_for_corr, data_for_corr,
+                    max_lag=max_lag_samples,
+                    method='statsmodels'
+                )
+
+                # Convert peak lag to time
+                dt = np.mean(np.diff(time_vectors[reference_label]))
+                time_shift = peak_lag * dt
+                calculated_shifts[label] = time_shift
+
+                # Enhanced diagnostics
+                peak_idx = np.where(lags_samples == peak_lag)[0][0]
+                max_corr_value = correlation[peak_idx]
+
+                # For compatibility with downstream code
+                lags_time = lags_samples * dt
+                correlation_limited = correlation
+                lags_time_limited = lags_time
+                corr_mean = np.mean(correlation_limited)
+                corr_std = np.std(correlation_limited)
+                
+                # Signal statistics before and after normalization
+                ref_stats = f"mean={np.mean(ref_windowed):.3f}, std={np.std(ref_windowed):.3f}"
+                target_stats = f"mean={np.mean(data_windowed):.3f}, std={np.std(data_windowed):.3f}"
+                
+                if normalize_signals:
+                    ref_norm = normalize_for_correlation(ref_windowed, correlation_method)
+                    target_norm = normalize_for_correlation(data_windowed, correlation_method)
+                    ref_norm_stats = f"mean={np.mean(ref_norm):.3f}, std={np.std(ref_norm):.3f}"
+                    target_norm_stats = f"mean={np.mean(target_norm):.3f}, std={np.std(target_norm):.3f}"
+                
+                print(f"✓ {label}: {time_shift*1000:.3f}ms shift, max_corr={max_corr_value:.4f}")
+                print(f"  Original - Ref: {ref_stats}, Target: {target_stats}")
+                if normalize_signals:
+                    print(f"  Normalized - Ref: {ref_norm_stats}, Target: {target_norm_stats}")
+                
+                # Visualization
+                if visualize:
+                    # MinMax normalization for visual comparison
+                    def minmax_norm(signal):
+                        s_min, s_max = np.min(signal), np.max(signal)
+                        if s_max > s_min:
+                            return (signal - s_min) / (s_max - s_min)
+                        return signal - s_min
+
+                    ref_minmax = minmax_norm(ref_windowed)
+                    data_minmax = minmax_norm(data_windowed)
+
+                    # Plot 1: Original signals (MinMax normalized for visual comparison)
+                    axes[plot_idx, 0].plot(window_time, ref_minmax, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
+                    axes[plot_idx, 0].plot(window_time, data_minmax, label=f'{label}', alpha=0.8, linewidth=1.5)
+                    axes[plot_idx, 0].set_title(f'Signals: {reference_label} vs {label} (MinMax norm)')
+                    axes[plot_idx, 0].set_ylabel('Normalized Amplitude [0-1]')
+                    axes[plot_idx, 0].legend()
+                    axes[plot_idx, 0].grid(True, alpha=0.3)
+
+                    # Plot 2: Signals used for correlation (after processing)
+                    if normalize_signals:
+                        ref_for_plot = normalize_for_correlation(ref_windowed, correlation_method)
+                        target_for_plot = normalize_for_correlation(data_windowed, correlation_method)
+                        axes[plot_idx, 1].plot(window_time, ref_for_plot, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
+                        axes[plot_idx, 1].plot(window_time, target_for_plot, label=f'{label}', alpha=0.8, linewidth=1.5)
+                        axes[plot_idx, 1].set_title(f'For Correlation ({correlation_method} norm)')
+                    else:
+                        axes[plot_idx, 1].plot(window_time, ref_minmax, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
+                        axes[plot_idx, 1].plot(window_time, data_minmax, label=f'{label}', alpha=0.8, linewidth=1.5)
+                        axes[plot_idx, 1].set_title(f'For Correlation (MinMax norm)')
+                    axes[plot_idx, 1].set_ylabel('Amplitude')
+                    axes[plot_idx, 1].legend()
+                    axes[plot_idx, 1].grid(True, alpha=0.3)
+
+                    # Plot 3: Cross-correlation
+                    correlation_norm = correlation_limited / np.max(np.abs(correlation_limited))
+                    axes[plot_idx, 2].plot(lags_time_limited * 1000, correlation_norm, 'b-', linewidth=2)
+                    axes[plot_idx, 2].axvline(time_shift * 1000, color='red', linestyle='--', linewidth=2,
+                                            label=f'Peak: {time_shift*1000:.3f}ms')
+                    axes[plot_idx, 2].axvline(0, color='gray', linestyle=':', linewidth=1, alpha=0.5)
+                    axes[plot_idx, 2].set_xlabel('Lag [ms]')
+                    axes[plot_idx, 2].set_ylabel('Correlation')
+                    axes[plot_idx, 2].set_title(f'Cross-Correlation (max={max_corr_value:.3f})')
+                    axes[plot_idx, 2].legend()
+                    axes[plot_idx, 2].grid(True, alpha=0.3)
+
+                    # Plot 4: Aligned result (MinMax normalized)
+                    target_shifted = np.interp(window_time - time_shift, window_time, data_windowed)
+                    target_shifted_minmax = minmax_norm(target_shifted)
+                    axes[plot_idx, 3].plot(window_time, ref_minmax, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
+                    axes[plot_idx, 3].plot(window_time, target_shifted_minmax, label=f'{label} (shifted {time_shift*1000:.3f}ms)',
+                                          alpha=0.8, linewidth=1.5)
+                    axes[plot_idx, 3].set_title(f'After Alignment (MinMax norm)')
+                    axes[plot_idx, 3].set_ylabel('Normalized Amplitude [0-1]')
+                    axes[plot_idx, 3].legend()
+                    axes[plot_idx, 3].grid(True, alpha=0.3)
+                    
+                    plot_idx += 1
+            
+            if visualize and 'n_targets' in locals() and n_targets > 0:
+                plt.tight_layout()
+                plt.show()
+
+        return calculated_shifts
+    
+    def apply_calculated_shifts(self, calculated_shifts: Dict[str, float],
+                               relative_to_original: bool = False) -> None:
+        """
+        Apply calculated time shifts to align time series
+        
+        Args:
+            calculated_shifts: Dictionary of time shifts for each dataset
+            relative_to_original: If True, apply shifts relative to original positions.
+                                 If False, apply shifts relative to current positions (additive).
+        """
+        application_type = "original" if relative_to_original else "current"
+        print(f"\nApplying calculated time shifts relative to {application_type} positions...")
+        
+        for label, shift in calculated_shifts.items():
+            if label in self.time_vectors and shift != 0.0:
+                if relative_to_original:
+                    # Apply shift relative to original time vector
+                    self.time_vectors[label] = self.original_time_vectors[label] + shift
+                    shift_type = 'auto_from_original'
+                    total_shift = shift
+                else:
+                    # Apply shift relative to current time vector (additive)
+                    self.time_vectors[label] = self.time_vectors[label] + shift
+                    shift_type = 'auto_additive'
+                    # Calculate total shift from original
+                    current_manual_shift = self.alignment_info[label].get('time_shift', 0.0)
+                    total_shift = current_manual_shift + shift
+                
+                # Update alignment info
+                self.alignment_info[label] = {
+                    'time_shift': total_shift,
+                    'shift_type': shift_type,
+                    'manual_shift': self.alignment_info[label].get('time_shift', 0.0) if not relative_to_original else 0.0,
+                    'auto_shift': shift,
+                    'group': next((d.group for d in self.datasets if d.label == label), None)
+                }
+                
+                print(f"✓ Applied calculated shift of {shift:.6f}s to {label}")
+                print(f"  Total shift from original: {total_shift:.6f}s")
+
+    def get_alignment_summary(self) -> pd.DataFrame:
+        """Get summary of all time alignments applied"""
+        alignment_data = []
+        
+        for label, info in self.alignment_info.items():
+            alignment_data.append({
+                'Dataset': label,
+                'Time Shift [s]': f"{info['time_shift']:.4f}",
+                'Shift Type': info['shift_type'],
+                'Original Duration [s]': f"{(self.original_time_vectors[label][-1] - self.original_time_vectors[label][0]):.6f}" if label in self.original_time_vectors else 'N/A',
+                'Current Duration [s]': f"{(self.time_vectors[label][-1] - self.time_vectors[label][0]):.6f}" if label in self.time_vectors else 'N/A'
+            })
+        
+        return pd.DataFrame(alignment_data)
+    
+    def crop_to_shortest_signal(self, use_processed_data: bool = True, 
+                               preserve_original: bool = True) -> Dict[str, Dict[str, float]]:
+        """
+        Crop all signals to match the duration of the shortest signal
+        
+        Args:
+            use_processed_data: If True, crop processed data. If False, crop raw data.
+            preserve_original: If True, preserve original data before cropping.
+            
+        Returns:
+            Dictionary with cropping information for each dataset
+        """
+        data_dict = self.processed_data if use_processed_data else self.raw_data
+        data_type = "processed" if use_processed_data else "raw"
+        
+        if not data_dict:
+            print(f"No {data_type} data available for cropping")
+            return {}
+        
+        print(f"\nCropping {data_type} data to shortest signal duration...")
+        
+        # Preserve original data if requested
+        if preserve_original:
+            if use_processed_data:
+                for label, data in self.processed_data.items():
+                    if label not in self.original_processed_data:
+                        self.original_processed_data[label] = data.copy()
+            else:
+                for label, data in self.raw_data.items():
+                    if label not in self.original_raw_data:
+                        self.original_raw_data[label] = data.copy()
+        
+        # Find the time range limits for all signals
+        earliest_start = float('-inf')
+        latest_end = float('inf')
+        duration_info = {}
+        
+        for label, data in data_dict.items():
+            time_vec = self.time_vectors[label]
+            start_time = time_vec[0]
+            end_time = time_vec[-1]
+            duration = end_time - start_time
+            
+            duration_info[label] = {
+                'original_start': start_time,
+                'original_end': end_time,
+                'original_duration': duration,
+                'original_samples': len(data)
+            }
+            
+            # Update global limits
+            earliest_start = max(earliest_start, start_time)
+            latest_end = min(latest_end, end_time)
+            
+            print(f"  {label}: {duration:.6f}s ({len(data)} samples) - Start: {start_time:.6f}s, End: {end_time:.6f}s")
+        
+        if earliest_start >= latest_end:
+            print("Error: No overlapping time range found between signals!")
+            return duration_info
+        
+        common_duration = latest_end - earliest_start
+        print(f"\nCommon time range: {earliest_start:.6f}s to {latest_end:.6f}s")
+        print(f"Common duration: {common_duration:.6f}s")
+        
+        # Crop each signal to the common time range
+        cropping_info = {}
+        
+        for label, data in data_dict.items():
+            time_vec = self.time_vectors[label]
+            
+            # Find indices for cropping
+            start_idx = np.argmin(np.abs(time_vec - earliest_start))
+            end_idx = np.argmin(np.abs(time_vec - latest_end))
+            
+            # Ensure end_idx is after start_idx
+            if end_idx <= start_idx:
+                end_idx = len(time_vec) - 1
+            
+            # Crop data and time vector
+            cropped_data = data[start_idx:end_idx+1]
+            cropped_time = time_vec[start_idx:end_idx+1]
+            
+            # Update the data structures
+            if use_processed_data:
+                self.processed_data[label] = cropped_data
+            else:
+                self.raw_data[label] = cropped_data
+            
+            # Always update time vectors to match cropped data length
+            self.time_vectors[label] = cropped_time
+            
+            # Update sampling rate for consistency
+            if len(cropped_time) > 1:
+                self.sampling_rates[label] = self._calculate_sampling_rate(cropped_time)
+            
+            # Store cropping information
+            cropping_info[label] = {
+                'original_start': duration_info[label]['original_start'],
+                'original_end': duration_info[label]['original_end'],
+                'original_duration': duration_info[label]['original_duration'],
+                'original_samples': duration_info[label]['original_samples'],
+                'cropped_start': cropped_time[0],
+                'cropped_end': cropped_time[-1],
+                'cropped_duration': cropped_time[-1] - cropped_time[0],
+                'cropped_samples': len(cropped_data),
+                'start_idx': start_idx,
+                'end_idx': end_idx,
+                'samples_removed_start': start_idx,
+                'samples_removed_end': duration_info[label]['original_samples'] - end_idx - 1
+            }
+            
+            samples_removed = duration_info[label]['original_samples'] - len(cropped_data)
+            print(f"✓ Cropped {label}: {len(cropped_data)} samples ({cropped_time[-1] - cropped_time[0]:.6f}s) - Removed {samples_removed} samples")
+        
+        print(f"\n✓ All signals cropped to common duration of {common_duration:.6f}s")
+        
+        return cropping_info
+    
+    def restore_original_length(self, use_processed_data: bool = True) -> None:
+        """
+        Restore signals to their original length before cropping
+        
+        Args:
+            use_processed_data: If True, restore processed data. If False, restore raw data.
+        """
+        data_type = "processed" if use_processed_data else "raw"
+        
+        if use_processed_data:
+            if not self.original_processed_data:
+                print(f"No original {data_type} data available for restoration")
+                return
+            restore_from = self.original_processed_data
+            restore_to = self.processed_data
+        else:
+            if not self.original_raw_data:
+                print(f"No original {data_type} data available for restoration")
+                return
+            restore_from = self.original_raw_data
+            restore_to = self.raw_data
+        
+        print(f"\nRestoring {data_type} data to original lengths...")
+        
+        for label, original_data in restore_from.items():
+            if label in restore_to:
+                restore_to[label] = original_data.copy()
+                
+                # Restore original time vectors
+                if label in self.original_time_vectors:
+                    self.time_vectors[label] = self.original_time_vectors[label].copy()
+                    # Reapply any time shifts
+                    if label in self.alignment_info and self.alignment_info[label]['time_shift'] != 0.0:
+                        shift = self.alignment_info[label]['time_shift']
+                        self.time_vectors[label] = self.original_time_vectors[label] + shift
+                    
+                    # Recalculate sampling rate
+                    self.sampling_rates[label] = self._calculate_sampling_rate(self.time_vectors[label])
+                
+                print(f"✓ Restored {label} to {len(original_data)} samples")
+        
+        print(f"✓ All {data_type} signals restored to original lengths")
+    
+    def get_cropping_summary(self, cropping_info: Dict[str, Dict[str, float]]) -> pd.DataFrame:
+        """
+        Create a summary DataFrame of cropping information
+        
+        Args:
+            cropping_info: Dictionary returned by crop_to_shortest_signal()
+            
+        Returns:
+            DataFrame with cropping summary
+        """
+        if not cropping_info:
+            return pd.DataFrame()
+        
+        summary_data = []
+        for label, info in cropping_info.items():
+            summary_data.append({
+                'Dataset': label,
+                'Original Duration [s]': f"{info['original_duration']:.6f}",
+                'Original Samples': info['original_samples'],
+                'Cropped Duration [s]': f"{info['cropped_duration']:.6f}",
+                'Cropped Samples': info['cropped_samples'],
+                'Samples Removed': info['original_samples'] - info['cropped_samples'],
+                'Removal Ratio [%]': f"{((info['original_samples'] - info['cropped_samples']) / info['original_samples'] * 100):.1f}",
+                'Start Time [s]': f"{info['cropped_start']:.6f}",
+                'End Time [s]': f"{info['cropped_end']:.6f}"
+            })
+        
+        return pd.DataFrame(summary_data)
+
+    def plot_statistics_summary(self, save_path: Optional[str] = None) -> None:
+        """Plot comprehensive statistics summary"""
+        if not self.statistics:
+            print("No statistics calculated. Run calculate_statistics() first.")
+            return
+        
+        # Create statistics DataFrame
+        stats_df = pd.DataFrame(self.statistics).T
+        
+        # Create subplots
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        
+        # Basic statistics bar plot
+        basic_stats = ['mean', 'median', 'std', 'range']
+        stats_df[basic_stats].plot(kind='bar', ax=axes[0,0])
+        axes[0,0].set_title('Basic Statistics')
+        axes[0,0].set_ylabel('Value')
+        axes[0,0].tick_params(axis='x', rotation=45)
+        
+        # Distribution characteristics
+        dist_stats = ['skewness', 'kurtosis']
+        stats_df[dist_stats].plot(kind='bar', ax=axes[0,1])
+        axes[0,1].set_title('Distribution Characteristics')
+        axes[0,1].set_ylabel('Value')
+        axes[0,1].tick_params(axis='x', rotation=45)
+        
+        # Signal energy and RMS
+        energy_stats = ['rms', 'energy']
+        stats_df[energy_stats].plot(kind='bar', ax=axes[1,0])
+        axes[1,0].set_title('Signal Energy Characteristics')
+        axes[1,0].set_ylabel('Value')
+        axes[1,0].tick_params(axis='x', rotation=45)
+        
+        # Zero crossings
+        stats_df[['zero_crossings']].plot(kind='bar', ax=axes[1,1])
+        axes[1,1].set_title('Zero Crossings')
+        axes[1,1].set_ylabel('Count')
+        axes[1,1].tick_params(axis='x', rotation=45)
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Statistics plot saved to {save_path}")
+
+        plt.show()
+        plt.close()
+    
+    def plot_correlation_matrix(self, save_path: Optional[str] = None) -> None:
+        """Plot correlation matrix heatmap"""
+        correlations = self.calculate_correlations()
+
+        if not correlations:
+            print("No correlations to plot (need at least 2 datasets)")
+            return
+
+        # Create correlation matrices
+        labels = list(self.processed_data.keys())
+        n_labels = len(labels)
+
+        pearson_matrix = np.eye(n_labels)
+        spearman_matrix = np.eye(n_labels)
+
+        for i, label1 in enumerate(labels):
+            for j, label2 in enumerate(labels):
+                if i != j:
+                    pair_key = f"{label1} vs {label2}" if i < j else f"{label2} vs {label1}"
+                    if pair_key in correlations:
+                        pearson_matrix[i,j] = correlations[pair_key]['pearson']
+                        spearman_matrix[i,j] = correlations[pair_key]['spearman']
+
+        # Plot correlation matrices
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+        # Pearson correlation
+        sns.heatmap(pearson_matrix, annot=True, cmap='coolwarm', center=0,
+                   xticklabels=labels, yticklabels=labels, ax=axes[0])
+        axes[0].set_title('Pearson Correlation Matrix')
+
+        # Spearman correlation
+        sns.heatmap(spearman_matrix, annot=True, cmap='coolwarm', center=0,
+                   xticklabels=labels, yticklabels=labels, ax=axes[1])
+        axes[1].set_title('Spearman Correlation Matrix')
+
+        plt.tight_layout()
+
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Correlation matrix saved to {save_path}")
+
+        plt.show()
+        plt.close()
+
+    def plot_scatterplot_matrix(self, save_path: Optional[str] = None,
+                                max_points: int = 5000,
+                                show_correlation: bool = True,
+                                show_regression: bool = True) -> None:
+        """
+        Plot scatterplot matrix (pair plot) showing all pairwise relationships
+
+        Also known as SPLOM (Scatterplot Matrix). Shows scatter plots for each
+        pair of variables with optional correlation coefficients and regression lines.
+
+        Parameters:
+        -----------
+        save_path : str, optional
+            Path to save the figure
+        max_points : int, default=5000
+            Downsample to this many points if signals are longer (for performance)
+        show_correlation : bool, default=True
+            Show Pearson correlation coefficient on each subplot
+        show_regression : bool, default=True
+            Show linear regression line on scatter plots
+        """
+        if not self.processed_data:
+            print("No processed data available. Load and process data first.")
+            return
+
+        if len(self.processed_data) < 2:
+            print("Need at least 2 datasets for scatterplot matrix")
+            return
+
+        # Get synchronized data for all pairs
+        labels = list(self.processed_data.keys())
+        n_labels = len(labels)
+
+        # Prepare synchronized data dictionary
+        sync_data = {}
+        for label in labels:
+            sync_data[label] = []
+
+        # Synchronize all pairs to get data on common time base
+        # We'll use the first signal as reference and sync all others to it
+        ref_label = labels[0]
+        ref_data = self.processed_data[ref_label]
+        ref_time = self.time_vectors[ref_label]
+
+        for label in labels:
+            if label == ref_label:
+                sync_data[label] = ref_data
+            else:
+                data = self.processed_data[label]
+                time = self.time_vectors[label]
+                _, data_sync = self._synchronize_time_series(
+                    ref_data, ref_time, data, time
+                )
+                sync_data[label] = data_sync
+
+        # Ensure all have same length (use minimum)
+        min_len = min(len(sync_data[label]) for label in labels)
+        for label in labels:
+            sync_data[label] = sync_data[label][:min_len]
+
+        # Downsample if needed for performance
+        if min_len > max_points:
+            downsample_factor = min_len // max_points
+            for label in labels:
+                sync_data[label] = sync_data[label][::downsample_factor]
+            print(f"Downsampled from {min_len} to {len(sync_data[labels[0]])} points for visualization")
+
+        # Create figure with subplots
+        fig, axes = plt.subplots(n_labels, n_labels, figsize=(4*n_labels, 4*n_labels))
+
+        # Handle single subplot case
+        if n_labels == 2:
+            axes = np.array([[None, None], [None, None]])
+            axes_flat = axes.flatten()
+            fig, axes_flat_new = plt.subplots(1, 4, figsize=(16, 4))
+            # We'll only use the off-diagonal
+            axes = axes_flat_new.reshape(2, 2)
+
+        # Iterate through all subplot positions
+        for i, label_y in enumerate(labels):
+            for j, label_x in enumerate(labels):
+                if n_labels == 2:
+                    if i == j:
+                        continue
+                    ax = axes[i, j]
+                else:
+                    ax = axes[i, j]
+
+                # Diagonal: show histogram
+                if i == j:
+                    data = sync_data[label_y]
+                    ax.hist(data, bins=30, alpha=0.7, color='steelblue', edgecolor='black')
+                    ax.set_ylabel('Frequency', fontsize=9)
+                    ax.set_xlabel(label_y if i == n_labels-1 else '', fontsize=9)
+                    ax.set_title(f'{label_y}\n(histogram)', fontsize=10, fontweight='bold')
+                    ax.grid(True, alpha=0.3)
+
+                # Off-diagonal: show scatter plot
+                else:
+                    data_x = sync_data[label_x]
+                    data_y = sync_data[label_y]
+
+                    # Scatter plot
+                    ax.scatter(data_x, data_y, alpha=0.3, s=1, color='steelblue', rasterized=True)
+
+                    # Add regression line if requested
+                    if show_regression:
+                        # Calculate linear fit
+                        z = np.polyfit(data_x, data_y, 1)
+                        p = np.poly1d(z)
+                        x_line = np.array([np.min(data_x), np.max(data_x)])
+                        y_line = p(x_line)
+                        ax.plot(x_line, y_line, 'r-', linewidth=2, alpha=0.8, label='Linear fit')
+
+                    # Add correlation coefficient if requested
+                    if show_correlation:
+                        corr, _ = pearsonr(data_x, data_y)
+                        # Position text in corner
+                        ax.text(0.05, 0.95, f'r = {corr:.3f}',
+                               transform=ax.transAxes,
+                               fontsize=9, fontweight='bold',
+                               verticalalignment='top',
+                               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+
+                    # Labels
+                    if j == 0:
+                        ax.set_ylabel(label_y, fontsize=9)
+                    if i == n_labels - 1:
+                        ax.set_xlabel(label_x, fontsize=9)
+
+                    ax.grid(True, alpha=0.3)
+
+                # Tick label size
+                ax.tick_params(labelsize=8)
+
+        # Overall title
+        fig.suptitle('Scatterplot Matrix (Pairwise Correlations)',
+                    fontsize=16, fontweight='bold', y=0.995)
+        plt.tight_layout()
+
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Scatterplot matrix saved to {save_path}")
+
+        plt.show()
+        plt.close()
+
+    def plot_scatterplot_matrix_compact(self, save_path: Optional[str] = None,
+                                        max_points: int = 5000,
+                                        point_size: float = 2.0,
+                                        point_alpha: float = 0.5) -> None:
+        """
+        Plot compact scatterplot matrix for small-size display
+
+        Minimal design with no axis ticks, numbers, regression lines, or correlation values.
+        Shows only scatter points and variable labels on edges.
+
+        Parameters:
+        -----------
+        save_path : str, optional
+            Path to save the figure
+        max_points : int, default=5000
+            Downsample to this many points if signals are longer
+        point_size : float, default=2.0
+            Size of scatter points (increase for better visibility)
+        point_alpha : float, default=0.5
+            Transparency of scatter points (0=transparent, 1=opaque)
+        """
+        if not self.processed_data:
+            print("No processed data available. Load and process data first.")
+            return
+
+        if len(self.processed_data) < 2:
+            print("Need at least 2 datasets for scatterplot matrix")
+            return
+
+        # Get synchronized data for all pairs
+        labels = list(self.processed_data.keys())
+        n_labels = len(labels)
+
+        # Prepare synchronized data dictionary
+        sync_data = {}
+        for label in labels:
+            sync_data[label] = []
+
+        # Synchronize all pairs to get data on common time base
+        ref_label = labels[0]
+        ref_data = self.processed_data[ref_label]
+        ref_time = self.time_vectors[ref_label]
+
+        for label in labels:
+            if label == ref_label:
+                sync_data[label] = ref_data
+            else:
+                data = self.processed_data[label]
+                time = self.time_vectors[label]
+                _, data_sync = self._synchronize_time_series(
+                    ref_data, ref_time, data, time
+                )
+                sync_data[label] = data_sync
+
+        # Ensure all have same length (use minimum)
+        min_len = min(len(sync_data[label]) for label in labels)
+        for label in labels:
+            sync_data[label] = sync_data[label][:min_len]
+
+        # Downsample if needed for performance
+        if min_len > max_points:
+            downsample_factor = min_len // max_points
+            for label in labels:
+                sync_data[label] = sync_data[label][::downsample_factor]
+            print(f"Downsampled from {min_len} to {len(sync_data[labels[0]])} points for visualization")
+
+        # Create figure with smaller size for compact display
+        fig, axes = plt.subplots(n_labels, n_labels,
+                                figsize=(2*n_labels, 2*n_labels))
+
+        # Handle single pair case
+        if n_labels == 2:
+            axes = np.array([[axes[0], axes[1]], [axes[2], axes[3]]])
+
+        # Iterate through all subplot positions
+        for i, label_y in enumerate(labels):
+            for j, label_x in enumerate(labels):
+                ax = axes[i, j] if n_labels > 2 else axes.flatten()[i*n_labels + j]
+
+                # Off-diagonal: show scatter plot only
+                if i != j:
+                    data_x = sync_data[label_x]
+                    data_y = sync_data[label_y]
+
+                    # Minimal scatter plot
+                    ax.scatter(data_x, data_y, alpha=point_alpha, s=point_size,
+                              color='steelblue', rasterized=True)
+
+                # Diagonal: show histogram
+                else:
+                    data = sync_data[label_y]
+                    ax.hist(data, bins=30, alpha=0.7, color='steelblue', edgecolor='none')
+
+                # Remove all ticks and tick labels
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.tick_params(left=False, bottom=False)
+
+                # Add labels only on edges
+                if i == n_labels - 1:  # Bottom row
+                    ax.set_xlabel(label_x, fontsize=10, fontweight='bold')
+                if j == 0:  # Left column
+                    ax.set_ylabel(label_y, fontsize=10, fontweight='bold')
+
+                # Minimal styling
+                for spine in ax.spines.values():
+                    spine.set_linewidth(0.5)
+                    spine.set_color('gray')
+
+        # Tight layout with minimal spacing
+        plt.subplots_adjust(wspace=0.05, hspace=0.05)
+
+        if save_path:
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            print(f"Compact scatterplot matrix saved to {save_path}")
+
+        plt.show()
+        plt.close()
+
+    def plot_processing_and_alignment_summary(self, save_path: Optional[str] = None, 
+                                             use_full_data: bool = True) -> None:
+        """Consolidated plot showing complete data processing pipeline: Raw → Processed → Aligned"""
+        if not self.original_time_vectors:
+            print("No original time vectors available for alignment comparison")
+            return
+        
+        # Choose data source
+        if use_full_data and hasattr(self, 'full_processed_data') and self.full_processed_data:
+            plot_data = self.full_processed_data
+            data_type = "full processed"
+            print("Plotting full processed data (before cropping)")
+        else:
+            plot_data = self.processed_data
+            data_type = "current processed"
+            print("Plotting current processed data (potentially cropped)")
+
+        # Create label-to-group mapping from dataset configs
+        label_to_group = {ds.label: ds.group for ds in self.datasets}
+
+        # Get unique groups and determine row assignment
+        unique_groups = sorted(set(label_to_group.values()))
+        if len(unique_groups) != 2:
+            print(f"Warning: Expected 2 groups, found {len(unique_groups)}: {unique_groups}")
+
+        # Create 2x3 grid: Row assignment based on group order
+        # Columns: Raw → Processed → Final Aligned
+        fig, axes = plt.subplots(2, 3, figsize=(20, 10), facecolor='white')
+        fig.subplots_adjust(top=0.92, bottom=0.08, left=0.08, right=0.95, wspace=0.25, hspace=0.30)
+
+        # Unpack axes: row 0 = first group, row 1 = second group
+        ax_row0 = {col: axes[0, col] for col in range(3)}  # raw, proc, final
+        ax_row1 = {col: axes[1, col] for col in range(3)}
+
+        # Map groups to rows
+        group_to_row = {unique_groups[0]: 0, unique_groups[1]: 1}
+        row_to_axes = {0: ax_row0, 1: ax_row1}
+        row_to_group = {0: unique_groups[0], 1: unique_groups[1]}
+
+        # Define colorblind-friendly colors (using Okabe-Ito palette)
+        colors = ['#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161', '#FBAFE4', '#949494', '#ECE133']
+        linewidth_thin = 1.0
+        linewidth_medium = 1.5
+
+        # Store alignment info for final summary
+        alignment_summary = []
+
+        # Set titles for all subplots
+        for row in [0, 1]:
+            group_name = row_to_group[row]
+            row_to_axes[row][0].set_title(f'Raw Signals ({group_name} group)', fontsize=12, fontweight='bold', pad=10)
+            row_to_axes[row][1].set_title(f'Processed Signals ({group_name} group)', fontsize=12, fontweight='bold', pad=10)
+            row_to_axes[row][2].set_title(f'Final Aligned ({group_name} group)', fontsize=12, fontweight='bold', pad=10)
+
+        # Panel 1: Raw signals
+        for i, (label, processed_data) in enumerate(plot_data.items()):
+            color = colors[i % len(colors)]
+
+            if label in self.original_time_vectors and label in self.raw_data:
+                orig_time = self.original_time_vectors[label]
+                raw_data = self.raw_data[label]
+
+                if use_full_data:
+                    time_vec = orig_time
+                    # Use raw data at full length to match
+                    raw_plot_data = raw_data[:len(time_vec)] if len(raw_data) >= len(time_vec) else raw_data
+                    time_vec = time_vec[:len(raw_plot_data)]
+                else:
+                    time_vec = orig_time[:len(processed_data)]
+                    raw_plot_data = raw_data[:len(processed_data)]
+
+                # Get group and row for this signal
+                signal_group = label_to_group.get(label)
+                if signal_group in group_to_row:
+                    row = group_to_row[signal_group]
+                    ax = row_to_axes[row][0]  # Column 0 = raw
+                    ax.plot(time_vec, raw_plot_data,
+                           label=f"{label}",
+                           color=color, linewidth=linewidth_thin, alpha=0.8)
+        
+        # Panel 2: Processed signals
+        for i, (label, data) in enumerate(plot_data.items()):
+            color = colors[i % len(colors)]
+
+            if label in self.original_time_vectors:
+                orig_time = self.original_time_vectors[label]
+
+                if use_full_data:
+                    time_vec = orig_time
+                else:
+                    time_vec = orig_time[:len(data)]
+
+                # Get group and row for this signal
+                signal_group = label_to_group.get(label)
+                if signal_group in group_to_row:
+                    row = group_to_row[signal_group]
+                    ax = row_to_axes[row][1]  # Column 1 = processed
+                    ax.plot(time_vec, data,
+                           label=f"{label}",
+                           color=color, linewidth=linewidth_thin, alpha=0.9)
+        
+        # Panel 3: Final aligned signals
+        # Use current processed data (which includes cropping) for the final panel
+        final_data = self.processed_data if not use_full_data or not hasattr(self, 'full_processed_data') else self.processed_data
+
+        for i, (label, data) in enumerate(final_data.items()):
+            color = colors[i % len(colors)]
+
+            # Get shift information
+            shift_info = self.alignment_info[label]
+            total_shift = shift_info['time_shift']
+            manual_shift = shift_info.get('manual_shift', 0.0)
+            auto_shift = shift_info.get('auto_shift', 0.0)
+
+            # Always apply normalization for final panel display (regardless of processing config)
+            # This ensures the final panel shows normalized data for comparison
+            data_min, data_max = np.min(data), np.max(data)
+            if data_max > data_min:  # Avoid division by zero
+                data_norm = (data - data_min) / (data_max - data_min)
+            else:
+                data_norm = np.zeros_like(data)
+
+            # Use current time vectors (which include alignment and cropping)
+            time_vec = self.time_vectors[label][:len(data)]
+
+            # Create concise labels
+            if abs(total_shift) > 1e-6:
+                label_text = f"{label} ({total_shift*1000:+.1f}ms)"
+            else:
+                label_text = f"{label} (ref)"
+
+            # Get group and row for this signal
+            signal_group = label_to_group.get(label)
+            if signal_group in group_to_row:
+                row = group_to_row[signal_group]
+                ax = row_to_axes[row][2]  # Column 2 = final
+                ax.plot(time_vec, data_norm,
+                       label=label_text,
+                       color=color, linewidth=linewidth_medium, alpha=0.95)
+
+            # Build alignment summary for text box
+            if total_shift != 0.0:
+                if manual_shift != 0.0 and auto_shift != 0.0:
+                    alignment_summary.append(f"{label}: {manual_shift*1000:+.1f}ms (manual) + {auto_shift*1000:+.1f}ms (auto) = {total_shift*1000:+.1f}ms")
+                elif manual_shift != 0.0:
+                    alignment_summary.append(f"{label}: {total_shift*1000:+.1f}ms (manual only)")
+                elif auto_shift != 0.0:
+                    alignment_summary.append(f"{label}: {total_shift*1000:+.1f}ms (auto only)")
+                else:
+                    alignment_summary.append(f"{label}: {total_shift*1000:+.1f}ms")
+            else:
+                alignment_summary.append(f"{label}: Reference (0.0ms)")
+        
+        # Configure axes labels and styling for all 6 subplots
+        for row in [0, 1]:
+            for col in [0, 1, 2]:
+                ax = row_to_axes[row][col]
+                group_name = row_to_group[row]
+
+                ax.set_xlabel('Time [s]', fontsize=10)
+
+                # Set y-labels based on group and column
+                if col == 2:  # Final (normalized)
+                    ax.set_ylabel(f'{group_name} Signals\n(normalized)', fontsize=10)
+                else:
+                    ax.set_ylabel(f'{group_name} Signals', fontsize=10)
+
+                # Configure tick marks
+                ax.tick_params(axis='both', labelsize=9, direction='out',
+                              colors='black', width=1, length=4)
+
+                # Set plot background and borders
+                ax.set_facecolor('white')
+                for spine in ax.spines.values():
+                    spine.set_edgecolor('black')
+                    spine.set_linewidth(1)
+                    spine.set_visible(True)
+
+                # Add legend to each subplot
+                lines, labels_list = ax.get_legend_handles_labels()
+                if lines:
+                    ax.legend(loc='upper right', fontsize=8, framealpha=0.9)
+        
+        # Add vertical guides to final aligned plots for phase comparison
+        if len(final_data) > 1:
+            all_final_times = []
+            for label, data in final_data.items():
+                time_vec = self.time_vectors[label][:len(data)]
+                all_final_times.extend([time_vec[0], time_vec[-1]])
+
+            if all_final_times:
+                t_min, t_max = min(all_final_times), max(all_final_times)
+                t_range = t_max - t_min
+                n_guides = 5  # Fewer guides to reduce clutter
+                guide_times = [t_min + i * t_range / (n_guides - 1) for i in range(n_guides)]
+
+                # Add subtle guides to both final aligned plots
+                for guide_time in guide_times:
+                    for row in [0, 1]:
+                        ax_final = row_to_axes[row][2]  # Column 2 = final
+                        ax_final.axvline(x=guide_time, color='lightgray', linestyle=':',
+                                  alpha=0.6, linewidth=0.5, zorder=0)
+        
+        # Add compact processing information as text box
+        processing_info = []
+        if self.processing_config.apply_normalization:
+            processing_info.append(f"Norm: {self.processing_config.normalization_method}")
+        if self.processing_config.apply_savgol:
+            processing_info.append(f"Savgol({self.processing_config.savgol_window})")
+        if self.processing_config.apply_lowpass:
+            processing_info.append(f"Lowpass({self.processing_config.lowpass_cutoff})")
+        if self.processing_config.apply_smoothing:
+            processing_info.append(f"Smooth: {self.processing_config.smoothing_method}")
+        
+        processing_text = "Processing: " + ", ".join(processing_info) if processing_info else "Processing: None"
+        
+        # Compact alignment summary
+        alignment_compact = []
+        for label, info in self.alignment_info.items():
+            shift = info['time_shift']
+            if abs(shift) > 1e-6:
+                alignment_compact.append(f"{label}: {shift*1000:+.1f}ms")
+            else:
+                alignment_compact.append(f"{label}: ref")
+        
+        alignment_text = "Alignment: " + ", ".join(alignment_compact) if alignment_compact else "Alignment: None"
+        
+        # Cleaner overall title centered
+        fig.suptitle('Data Processing Pipeline Summary', 
+                    fontsize=16, fontweight='bold', y=0.95)
+        
+        # Place compact summary in bottom center
+        summary_text = processing_text + " | " + alignment_text
+        fig.text(0.5, 0.02, summary_text, ha='center', va='bottom', 
+                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.7, pad=0.3),
+                fontsize=9, transform=fig.transFigure)
+        
+        # Don't use tight_layout since we have custom spacing
+        # plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Processing and alignment summary saved to {save_path}")
+        
+        plt.show()
+        plt.close()
+
+    def plot_autocorrelation(self, max_lag: Optional[int] = None,
+                            save_path: Optional[str] = None,
+                            normalize: bool = True) -> None:
+        """
+        Plot autocorrelation function (ACF) for each time series
+
+        Parameters:
+        -----------
+        max_lag : int, optional
+            Maximum lag to compute (default: min(len(data)//2, 1000))
+        save_path : str, optional
+            Path to save the figure
+        normalize : bool, default=True
+            If True, normalize autocorrelation to [-1, 1] range
+        """
+        if not self.processed_data:
+            print("No processed data available. Load data first.")
+            return
+
+        n_series = len(self.processed_data)
+
+        # Determine subplot layout
+        if n_series == 1:
+            fig, axes = plt.subplots(1, 1, figsize=(10, 6))
+            axes = [axes]
+        elif n_series == 2:
+            fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        elif n_series <= 4:
+            fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+            axes = axes.flatten()
+        elif n_series <= 6:
+            fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+            axes = axes.flatten()
+        else:
+            n_cols = 3
+            n_rows = int(np.ceil(n_series / n_cols))
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 6*n_rows))
+            axes = axes.flatten()
+
+        # Compute and plot autocorrelation for each series
+        for idx, (label, data) in enumerate(self.processed_data.items()):
+            ax = axes[idx]
+
+            # Determine max lag if not specified
+            if max_lag is None:
+                lag_limit = min(len(data) // 2, 1000)
+            else:
+                lag_limit = min(max_lag, len(data) - 1)
+
+            # Compute autocorrelation using numpy correlate
+            # Remove mean for proper autocorrelation
+            data_centered = data - np.mean(data)
+
+            # Full autocorrelation
+            autocorr = np.correlate(data_centered, data_centered, mode='full')
+
+            # Take only positive lags
+            autocorr = autocorr[len(autocorr)//2:]
+
+            # Normalize if requested
+            if normalize:
+                autocorr = autocorr / autocorr[0]  # Normalize by zero-lag value
+
+            # Limit to max_lag
+            autocorr = autocorr[:lag_limit+1]
+            lags = np.arange(len(autocorr))
+
+            # Convert lag indices to time if time vector exists
+            if label in self.time_vectors and len(self.time_vectors[label]) > 0:
+                time_vec = self.time_vectors[label]
+                # Calculate average sampling interval
+                dt = np.mean(np.diff(time_vec))
+                time_lags = lags * dt
+                x_label = f'Lag (seconds)'
+                x_values = time_lags
+            else:
+                x_label = 'Lag (samples)'
+                x_values = lags
+
+            # Plot autocorrelation
+            ax.plot(x_values, autocorr, linewidth=2, color='#0173B2', alpha=0.8)
+            ax.axhline(y=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+
+            # Add confidence interval (approximate 95% CI for white noise)
+            conf_interval = 1.96 / np.sqrt(len(data))
+            if normalize:
+                ax.axhline(y=conf_interval, color='red', linestyle='--',
+                          linewidth=1, alpha=0.5, label=f'95% CI (±{conf_interval:.3f})')
+                ax.axhline(y=-conf_interval, color='red', linestyle='--',
+                          linewidth=1, alpha=0.5)
+
+            # Find first zero crossing (decorrelation time)
+            zero_crossings = np.where(np.diff(np.sign(autocorr)))[0]
+            if len(zero_crossings) > 0:
+                first_zero = zero_crossings[0]
+                ax.axvline(x=x_values[first_zero], color='green', linestyle=':',
+                          linewidth=1.5, alpha=0.7,
+                          label=f'First zero: {x_values[first_zero]:.4f}')
+
+            # Find where autocorrelation drops below 1/e (decay time)
+            if normalize:
+                decay_threshold = 1.0 / np.e
+                below_threshold = np.where(autocorr < decay_threshold)[0]
+                if len(below_threshold) > 0:
+                    decay_idx = below_threshold[0]
+                    ax.axvline(x=x_values[decay_idx], color='orange', linestyle=':',
+                              linewidth=1.5, alpha=0.7,
+                              label=f'1/e decay: {x_values[decay_idx]:.4f}')
+
+            # Labels and title
+            ax.set_xlabel(x_label, fontsize=11)
+            ax.set_ylabel('Autocorrelation' if normalize else 'Autocovariance', fontsize=11)
+            ax.set_title(f'{label}', fontsize=12, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc='upper right', fontsize=9)
+
+            # Set y-axis limits for normalized case
+            if normalize:
+                ax.set_ylim([-0.5, 1.1])
+
+        # Hide unused subplots
+        for idx in range(n_series, len(axes)):
+            axes[idx].axis('off')
+
+        fig.suptitle('Autocorrelation Functions', fontsize=16, fontweight='bold', y=0.995)
+        plt.tight_layout()
+
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Autocorrelation plot saved to {save_path}")
+
+        plt.show()
+        plt.close()
+
+    def calculate_cross_correlation_lags(self, max_lag: Optional[int] = None,
+                                        use_statsmodels: bool = True) -> Dict[str, Dict[str, float]]:
+        """
+        Calculate cross-correlation between all pairs of time series to detect lags
+
+        Parameters:
+        -----------
+        max_lag : int, optional
+            Maximum lag to consider (default: min(len(data)//4, 500))
+        use_statsmodels : bool, default=True
+            If True and available, use statsmodels CCF; otherwise use numpy
+
+        Returns:
+        --------
+        lag_info : dict
+            Dictionary with lag information for each pair:
+            - 'optimal_lag_samples': Lag at maximum correlation (in samples)
+            - 'optimal_lag_time': Lag in time units (seconds)
+            - 'max_correlation': Maximum correlation value
+            - 'correlation_at_zero': Correlation at zero lag
+        """
+        if not self.processed_data:
+            print("No processed data available. Load data first.")
+            return {}
+
+        lag_info = {}
+        labels = list(self.processed_data.keys())
+
+        for i, label1 in enumerate(labels):
+            for j, label2 in enumerate(labels[i+1:], i+1):
+                data1 = self.processed_data[label1]
+                data2 = self.processed_data[label2]
+                time1 = self.time_vectors[label1]
+                time2 = self.time_vectors[label2]
+
+                # Synchronize time series
+                data1_sync, data2_sync = self._synchronize_time_series(
+                    data1, time1, data2, time2
+                )
+
+                # Determine max lag
+                if max_lag is None:
+                    lag_limit = min(len(data1_sync) // 4, 500)
+                else:
+                    lag_limit = min(max_lag, len(data1_sync) - 1)
+
+                # Use unified cross-correlation helper (checks both positive and negative lags)
+                method_to_use = 'statsmodels' if (use_statsmodels and STATSMODELS_AVAILABLE) else 'numpy'
+                lags, cross_corr, optimal_lag = self._compute_cross_correlation(
+                    data1_sync, data2_sync,
+                    max_lag=lag_limit,
+                    method=method_to_use
+                )
+
+                # Find correlation values
+                optimal_idx = np.where(lags == optimal_lag)[0][0]
+                max_corr = cross_corr[optimal_idx]
+                zero_idx = np.where(lags == 0)[0]
+                corr_at_zero = cross_corr[zero_idx[0]] if len(zero_idx) > 0 else max_corr
+
+                # Convert lag to time units
+                if label1 in self.time_vectors and len(self.time_vectors[label1]) > 1:
+                    dt = np.mean(np.diff(self.time_vectors[label1]))
+                    optimal_lag_time = optimal_lag * dt
+                else:
+                    optimal_lag_time = float('nan')
+
+                pair_key = f"{label1} vs {label2}"
+                lag_info[pair_key] = {
+                    'optimal_lag_samples': int(optimal_lag),
+                    'optimal_lag_time': optimal_lag_time,
+                    'max_correlation': float(max_corr),
+                    'correlation_at_zero': float(corr_at_zero),
+                    'lag_interpretation': self._interpret_lag(optimal_lag, label1, label2)
+                }
+
+        return lag_info
+
+    def _interpret_lag(self, lag: int, label1: str, label2: str) -> str:
+        """
+        Interpret the meaning of a lag value
+
+        Parameters:
+        -----------
+        lag : int
+            Lag in samples (positive means label2 lags behind label1)
+        label1, label2 : str
+            Labels of the two series
+
+        Returns:
+        --------
+        interpretation : str
+            Human-readable interpretation of the lag
+        """
+        if lag == 0:
+            return "No lag detected (synchronized)"
+        elif lag > 0:
+            return f"{label2} lags behind {label1} by {abs(lag)} samples"
+        else:
+            return f"{label1} lags behind {label2} by {abs(lag)} samples"
+
+    def plot_cross_correlation(self, max_lag: Optional[int] = None,
+                              save_path: Optional[str] = None,
+                              use_statsmodels: bool = True) -> None:
+        """
+        Plot cross-correlation functions for all pairs of time series
+
+        Parameters:
+        -----------
+        max_lag : int, optional
+            Maximum lag to compute (default: min(len(data)//4, 500))
+        save_path : str, optional
+            Path to save the figure
+        use_statsmodels : bool, default=True
+            If True and available, use statsmodels CCF
+        """
+        if not self.processed_data:
+            print("No processed data available. Load data first.")
+            return
+
+        labels = list(self.processed_data.keys())
+        n_pairs = len(labels) * (len(labels) - 1) // 2
+
+        if n_pairs == 0:
+            print("Need at least 2 datasets for cross-correlation analysis")
+            return
+
+        # Calculate lag information
+        lag_info = self.calculate_cross_correlation_lags(max_lag=max_lag,
+                                                         use_statsmodels=use_statsmodels)
+
+        # Determine subplot layout
+        if n_pairs == 1:
+            fig, axes = plt.subplots(1, 1, figsize=(12, 6))
+            axes = [axes]
+        elif n_pairs == 2:
+            fig, axes = plt.subplots(1, 2, figsize=(20, 6))
+        elif n_pairs <= 4:
+            fig, axes = plt.subplots(2, 2, figsize=(20, 12))
+            axes = axes.flatten()
+        elif n_pairs <= 6:
+            fig, axes = plt.subplots(2, 3, figsize=(24, 12))
+            axes = axes.flatten()
+        else:
+            n_cols = 3
+            n_rows = int(np.ceil(n_pairs / n_cols))
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(24, 6*n_rows))
+            axes = axes.flatten()
+
+        # Plot cross-correlation for each pair
+        pair_idx = 0
+        for i, label1 in enumerate(labels):
+            for j, label2 in enumerate(labels[i+1:], i+1):
+                ax = axes[pair_idx]
+
+                data1 = self.processed_data[label1]
+                data2 = self.processed_data[label2]
+                time1 = self.time_vectors[label1]
+                time2 = self.time_vectors[label2]
+
+                # Synchronize time series
+                data1_sync, data2_sync = self._synchronize_time_series(
+                    data1, time1, data2, time2
+                )
+
+                # Determine max lag
+                if max_lag is None:
+                    lag_limit = min(len(data1_sync) // 4, 500)
+                else:
+                    lag_limit = min(max_lag, len(data1_sync) - 1)
+
+                # Use unified cross-correlation helper (checks both positive and negative lags)
+                method_to_use = 'statsmodels' if (use_statsmodels and STATSMODELS_AVAILABLE) else 'numpy'
+                lags, cross_corr, peak_lag = self._compute_cross_correlation(
+                    data1_sync, data2_sync,
+                    max_lag=lag_limit,
+                    method=method_to_use
+                )
+
+                # Convert lags to time if possible
+                if label1 in self.time_vectors and len(self.time_vectors[label1]) > 1:
+                    dt = np.mean(np.diff(self.time_vectors[label1]))
+                    time_lags = lags * dt
+                    x_label = 'Lag (seconds)'
+                    x_values = time_lags
+                else:
+                    x_label = 'Lag (samples)'
+                    x_values = lags
+
+                # Plot cross-correlation
+                ax.plot(x_values, cross_corr, linewidth=2, color='#0173B2', alpha=0.8)
+                ax.axhline(y=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+                ax.axvline(x=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+
+                # Mark optimal lag
+                pair_key = f"{label1} vs {label2}"
+                if pair_key in lag_info:
+                    opt_lag_samples = lag_info[pair_key]['optimal_lag_samples']
+                    if label1 in self.time_vectors and len(self.time_vectors[label1]) > 1:
+                        opt_lag_display = lag_info[pair_key]['optimal_lag_time']
+                    else:
+                        opt_lag_display = opt_lag_samples
+
+                    # Find the correlation value at optimal lag
+                    if use_statsmodels and STATSMODELS_AVAILABLE:
+                        opt_lag_idx = abs(opt_lag_samples)
+                        if opt_lag_idx < len(cross_corr):
+                            opt_corr = cross_corr[opt_lag_idx]
+                        else:
+                            opt_corr = lag_info[pair_key]['max_correlation']
+                    else:
+                        opt_lag_idx = np.argmin(np.abs(lags - opt_lag_samples))
+                        opt_corr = cross_corr[opt_lag_idx]
+
+                    ax.axvline(x=x_values[opt_lag_idx] if opt_lag_idx < len(x_values) else opt_lag_display,
+                              color='red', linestyle=':', linewidth=2, alpha=0.7,
+                              label=f'Max corr at lag: {opt_lag_display:.4f}')
+
+                    # Add text annotation
+                    ax.text(0.02, 0.98,
+                           f"Max correlation: {lag_info[pair_key]['max_correlation']:.3f}\n"
+                           f"At zero lag: {lag_info[pair_key]['correlation_at_zero']:.3f}",
+                           transform=ax.transAxes, fontsize=9,
+                           verticalalignment='top',
+                           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+                # Labels and title
+                ax.set_xlabel(x_label, fontsize=11)
+                ax.set_ylabel('Cross-correlation', fontsize=11)
+                ax.set_title(f'{label1} vs {label2}', fontsize=12, fontweight='bold')
+                ax.grid(True, alpha=0.3)
+                ax.legend(loc='upper right', fontsize=9)
+                ax.set_ylim([-1.1, 1.1])
+
+                pair_idx += 1
+
+        # Hide unused subplots
+        for idx in range(pair_idx, len(axes)):
+            axes[idx].axis('off')
+
+        method_str = "statsmodels CCF" if (use_statsmodels and STATSMODELS_AVAILABLE) else "numpy correlate"
+        fig.suptitle(f'Cross-Correlation Functions ({method_str})',
+                    fontsize=16, fontweight='bold', y=0.995)
+        plt.tight_layout()
+
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Cross-correlation plot saved to {save_path}")
+
+        plt.show()
+        plt.close()
+
+    def generate_report(self, output_dir: str = 'analysis_output') -> None:
+        """Generate comprehensive analysis report"""
+        output_path = Path(output_dir)
+        output_path.mkdir(exist_ok=True)
+        
+        print(f"\nGenerating comprehensive analysis report in {output_path}")
+        
+        # Calculate all metrics
+        correlations = self.calculate_correlations()
+        differences = self.calculate_differences()
+        lag_info = self.calculate_cross_correlation_lags()
+
+        # Generate plots
+        self.plot_processing_and_alignment_summary(save_path=output_path / 'processing_and_alignment_summary.png')
+        self.plot_statistics_summary(save_path=output_path / 'statistics_summary.png')
+        self.plot_correlation_matrix(save_path=output_path / 'correlation_matrix.png')
+        self.plot_autocorrelation(save_path=output_path / 'autocorrelation.png')
+
+        # Generate cross-correlation plot if there are multiple datasets
+        if len(self.processed_data) >= 2:
+            self.plot_cross_correlation(save_path=output_path / 'cross_correlation.png')
+            self.plot_scatterplot_matrix(save_path=output_path / 'scatterplot_matrix.png')
+            self.plot_scatterplot_matrix_compact(save_path=output_path / 'scatterplot_matrix_compact.png')
+        
+        # Save alignment summary
+        alignment_df = self.get_alignment_summary()
+        alignment_df.to_csv(output_path / 'alignment_summary.csv', index=False)
+        
+        # Save cropping summary if available
+        if self.last_cropping_info:
+            cropping_df = self.get_cropping_summary(self.last_cropping_info)
+            cropping_df.to_csv(output_path / 'cropping_summary.csv', index=False)
+        
+        # Create text report
+        report_path = output_path / 'analysis_report.txt'
+        with open(report_path, 'w') as f:
+            f.write("TIME SERIES ANALYSIS REPORT\n")
+            f.write("=" * 50 + "\n\n")
+            
+            # Dataset information
+            f.write("DATASET INFORMATION\n")
+            f.write("-" * 20 + "\n")
+            f.write(f"HDF5 File: {self.hdf5_path}\n")
+            f.write(f"Default Sampling Rate: {self.default_sampling_rate} Hz\n")
+            f.write(f"Number of datasets: {len(self.datasets)}\n\n")
+            
+            for dataset_config in self.datasets:
+                f.write(f"Dataset: {dataset_config.label}\n")
+                f.write(f"  Group: {dataset_config.group}\n")
+                f.write(f"  Name: {dataset_config.name}\n")
+                if dataset_config.time_name:
+                    f.write(f"  Time vector: {dataset_config.time_group}/{dataset_config.time_name}\n")
+                    f.write(f"  Time units: {dataset_config.time_units}\n")
+                elif dataset_config.sampling_rate:
+                    f.write(f"  Individual sampling rate: {dataset_config.sampling_rate} Hz\n")
+                else:
+                    f.write(f"  Using default sampling rate: {self.default_sampling_rate} Hz\n")
+                
+                if dataset_config.time_shift != 0.0:
+                    f.write(f"  Manual time shift: {dataset_config.time_shift:.6f} s\n")
+                
+                if dataset_config.label in self.processed_data:
+                    f.write(f"  Samples: {len(self.processed_data[dataset_config.label])}\n")
+                    f.write(f"  Actual sampling rate: {self.sampling_rates[dataset_config.label]:.2f} Hz\n")
+                    duration = self.time_vectors[dataset_config.label][-1] - self.time_vectors[dataset_config.label][0]
+                    f.write(f"  Duration: {duration:.6f} s\n")
+                f.write("\n")
+            
+            # Time alignment summary
+            f.write("TIME ALIGNMENT SUMMARY\n")
+            f.write("-" * 22 + "\n")
+            for label, info in self.alignment_info.items():
+                f.write(f"{label}:\n")
+                f.write(f"  Time shift: {info['time_shift']:.6f} s\n")
+                f.write(f"  Shift type: {info['shift_type']}\n")
+                f.write("\n")
+            
+            # Processing configuration
+            f.write("PROCESSING CONFIGURATION\n")
+            f.write("-" * 25 + "\n")
+            config_dict = self.processing_config.__dict__
+            for key, value in config_dict.items():
+                f.write(f"{key}: {value}\n")
+            f.write("\n")
+            
+            # Statistics
+            f.write("STATISTICS SUMMARY\n")
+            f.write("-" * 18 + "\n")
+            for label, stats in self.statistics.items():
+                f.write(f"{label}:\n")
+                for stat_name, stat_value in stats.items():
+                    f.write(f"  {stat_name}: {stat_value:.6f}\n")
+                f.write("\n")
+            
+            # Correlations
+            f.write("CORRELATION ANALYSIS\n")
+            f.write("-" * 20 + "\n")
+            f.write("Note: P-values are corrected for autocorrelation using effective sample size\n")
+            f.write("      (Bretherton et al. 1999 / Bayley-Hammersley method)\n\n")
+            for pair, corr_data in correlations.items():
+                f.write(f"{pair}:\n")
+                f.write(f"  Pearson correlation:  {corr_data['pearson']:>9.6f}\n")
+                f.write(f"    p-value (uncorrected): {corr_data['pearson_p_uncorrected']:>9.6e}\n")
+                f.write(f"    p-value (corrected):   {corr_data['pearson_p_corrected']:>9.6e}\n")
+                f.write(f"  Spearman correlation: {corr_data['spearman']:>9.6f}\n")
+                f.write(f"    p-value (uncorrected): {corr_data['spearman_p_uncorrected']:>9.6e}\n")
+                f.write(f"    p-value (corrected):   {corr_data['spearman_p_corrected']:>9.6e}\n")
+                f.write(f"  Sample size (actual):     {corr_data['n_actual']:>6d}\n")
+                f.write(f"  Sample size (effective):  {corr_data['n_effective']:>9.2f}\n")
+                f.write(f"  Lag-1 autocorr (series 1): {corr_data['autocorr_lag1_series1']:>8.6f}\n")
+                f.write(f"  Lag-1 autocorr (series 2): {corr_data['autocorr_lag1_series2']:>8.6f}\n")
+                f.write("\n")
+            
+            # Lag analysis
+            if lag_info:
+                f.write("CROSS-CORRELATION LAG ANALYSIS\n")
+                f.write("-" * 30 + "\n")
+                f.write("Note: Positive lag means the second series lags behind the first\n\n")
+                for pair, lag_data in lag_info.items():
+                    f.write(f"{pair}:\n")
+                    f.write(f"  Optimal lag (samples):     {lag_data['optimal_lag_samples']:>6d}\n")
+                    if not np.isnan(lag_data['optimal_lag_time']):
+                        f.write(f"  Optimal lag (time):        {lag_data['optimal_lag_time']:>9.6f} s\n")
+                    f.write(f"  Max correlation:           {lag_data['max_correlation']:>9.6f}\n")
+                    f.write(f"  Correlation at zero lag:   {lag_data['correlation_at_zero']:>9.6f}\n")
+                    f.write(f"  Interpretation: {lag_data['lag_interpretation']}\n")
+                    f.write("\n")
+
+            # Differences
+            f.write("DIFFERENCE ANALYSIS\n")
+            f.write("-" * 19 + "\n")
+            for pair, diff_data in differences.items():
+                f.write(f"{pair}:\n")
+                for metric, value in diff_data.items():
+                    f.write(f"  {metric}: {value:.6f}\n")
+                f.write("\n")
+
+            # Cropping information if available
+            if self.last_cropping_info:
+                f.write("CROPPING INFORMATION\n")
+                f.write("-" * 20 + "\n")
+                for label, crop_info in self.last_cropping_info.items():
+                    f.write(f"{label}:\n")
+                    f.write(f"  Original: {crop_info['original_samples']} samples ({crop_info['original_duration']:.6f}s)\n")
+                    f.write(f"  Cropped: {crop_info['cropped_samples']} samples ({crop_info['cropped_duration']:.6f}s)\n")
+                    f.write(f"  Removed: {crop_info['original_samples'] - crop_info['cropped_samples']} samples\n")
+                    f.write(f"  Time range: {crop_info['cropped_start']:.6f}s to {crop_info['cropped_end']:.6f}s\n")
+                    f.write("\n")
+        
+        print(f"✓ Analysis report saved to {report_path}")
+        print(f"✓ Alignment summary saved to {output_path / 'alignment_summary.csv'}")
+        if self.last_cropping_info:
+            print(f"✓ Cropping summary saved to {output_path / 'cropping_summary.csv'}")
+
+    def get_data_summary(self) -> None:
+        """Print summary of all stored data"""
+        print("\n=== Data Storage Summary ===")
+        
+        for attr_name in ['raw_data', 'processed_data', 'full_processed_data', 
+                          'original_processed_data', 'original_raw_data']:
+            if hasattr(self, attr_name):
+                data_dict = getattr(self, attr_name)
+                if data_dict:
+                    print(f"\n{attr_name}:")
+                    for label, data in data_dict.items():
+                        print(f"  {label}: {len(data)} samples")
+                else:
+                    print(f"\n{attr_name}: Empty")
+            else:
+                print(f"\n{attr_name}: Not initialized")
+
+def main():
+    """Main function demonstrating usage"""
+    
+    # Hardcoded dataset configurations (modify as needed)
+    datasets = [
+        DatasetConfig(
+            group='AMPM',
+            name='Photodiode1Bits',
+            label='PD1',
+            # color='#f98e09',
+            linestyle='-',
+            time_group='AMPM',  # Time vector in same group
+            time_name='Time',   # Explicit time vector
+            time_units='s',     # Time in seconds
+            time_shift=0.0      # Phase shift
+        ),
+        DatasetConfig(
+            group='AMPM',
+            name='Photodiode2Bits', 
+            label='PD2',
+            # color='#57106e',
+            linestyle='-',
+            time_group='AMPM',  # Time vector in same group
+            time_name='Time',   # Shared time vector
+            time_units='s',     # Time in seconds
+            time_shift=0.0      # Phase shift
+        ),
+        DatasetConfig(
+            group='AMPM',
+            name='BeamDumpDiodeBits', 
+            label='BD',
+            # color='#57106e',
+            linestyle='-',
+            time_group='AMPM',  # Time vector in same group
+            time_name='Time',   # Shared time vector
+            time_units='s',     # Time in seconds
+            time_shift=0.0      # Phase shift
+        ),
+        DatasetConfig(
+            group='KH',
+            name='max_depth', 
+            label='KH depth',
+            # color='#57106e',
+            linestyle='-',
+            time_group='KH',  # Time vector in same group
+            time_name='time',   # Shared time vector
+            time_units='s',     # Time in seconds
+            time_shift=0.00165      # Phase shift (~0.00165 in 504kfps)
+        ),
+        DatasetConfig(
+            group='KH',
+            name='area', 
+            label='KH area',
+            color='#57106e',
+            linestyle='-',
+            time_group='KH',  # Time vector in same group
+            time_name='time',   # Shared time vector
+            time_units='s',     # Time in seconds
+            time_shift=0.00165      # Phase shift
+        ),
+        DatasetConfig(
+            group='KH',
+            name='max_length', 
+            label='KH length',
+            color='#57106e',
+            linestyle='-',
+            time_group='KH',  # Time vector in same group
+            time_name='time',   # Shared time vector
+            time_units='s',     # Time in seconds
+            time_shift=0.00165      # Phase shift
+        ),
+        DatasetConfig(
+            group='KH',
+            name='fkw_angle', 
+            label='FKW angle',
+            # color='#57106e',
+            linestyle='-',
+            time_group='KH',  # Time vector in same group
+            time_name='time',   # Shared time vector
+            time_units='s',     # Time in seconds
+            time_shift=0.00165      # Phase shift
+        ),
+        # Example with individual sampling rate and time shift
+        # DatasetConfig(
+        #     group='ProcessData',
+        #     name='LaserPower',
+        #     label='Laser Power',
+        #     color='red',
+        #     linestyle=':',
+        #     sampling_rate=50.0,  # Individual sampling rate
+        #     time_units='s',
+        #     time_shift=-0.002    # 2ms advance
+        # ),
+        # Example with time vector in different units and phase shift
+        # DatasetConfig(
+        #     group='HighSpeed',
+        #     name='Pyrometer',
+        #     label='Temperature',
+        #     color='orange',
+        #     linestyle='-.',
+        #     time_group='HighSpeed',
+        #     time_name='TimeMs',  # Time vector in milliseconds
+        #     time_units='ms',     # Will be converted to seconds
+        #     time_shift=0.010     # 10ms delay
+        # )
+    ]
+    
+    # Processing configuration
+    processing_config = ProcessingConfig(
+        # Enable Savitzky-Golay filtering
+        apply_savgol=False,
+        savgol_window=21,
+        savgol_polyorder=2,
+
+        # Enable low-pass filtering
+        apply_lowpass=True,
+        lowpass_cutoff=0.5,
+        lowpass_order=4,
+
+        # Enable detrending
+        apply_detrend=False,
+        detrend_method='linear',
+
+        # Enable normalization
+        apply_normalization=True,
+        normalization_method='minmax',
+
+        # Remove statistical outliers (measurement errors in KH data)
+        remove_outliers=True,
+        outlier_method='iqr',  # 'iqr', 'zscore', 'mad'
+        outlier_threshold=3.0,  # IQR multiplier or z-score threshold
+        outlier_window=50,  # Local window size (0=global)
+
+        # Disable other options for this example
+        apply_highpass=False,
+        apply_bandpass=False,
+        apply_smoothing=False,
+        apply_resampling=False
+    )
+
+    # Example usage
+    # hdf5_file = "E:/ESRF ME1573 LTP 6 Al data HDF5/ffc/1112_06.hdf5"  # Update this path
+    folder = get_paths()['hdf5']  # Update this path
+    trackid = '1112_01'
+    hdf5_file = Path(folder, trackid + '.hdf5')
+    
+    default_sampling_rate = 100.0  # kHz - used as fallback
+    
+    # Initialize comparator
+    comparator = TimeSeriesComparator(
+        hdf5_path=hdf5_file,
+        datasets=datasets,
+        processing_config=processing_config,
+        default_sampling_rate=default_sampling_rate
+    )
+    
+    try:
+        # Load and process data
+        comparator.load_data()
+        comparator.process_data()
+        
+        # Example of automatic alignment (optional)
+        # Option 1: Auto-align using PD1 as reference (single signal, not composite)
+        # Maintains group synchronization: PD2 stays with PD1, KH signals shift together
+        calculated_shifts = comparator.auto_align_time_series(reference_label='PD1',
+                                                              correlation_window_time=0.001,
+                                                              use_raw_data=True,
+                                                              correlation_method='normalized',
+                                                              visualize=True,
+                                                              max_shift_time=0.002,  # 2ms search window
+                                                              sync_within_groups=True)
+
+        # Option 2: Group-based alignment (use composite AMPM group signal)
+        # calculated_shifts = comparator.auto_align_time_series(reference_group='AMPM',
+        #                                                       correlation_window_time=0.001,
+        #                                                       use_raw_data=True,
+        #                                                       correlation_method='normalized',
+        #                                                       visualize=True,
+        #                                                       max_shift_time=0.0005,
+        #                                                       sync_within_groups=True)
+        
+        # Option 3: Auto-align from original positions (ignoring manual shifts)
+        # calculated_shifts = comparator.auto_align_time_series('PD1', 
+        #                                                      correlation_window_time=1.0,
+        #                                                      use_original_positions=True)
+        
+        # Apply calculated shifts
+        comparator.apply_calculated_shifts(calculated_shifts)
+        
+        # Debug time shifts
+        print("\n=== Time Vector Debug ===")
+        for label in ['PD1', 'PD2', 'KH depth']:
+            if label in comparator.time_vectors:
+                current_shift = comparator.alignment_info[label]['time_shift']
+                time_start = comparator.time_vectors[label][0]
+                original_start = comparator.original_time_vectors[label][0]
+                print(f"{label}:")
+                print(f"  Total shift: {current_shift:.6f}s")
+                print(f"  Original start: {original_start:.6f}s")
+                print(f"  Current start: {time_start:.6f}s")
+                print(f"  Expected start: {original_start + current_shift:.6f}s")
+                print(f"  Match: {abs(time_start - (original_start + current_shift)) < 1e-6}")
+        
+        # Or apply relative to original positions
+        # comparator.apply_calculated_shifts(calculated_shifts, relative_to_original=True)
+        
+        # Example of cropping to shortest signal (optional)
+        # Option 1: Crop processed data
+        cropping_info = comparator.crop_to_shortest_signal(use_processed_data=True)
+        comparator.last_cropping_info = cropping_info  # Store for reporting
+        
+        # Option 2: Crop raw data  
+        # cropping_info = comparator.crop_to_shortest_signal(use_processed_data=False)
+        
+        # View cropping summary
+        print("\nCropping Summary:")
+        print(comparator.get_cropping_summary(cropping_info).to_string(index=False))
+        
+        # Restore original lengths if needed
+        # comparator.restore_original_length(use_processed_data=True)
+        
+        # Print alignment summary
+        print("\nTime Alignment Summary:")
+        print(comparator.get_alignment_summary().to_string(index=False))
+        
+        # Calculate statistics after cropping
+        comparator.calculate_statistics()
+        
+        # Show all stored datasets
+        comparator.get_data_summary()
+        
+        # Generate comprehensive report
+        output_parent = Path(hdf5_file).parent
+        output_path = Path(output_parent, 'timeseries_compare_analysis_results')
+        comparator.generate_report(output_path)
+        
+        print("\n✓ Analysis complete! Check the 'timeseries_compare_analysis_results' folder for outputs.")
+        print("✓ Alignment comparison plot shows original vs shifted time series.")
+        print("✓ Cropping summary shows data reduction details.")
+        
+    except FileNotFoundError:
+        print(f"Error: Could not find HDF5 file at {hdf5_file}")
+        print("Please update the hdf5_file variable with the correct path.")
+    except Exception as e:
+        print(f"Error during analysis: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == '__main__':
+    main()
