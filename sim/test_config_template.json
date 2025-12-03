@@ -1,0 +1,37 @@
+{
+  "test_trackids": [
+    "# ADD YOUR TEST TRACK IDs HERE (without .hdf5 extension)",
+    "# Example: 0514_01",
+    "# Example: 0515_06",
+    "# Example: 0517_04",
+    "# File paths are constructed from dirs/hdf5.txt + trackid.hdf5"
+  ],
+  "parameters": {
+    "opening_width_um": 120.0,
+    "smoothing_factor": 0.5,
+    "resolution_um_per_pixel": 4.3,
+    "dataset_name": "keyhole_bin",
+    "raw_image_dataset": "bs-p5-s5"
+  },
+  "sampling": {
+    "method": "middle_50_percent",
+    "trim_start_percent": 25,
+    "trim_end_percent": 25
+  },
+  "visualization": {
+    "figure_layout": "3x4",
+    "figure_dpi": 150,
+    "gif_fps": 10,
+    "desaturate_background": true,
+    "perimeter_color": "cyan",
+    "perimeter_linewidth": 2,
+    "start_point_color": "lime",
+    "end_point_color": "red",
+    "marker_size": 50,
+    "save_figure": true,
+    "save_gif": true
+  },
+  "output": {
+    "output_dir": "sim/perimeter_extraction_test_results/"
+  }
+}
