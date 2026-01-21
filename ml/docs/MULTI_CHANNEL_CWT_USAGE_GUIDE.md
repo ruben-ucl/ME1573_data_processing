@@ -49,9 +49,9 @@ Multi-channel paths are hardcoded in `config.py` (CWT_MULTI_CHANNEL_DIRS). To co
 ```python
 # In ml/config.py
 CWT_MULTI_CHANNEL_DIRS = {
-    "velocity_magnitude": r'E:\path\to\velocity_magnitude\cwt\images',
-    "pressure_field": r'E:\path\to\pressure_field\cwt\images',
-    "temperature": r'E:\path\to\temperature\cwt\images'
+    "velocity_magnitude": r'F:\path\to\velocity_magnitude\cwt\images',
+    "pressure_field": r'F:\path\to\pressure_field\cwt\images',
+    "temperature": r'F:\path\to\temperature\cwt\images'
 }
 ```
 

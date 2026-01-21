@@ -67,7 +67,7 @@ $env:ML_CWT_DATA_DIR="C:\path\to\your\cwt\data"
 ### Before (Hardcoded)
 ```python
 # BAD: Hardcoded absolute path
-data_dir = r"E:/AlSi10Mg single layer ffc/Photodiode_1ms_window_plots/window_plots_16bit"
+data_dir = r"F:/AlSi10Mg single layer ffc/Photodiode_1ms_window_plots/window_plots_16bit"
 log_file = os.path.join('logs', 'experiment_log.csv')
 ```
 
