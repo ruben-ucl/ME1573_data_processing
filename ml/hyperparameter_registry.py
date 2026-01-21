@@ -206,11 +206,11 @@ HYPERPARAMETER_REGISTRY = {
     },
 
     # =====================================================================
-    # AUGMENTATION CATEGORY
+    # AUGMENTATION CATEGORY (Simplified 3-parameter system)
     # =====================================================================
-    
+
     # Tier 2 (High Impact)
-    'augment_fraction': {
+    'augment_probability': {
         'type': 'continuous',
         'category': 'augmentation',
         'tier': 2,
@@ -220,151 +220,56 @@ HYPERPARAMETER_REGISTRY = {
         },
         'search_space': [0.0, 0.25, 0.5, 0.75, 1.0],
         'doe_range': (0.0, 1.0),
-        'description': 'Fraction of data to augment - high impact in data-limited scenarios'
+        'description': 'Probability that augmentation is applied to a sample - high impact in data-limited scenarios'
     },
-    
+
     # Tier 3 (Moderate Impact)
-    'time_shift_probability': {
-        'type': 'continuous',
+    'augment_strength': {
+        'type': 'categorical',
+        'category': 'augmentation',
+        'tier': 3,
+        'default': 'medium',
+        'search_space': ['low', 'medium', 'high'],
+        'description': 'Intensity preset for augmentation (low/medium/high) - moderate impact on robustness'
+    },
+    'augment_methods': {
+        'type': 'categorical',
         'category': 'augmentation',
         'tier': 3,
         'default': {
-            'pd_signal': 0.7,
-            'cwt_image': 0.0
-        },
-        'search_space': [0.0, 0.25, 0.5, 0.75, 1.0],
-        'doe_range': (0.0, 1.0),
-        'description': 'Probability of applying time shift augmentation - moderate impact for PD signals'
-    },
-    
-    # Tier 4 (Low Impact)
-    'noise_probability': {
-        'type': 'continuous',
-        'category': 'augmentation',
-        'tier': 4,
-        'default': {
-            'pd_signal': 0.5,
-            'cwt_image': 0.0
-        },
-        'search_space': [0.0, 0.25, 0.5, 0.75, 1.0],
-        'doe_range': (0.0, 1.0),
-        'description': 'Probability of applying noise augmentation - low impact on performance'
-    },
-    
-    # Tier 5 (Minimal Impact)
-    'time_shift_range': {
-        'type': 'discrete',
-        'category': 'augmentation',
-        'tier': 5,
-        'default': {
-            'pd_signal': 5,
-            'cwt_image': 0
+            'pd_signal': ['time_shift', 'noise'],
+            'cwt_image': []
         },
         'search_space': {
-            'pd_signal': [2, 5, 10],
-            'cwt_image': [0, 10]
+            'pd_signal': [
+                [],
+                ['noise'],
+                ['time_shift'],
+                ['time_shift', 'noise'],
+                ['time_shift', 'noise', 'stretch'],
+                ['time_shift', 'noise', 'stretch', 'amplitude']
+            ],
+            'cwt_image': [
+                [],
+                ['noise'],
+                ['time_shift'],
+                ['time_shift', 'noise'],
+                ['brightness', 'contrast'],
+                ['time_shift', 'noise', 'brightness', 'contrast']
+            ]
         },
-        'doe_range': (0, 20),
-        'description': 'Range for time shift augmentation - minimal impact on performance'
+        'description': 'List of augmentation techniques to randomly choose from - moderate impact on diversity'
     },
-    'noise_std': {
-        'type': 'continuous',
+    'augment_to_balance': {
+        'type': 'categorical',
         'category': 'augmentation',
-        'tier': 5,
+        'tier': 2,
         'default': {
-            'pd_signal': 0.02,
-            'cwt_image': 0.0
+            'pd_signal': False,
+            'cwt_image': False
         },
-        'search_space': {
-            'pd_signal': [0.01, 0.02, 0.03, 0.05],
-            'cwt_image': [0.0, 0.02]
-        },
-        'doe_range': (0.0, 0.1),
-        'description': 'Standard deviation for noise augmentation - minimal impact on performance'
-    },
-    
-    # PD-specific augmentation (Tier 5)
-    'stretch_probability': {
-        'type': 'continuous',
-        'category': 'augmentation',
-        'tier': 5,
-        'default': 0.3,
-        'search_space': [0.0, 0.25, 0.5, 0.75, 1.0],
-        'doe_range': (0.0, 1.0),
-        'description': 'Probability of applying stretch augmentation (PD only)',
-        'classifiers': ['pd_signal']
-    },
-    'stretch_scale': {
-        'type': 'continuous',
-        'category': 'augmentation',
-        'tier': 5,
-        'default': 0.1,
-        'search_space': [0.005, 0.1, 0.15, 0.2],
-        'doe_range': (0.0, 0.3),
-        'description': 'Scale for stretch augmentation (PD only)',
-        'classifiers': ['pd_signal']
-    },
-    'amplitude_scale_probability': {
-        'type': 'continuous',
-        'category': 'augmentation',
-        'tier': 5,
-        'default': 0.5,
-        'search_space': [0.0, 0.25, 0.5, 0.75, 1.0],
-        'doe_range': (0.0, 1.0),
-        'description': 'Probability of applying amplitude scaling (PD only)',
-        'classifiers': ['pd_signal']
-    },
-    'amplitude_scale': {
-        'type': 'continuous',
-        'category': 'augmentation',
-        'tier': 5,
-        'default': 0.1,
-        'search_space': [0.005, 0.1, 0.15, 0.2],
-        'doe_range': (0.0, 0.3),
-        'description': 'Scale for amplitude augmentation (PD only)',
-        'classifiers': ['pd_signal']
-    },
-    
-    # CWT-specific augmentation (Tier 5)
-    'brightness_probability': {
-        'type': 'continuous',
-        'category': 'augmentation',
-        'tier': 5,
-        'default': 0.0,
-        'search_space': [0.0, 0.5, 1.0],
-        'doe_range': (0.0, 1.0),
-        'description': 'Probability of applying brightness augmentation (CWT only)',
-        'classifiers': ['cwt_image']
-    },
-    'brightness_range': {
-        'type': 'continuous',
-        'category': 'augmentation',
-        'tier': 5,
-        'default': 0.0,
-        'search_space': [0.0, 0.1],
-        'doe_range': (0.0, 0.3),
-        'description': 'Range for brightness augmentation (CWT only)',
-        'classifiers': ['cwt_image']
-    },
-    'contrast_probability': {
-        'type': 'continuous',
-        'category': 'augmentation',
-        'tier': 5,
-        'default': 0.0,
-        'search_space': [0.0, 0.5, 1.0],
-        'doe_range': (0.0, 1.0),
-        'description': 'Probability of applying contrast augmentation (CWT only)',
-        'classifiers': ['cwt_image']
-    },
-    'contrast_range': {
-        'type': 'continuous',
-        'category': 'augmentation',
-        'tier': 5,
-        'default': 0.0,
-        'search_space': [0.0, 0.1],
-        'doe_range': (0.0, 0.3),
-        'description': 'Range for contrast augmentation (CWT only)',
-        'classifiers': ['cwt_image']
+        'search_space': [True, False],
+        'description': 'Automatically balance classes by augmenting minority class (overrides augment_probability) - high impact for imbalanced datasets'
     },
 
     # =====================================================================
@@ -416,6 +321,14 @@ HYPERPARAMETER_REGISTRY = {
             'cwt_image': [[2, 2], [3, 3]]
         },
         'description': 'Pooling size for max pooling layers - typically fixed'
+    },
+    'dataset_variant': {
+        'type': 'categorical',
+        'category': 'fixed',
+        'tier': 'fixed',
+        'default': None,
+        'search_space': [],  # Empty - user manually specifies variant name
+        'description': 'Name of pre-prepared dataset variant in ml/datasets/ - manually selected, not optimized'
     },
     'pool_layers': {
         'type': 'categorical',
@@ -508,44 +421,50 @@ def get_parameter_info(param_name, classifier_type=None):
 
 def get_search_space(classifier_type, categories=None, tiers=None, parameters=None):
     """Generate search space with flexible filtering.
-    
+
     Args:
         classifier_type (str): 'pd_signal' or 'cwt_image'
-        categories (list, optional): Filter by parameter categories
+        categories (list, optional): Filter by parameter categories (default: all non-fixed categories)
         tiers (list, optional): Filter by priority tiers
         parameters (list, optional): Specific parameters to include
-        
+
     Returns:
         dict: Filtered parameter search space
     """
     space = {}
-    
+
     # Start with all parameters or specific ones
     params_to_check = parameters if parameters else HYPERPARAMETER_REGISTRY.keys()
-    
+
     for param_name in params_to_check:
         param_info = get_parameter_info(param_name, classifier_type)
-        
+
         # Skip if parameter not applicable to this classifier
         if param_info is None:
             continue
-            
-        # Apply category filter
+
+        param_category = param_info.get('category')
+
+        # Apply category filter (default: exclude 'fixed' category)
         if categories:
-            param_category = param_info.get('category')
+            # Explicit categories specified - use them
             if param_category not in categories:
                 continue
-        
+        else:
+            # No categories specified - exclude 'fixed' by default
+            if param_category == 'fixed':
+                continue
+
         # Apply tier filter
         if tiers:
             param_tier = param_info.get('tier')
             if param_tier not in tiers:
                 continue
-        
+
         # Add to search space
         if 'search_space' in param_info:
             space[param_name] = param_info['search_space']
-    
+
     return space
 
 
