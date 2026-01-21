@@ -162,11 +162,10 @@ class PDSignalStrategy(ClassifierStrategy):
             'learning_rate', 'batch_size', 'epochs', 'k_folds',
             # Architecture parameters
             'conv_filters', 'dense_units',
-            # Regularization parameters  
+            # Regularization parameters
             'conv_dropout', 'dense_dropout', 'l2_regularization', 'early_stopping_patience', 'use_class_weights',
-            # Data augmentation parameters 
-            'augment_fraction', 'time_shift_probability', 'time_shift_range', 'stretch_probability', 'stretch_scale',
-            'noise_probability', 'noise_std', 'amplitude_scale_probability', 'amplitude_scale'
+            # Data augmentation parameters (NEW simplified system)
+            'augment_probability', 'augment_strength', 'augment_methods'
         ]
     
     def normalize_config(self, config):
@@ -191,17 +190,18 @@ class PDSignalStrategy(ClassifierStrategy):
 
 class CWTImageStrategy(ClassifierStrategy):
     """Strategy for CWT Image Classifier optimization."""
-    
-    def __init__(self, multi_channel=False):
+
+    def __init__(self, multi_channel=False, channel=None):
         self.multi_channel = multi_channel
-    
+        self.channel = channel
+
     def get_parameter_space(self, categories=None, tiers=None):
         """Get hyperparameter search space from registry."""
         from hyperparameter_registry import get_search_space
         return get_search_space('cwt_image', categories=categories, tiers=tiers)
-    
+
     def get_config_template(self):
-        return get_cwt_config_template(multi_channel=self.multi_channel)
+        return get_cwt_config_template(multi_channel=self.multi_channel, channel=self.channel)
     
     def get_experiment_log_path(self):
         return get_cwt_experiment_log_path()
@@ -227,7 +227,12 @@ class CWTImageStrategy(ClassifierStrategy):
             'img_width': int(row.get('img_width', 0)) if pd.notna(row.get('img_width')) else None,
             'img_height': int(row.get('img_height', 0)) if pd.notna(row.get('img_height')) else None,
             'img_channels': int(row.get('img_channels', 0)) if pd.notna(row.get('img_channels')) else None,
-            # CWT-suitable augmentation parameters
+            # CWT-suitable augmentation parameters (NEW system)
+            'augment_probability': row.get('augment_probability'),
+            'augment_strength': row.get('augment_strength'),
+            'augment_methods': tuner._safe_parse_list(row.get('augment_methods')),
+            'augment_to_balance': row.get('augment_to_balance'),
+            # CWT-suitable augmentation parameters (OLD system - for backward compatibility)
             'augment_fraction': row.get('augment_fraction'),
             'time_shift_probability': row.get('time_shift_probability'),
             'time_shift_range': row.get('time_shift_range'),
@@ -236,7 +241,11 @@ class CWTImageStrategy(ClassifierStrategy):
             'brightness_probability': row.get('brightness_probability'),
             'brightness_range': row.get('brightness_range'),
             'contrast_probability': row.get('contrast_probability'),
-            'contrast_range': row.get('contrast_range')
+            'contrast_range': row.get('contrast_range'),
+            # CWT dataset-level parameters
+            'cwt_mode': row.get('cwt_mode', 'full'),
+            'coi_masking': row.get('coi_masking', False),
+            'normalization_mode': row.get('normalization_mode', 'global')
         }
     
     def get_execution_command(self, config_file_path):
@@ -257,9 +266,8 @@ class CWTImageStrategy(ClassifierStrategy):
             'conv_dropout', 'dense_dropout', 'l2_regularization', 'early_stopping_patience', 'use_class_weights',
             # Image-specific parameters
             'img_width', 'img_height', 'img_channels',
-            # CWT-suitable augmentation parameters (critical for deduplication)
-            'augment_fraction', 'time_shift_range', 'noise_std',
-            'brightness_range', 'contrast_range'
+            # Data augmentation parameters (NEW simplified system)
+            'augment_probability', 'augment_strength', 'augment_methods', 'augment_to_balance'
         ]
     
     def normalize_config(self, config):
@@ -310,11 +318,11 @@ class CWTImageStrategy(ClassifierStrategy):
 # STRATEGY FACTORY
 # ========================================================================================
 
-def get_classifier_strategy(classifier_type, multi_channel=False):
+def get_classifier_strategy(classifier_type, multi_channel=False, channel=None):
     """Factory function to create classifier strategies."""
     strategies = {
         'pd_signal': PDSignalStrategy(),
-        'cwt_image': CWTImageStrategy(multi_channel=multi_channel)
+        'cwt_image': CWTImageStrategy(multi_channel=multi_channel, channel=channel)
     }
     
     if classifier_type not in strategies:
@@ -325,13 +333,17 @@ def get_classifier_strategy(classifier_type, multi_channel=False):
 class HyperparameterTuner:
     """Manages hyperparameter optimization experiments with classifier-agnostic optimization."""
     
-    def __init__(self, classifier_type='pd_signal', base_config=None, output_root=None, verbose=False, concise=False, multi_channel=False, base_version=None):
+    def __init__(self, classifier_type='pd_signal', base_config=None, output_root=None, verbose=False, concise=False, multi_channel=False, channel=None, base_version=None, label_file=None, dataset_variant=None):
         # Initialize classifier strategy
         self.classifier_type = classifier_type
         self.multi_channel = multi_channel
+        self.channel = channel
         self.verbose = verbose
         self.concise = concise
-        self.strategy = get_classifier_strategy(classifier_type, multi_channel=multi_channel)
+        self.label_file = label_file  # Prepared dataset label file
+        self.dataset_variant = dataset_variant  # Pre-prepared dataset variant for k-fold CV
+        self.base_version = base_version  # Store for later use in smart mode
+        self.strategy = get_classifier_strategy(classifier_type, multi_channel=multi_channel, channel=channel)
         
         # Determine base configuration
         if base_config:
@@ -689,6 +701,7 @@ class HyperparameterTuner:
         base['k_folds'] = 2
         base['epochs'] = 2
         base['early_stopping_patience'] = 1  # Reduced for quick testing
+        base['run_gradcam'] = False  # Disable Grad-CAM for test mode
         
         if not self.concise:
             print("Generating test configurations (2 configs, 2 folds, 2 epochs each)...")
@@ -709,16 +722,14 @@ class HyperparameterTuner:
             print(f"Generated {len(configs)} test configurations")
         return configs
     
-    
-    
-    
-    def generate_smart_configs(self, search_radius=1, grid_search=False, ignore_params=None, max_grid_size=100, categories=None, priority_tiers=None, best_config='auto'):
+    def generate_smart_configs(self, search_radius=1, grid_search=False, include_seed=False, ignore_params=None, max_grid_size=100, categories=None, priority_tiers=None, best_config='auto'):
         """
         Generate smart configurations using registry-based parameter filtering.
-        
+
         Args:
             search_radius: Number of neighboring values to test (±1 or ±2)
             grid_search: If True, do full grid search within smart space; if False, use OFAT
+            include_seed: If True, include seed/base config in search (default: False)
             ignore_params: List of parameters to ignore (use best previous value)
             max_grid_size: Maximum number of configs before limiting parameters
             categories: List of parameter categories to include (training, regularization, architecture, training_control, augmentation)
@@ -834,21 +845,27 @@ class HyperparameterTuner:
                 configs = self._generate_grid_configs_from_space(smart_search_space, base_config)
         else:
             # Generate OFAT configurations around the best point
+            # Include seed config first - deduplication will remove it if already tested
+            # (unless --include_seed is specified, which adds it back later)
+            seed_config = base_config.copy()
+            configs.append(seed_config)
+
             for param_name in param_priority:
                 if param_name not in smart_search_space:
                     continue
-                
+
                 current_value = best_config.get(param_name)
-                neighbors = [v for v in smart_search_space[param_name] if v != current_value]
-                
+                # Get all neighboring values (including current) - let deduplication handle duplicates
+                neighbors = smart_search_space[param_name]
+
                 for neighbor_value in neighbors:
                     config = base_config.copy()
                     config[param_name] = neighbor_value
                     configs.append(config)
-        
+
         if not self.concise:
-            print(f"Generated {len(configs)} adaptive smart configurations for {mode} mode")
-            
+            print(f"Generated {len(configs)} adaptive smart configurations")
+
         return configs
     
     
@@ -933,24 +950,213 @@ class HyperparameterTuner:
                 print(f"  - {pair_count} channel pairs")
         
         return configs
-    
-    
-    
-    
-    def _generate_configs_from_space(self, param_space):
-        """Generate all combinations from parameter space."""
-        param_names = list(param_space.keys())
-        param_values = list(param_space.values())
-        
+
+    def _constrain_space_to_radius(self, base_config, search_radius):
+        """
+        Constrain parameter search space to a radius around base config.
+
+        Similar to smart mode's neighbor generation, but returns a parameter space dict
+        for DoE methods to use.
+
+        Args:
+            base_config: Base configuration to center search around
+            search_radius: 1 (±1 level) or 2 (±2 levels)
+
+        Returns:
+            dict: Constrained parameter space with format {param_name: {'levels': [...]}}
+        """
+        from hyperparameter_registry import get_parameter_info, HYPERPARAMETER_REGISTRY
+
+        constrained_space = {}
+
+        for param_name, param_info in HYPERPARAMETER_REGISTRY.items():
+            # Get classifier-specific parameter info
+            param_info = get_parameter_info(param_name, self.classifier_type)
+            if param_info is None:
+                continue
+
+            # Skip fixed parameters
+            if param_info.get('category') == 'fixed':
+                continue
+
+            # Get current value from base config
+            current_value = base_config.get(param_name)
+            if current_value is None:
+                # If not in base config, use full search space
+                if 'search_space' in param_info:
+                    constrained_space[param_name] = {
+                        'type': param_info['type'],
+                        'levels': param_info['search_space']
+                    }
+                continue
+
+            # Get search space for this parameter
+            search_space = param_info.get('search_space', [])
+            if not search_space:
+                continue
+
+            # Find neighbors based on parameter type
+            if param_info['type'] in ['categorical', 'discrete', 'continuous']:
+                # For list-based search spaces, find index and get neighbors
+                try:
+                    current_index = search_space.index(current_value)
+
+                    # Get neighbor indices
+                    neighbor_indices = [current_index]
+                    for offset in range(1, search_radius + 1):
+                        if current_index - offset >= 0:
+                            neighbor_indices.append(current_index - offset)
+                        if current_index + offset < len(search_space):
+                            neighbor_indices.append(current_index + offset)
+
+                    # Get neighbor values
+                    neighbor_values = [search_space[i] for i in sorted(neighbor_indices)]
+
+                    constrained_space[param_name] = {
+                        'type': param_info['type'],
+                        'levels': neighbor_values
+                    }
+
+                except (ValueError, IndexError):
+                    # Current value not in search space or error - use full space
+                    constrained_space[param_name] = {
+                        'type': param_info['type'],
+                        'levels': search_space
+                    }
+            else:
+                # Unknown type - use full search space
+                constrained_space[param_name] = {
+                    'type': param_info['type'],
+                    'levels': search_space
+                }
+
+        return constrained_space
+
+    def generate_doe_configs(self, doe_design='factorial', doe_factors=None,
+                            search_radius=None, max_configs=None):
+        """
+        Generate configurations using Design of Experiments methods.
+
+        Supports three design types:
+        - factorial: Fractional factorial for screening (32-64 experiments)
+        - response_surface: Central Composite Design for optimization (~20 experiments)
+        - lhs: Latin Hypercube Sampling for exploration (user-specified N)
+
+        Compatible with --base and --search_radius:
+        - If base_config exists: constrains search to radius around base
+        - Otherwise: uses full parameter space from registry
+
+        Args:
+            doe_design: 'factorial', 'response_surface', or 'lhs'
+            doe_factors: Specific parameters to include (None = auto-select)
+            search_radius: 1 (±1 level) or 2 (±2 levels), None = full space
+            max_configs: For LHS design, number of experiments to generate (default 50)
+
+        Returns:
+            list: List of configuration dictionaries
+        """
+        from generate_doe_experiments import DoEGenerator
+        from hyperparameter_registry import get_search_space
+
+        if not self.concise:
+            print(f"Generating DoE configurations: design={doe_design}")
+            if self.base_config and search_radius:
+                print(f"Using base config with search_radius={search_radius}")
+
+        # Determine parameter space
+        if self.base_config and search_radius:
+            # Constrain to radius around base config
+            constrained_space = self._constrain_space_to_radius(self.base_config, search_radius)
+            parameter_space = {}
+
+            # Convert to DoEGenerator format
+            for param_name, param_data in constrained_space.items():
+                parameter_space[param_name] = {
+                    'type': param_data['type'],
+                    'levels': param_data['levels'],
+                    'range': (param_data['levels'][0], param_data['levels'][-1])
+                        if param_data['type'] in ['continuous', 'discrete'] else None
+                }
+
+            base_for_doe = self.base_config
+        else:
+            # Use full search space from registry
+            # DoEGenerator expects specific format - we'll override its internal space
+            parameter_space = None  # Will use DoEGenerator's default
+            base_for_doe = self.base_config if self.base_config else {}
+
+        # Initialize DoE generator
+        mode = 'cwt' if self.classifier_type == 'cwt_image' else 'pd'
+        doe_gen = DoEGenerator(mode=mode, output_dir=None, verbose=(not self.concise))
+
+        # Override parameter space if constrained
+        if parameter_space:
+            doe_gen.parameter_space = parameter_space
+
+        # Filter factors if specified
+        if doe_factors:
+            # Validate factors exist in parameter space
+            valid_factors = [f for f in doe_factors if f in doe_gen.parameter_space]
+            if len(valid_factors) < len(doe_factors):
+                invalid = set(doe_factors) - set(valid_factors)
+                print(f"Warning: Ignoring invalid factors: {invalid}")
+            factors = valid_factors if valid_factors else None
+        else:
+            factors = None
+
+        # Generate experiments based on design type
+        if doe_design == 'factorial':
+            df = doe_gen.generate_factorial_design(
+                factors=factors,
+                center_points=4,
+                randomize=True
+            )
+        elif doe_design == 'response_surface':
+            df = doe_gen.generate_response_surface_design(
+                factors=factors,
+                alpha=None,  # Auto-calculate for rotatability
+                center_points=6
+            )
+        elif doe_design == 'lhs':
+            # For LHS, use max_configs to specify number of experiments (default 50)
+            n_experiments = max_configs if max_configs else 50
+            df = doe_gen.generate_lhs_design(
+                n_experiments=n_experiments,
+                factors=factors
+            )
+        else:
+            raise ValueError(f"Unknown DoE design: {doe_design}")
+
+        # Convert DataFrame to config dictionaries
         configs = []
-        for combination in product(*param_values):
-            config = self.base_config.copy()
-            for name, value in zip(param_names, combination):
-                config[name] = value
+        for i, row in df.iterrows():
+            config = base_for_doe.copy()
+
+            # Update with DoE values (skip metadata columns)
+            for col, value in row.items():
+                if col not in ['experiment_id', 'design_type']:
+                    # Handle string representations of lists
+                    if isinstance(value, str) and value.startswith('[') and value.endswith(']'):
+                        try:
+                            config[col] = eval(value)
+                        except:
+                            config[col] = value
+                    else:
+                        config[col] = value
+
+            # Add DoE metadata
+            config['doe_design'] = doe_design
+            config['doe_experiment_id'] = row.get('experiment_id', f'doe_{i+1:03d}')
+
             configs.append(config)
-        
+
+        if not self.concise:
+            print(f"Generated {len(configs)} DoE configurations")
+            if doe_factors:
+                print(f"Factors: {doe_factors}")
+
         return configs
-    
+
     def _generate_grid_configs_from_space(self, param_space, base_config):
         """Generate all combinations from parameter space with custom base config."""
         param_names = list(param_space.keys())
@@ -1030,328 +1236,13 @@ class HyperparameterTuner:
         dense_params += (prev_units + 1) * 2
         
         total_params = conv_params + dense_params
-        
-        # Estimate actual epochs considering early stopping
-        estimated_epochs = self.estimate_actual_epochs(config)
-        
-        # Complexity score = parameters * estimated actual epochs (not configured epochs)
-        complexity = total_params * estimated_epochs
-        
-        return complexity
-    
-    def estimate_actual_epochs(self, config):
-        """
-        Estimate actual epochs considering early stopping based on historical data.
-        
-        Uses historical patterns to predict how many epochs will actually run
-        before early stopping kicks in.
-        """
-        configured_epochs = config['epochs']
-        
-        # For very short training (test mode), assume full epochs
-        if configured_epochs <= 5:
-            return configured_epochs
-            
-        # Analyze historical early stopping patterns
-        early_stopping_ratios = []
-        
-        for record in self.timing_data['timing_records']:
-            record_config = record.get('config_summary', {})
-            record_epochs = record_config.get('epochs', 50)
-            
-            # Skip if this is also a short training run
-            if record_epochs <= 5:
-                continue
-                
-            # Try to extract actual epochs from timing and complexity
-            if 'actual_time' in record and 'time_per_complexity' in record:
-                # Rough back-calculation of actual epochs
-                # This is an approximation based on the relationship:
-                # actual_time ≈ time_per_complexity * (params * actual_epochs) * data_factor
-                
-                total_params_estimate = 50000  # Rough estimate for typical model size
-                data_factor = record.get('data_factor', 1.0)
-                
-                if record['time_per_complexity'] > 0 and data_factor > 0:
-                    implied_complexity = record['actual_time'] / (record['time_per_complexity'] * data_factor)
-                    implied_epochs = implied_complexity / total_params_estimate
-                    
-                    # Only use reasonable ratios (between 0.1 and 1.0)
-                    if 0.1 <= implied_epochs <= record_epochs:
-                        ratio = implied_epochs / record_epochs
-                        early_stopping_ratios.append(ratio)
-        
-        # Calculate early stopping factor
-        if early_stopping_ratios:
-            # Use median to avoid outliers
-            early_stopping_ratios.sort()
-            n = len(early_stopping_ratios)
-            if n >= 10:  # Need sufficient data
-                median_ratio = early_stopping_ratios[n // 2]
-                # Conservative approach: don't go below 0.3, but allow full training if data supports it
-                early_stopping_factor = max(0.3, median_ratio)
-            else:
-                # Not enough data, use conservative default
-                early_stopping_factor = 0.6  # Assume ~60% of epochs on average
-        else:
-            # No historical data, use reasonable default based on early stopping settings
-            patience = config.get('early_stopping_patience', 10)
-            # Heuristic: with patience=10, typical training runs ~40-80% of max epochs
-            # Allow higher ratios for less aggressive early stopping
-            if patience <= 5:
-                early_stopping_factor = 0.5  # More aggressive stopping
-            elif patience >= 15:
-                early_stopping_factor = 0.9  # Less aggressive stopping - often trains to completion
-            else:
-                early_stopping_factor = 0.6  # Default moderate stopping
-        
-        estimated_epochs = configured_epochs * early_stopping_factor
-        
-        # Ensure reasonable bounds
-        estimated_epochs = max(5, min(configured_epochs, estimated_epochs))
-        
-        return estimated_epochs
-    
-    def estimate_data_size_factor(self, config):
-        """Estimate relative data loading/processing time based on configuration."""
-        # Factors that affect data processing time:
-        # - Batch size (larger = more efficient per sample, but more memory)
-        # - Image dimensions (affects preprocessing time)
-        # - K-folds (affects total data passes)
-        
-        batch_efficiency = 1.0 / (config['batch_size'] / 16.0)  # Normalize to batch_size=16
-        
-        # Image size calculation: get actual dimensions used in training
-        img_width, img_height = self.get_image_dimensions(config)
-        total_pixels = img_width * img_height
-        
-        # Classifier-specific baseline
-        if self.classifier_type == 'cwt_image':
-            baseline_pixels = 100 * 256  # CWT baseline: 100 × 256 = 25,600 pixels
-        else:
-            baseline_pixels = 100 * 2    # PD baseline: 100 × 2 = 200 pixels
-        
-        # Linear scaling with total pixels (not quadratic, since it's just resizing)
-        image_factor = total_pixels / baseline_pixels
-        
-        fold_factor = config['k_folds'] / 5.0  # Normalize to 5 folds
-        
-        return batch_efficiency * image_factor * fold_factor
-    
-    def get_power_law_time_estimate(self, complexity, data_factor, estimated_epochs, config):
-        """
-        Get time estimate using power law relationship fitted to historical data.
-        
-        Args:
-            complexity: Model complexity (parameter count)
-            data_factor: Data processing factor
-            estimated_epochs: Estimated actual epochs
-            config: Configuration dictionary
-            
-        Returns:
-            float: Estimated training time in minutes
-        """
-        import numpy as np
-        from scipy.stats import linregress
-        
-        records = self.timing_data['timing_records']
-        
-        if len(records) < 3:
-            # Fallback to conservative estimate if insufficient data
-            return self.get_conservative_time_estimate(complexity, data_factor, estimated_epochs)
-        
-        # Extract data for power law fitting
-        complexities = np.array([r['complexity'] for r in records])
-        actual_times = np.array([r['actual_time'] for r in records])
-        data_factors = np.array([r['data_factor'] for r in records])
-        
-        # Normalize by data factor to isolate complexity effect
-        normalized_times = actual_times / data_factors
-        
-        # Fit power law using log-log regression: log(time) = log(a) + b*log(complexity)
-        try:
-            log_complexity = np.log(complexities)
-            log_time = np.log(np.maximum(normalized_times, 0.01))  # Avoid log(0)
-            
-            slope, intercept, r_value, p_value, std_err = linregress(log_complexity, log_time)
-            
-            # Power law parameters: time = scaling_factor * complexity^power_coefficient
-            power_coefficient = slope
-            scaling_factor = np.exp(intercept)
-            
-            # Store power law parameters for future use
-            if not hasattr(self.timing_data, 'power_law_params'):
-                self.timing_data['power_law_params'] = {}
-            
-            self.timing_data['power_law_params'] = {
-                'power_coefficient': power_coefficient,
-                'scaling_factor': scaling_factor,
-                'r_squared': r_value**2,
-                'sample_size': len(records),
-                'last_fitted': datetime.datetime.now().isoformat()
-            }
-            
-            # Calculate base prediction using power law
-            base_time = scaling_factor * (complexity ** power_coefficient) * data_factor
-            
-            # Apply recent adjustment based on prediction accuracy
-            recent_records = records[-5:]  # Use fewer records for power law adjustment
-            if len(recent_records) >= 2:
-                ratios = []
-                for record in recent_records:
-                    # Recalculate power law prediction for this record
-                    record_complexity = record['complexity']
-                    record_data_factor = record['data_factor']
-                    power_prediction = scaling_factor * (record_complexity ** power_coefficient) * record_data_factor
-                    
-                    if power_prediction > 0:
-                        ratios.append(record['actual_time'] / power_prediction)
-                
-                if ratios:
-                    # Apply median adjustment to reduce outlier impact
-                    ratios.sort()
-                    median_ratio = ratios[len(ratios)//2]
-                    base_time *= median_ratio
-            
-            if self.verbose:
-                interpretation = "Sub-linear" if power_coefficient < 0.9 else "Super-linear" if power_coefficient > 1.1 else "Linear"
-                print(f"Power law timing model: complexity^{power_coefficient:.3f} ({interpretation}), R²={r_value**2:.3f}")
-            
-        except (ValueError, np.linalg.LinAlgError, ZeroDivisionError) as e:
-            # Fallback to linear model if power law fitting fails
-            if self.verbose:
-                print(f"Power law fitting failed ({e}), using linear fallback")
-            return self.get_adaptive_time_estimate(config)
-        
-        return max(base_time, 0.5)  # Minimum 0.5 minutes
-    
-    def get_adaptive_time_estimate(self, config):
-        """Get time estimate based on historical data (fallback when power law unavailable)."""
-        # IMPORTANT: This should NOT use the old broken complexity calculation
-        # Instead, use conservative estimate based on architectural heuristics
-        
-        # Simplified data factor for fallback
-        batch_efficiency = 16.0 / config['batch_size']  # Normalize to batch_size=16
-        fold_factor = config['k_folds'] / 5.0  # Normalize to 5 folds
-        data_factor = batch_efficiency * fold_factor
-        
-        estimated_epochs = self.estimate_actual_epochs(config)
-        
-        # If we have timing records with REAL complexity, try to estimate from them
-        recent_records = self.timing_data['timing_records'][-10:]  # Last 10 records
-        if recent_records:
-            # Use actual recorded complexity values (which should be real Keras counts)
-            similar_records = []
-            for record in recent_records:
-                # Look for records with similar architecture characteristics
-                if (record['classifier_type'] == self.classifier_type and 
-                    record['complexity'] > 0 and record['data_factor'] > 0):
-                    similar_records.append(record)
-            
-            if similar_records:
-                # Average the time per complexity from real records
-                time_per_complexity_values = []
-                for record in similar_records:
-                    time_per_complexity = record['actual_time'] / (record['complexity'] * record['data_factor'])
-                    time_per_complexity_values.append(time_per_complexity)
-                
-                avg_time_per_complexity = sum(time_per_complexity_values) / len(time_per_complexity_values)
-                
-                # For this config, we need to estimate complexity without the broken calculation
-                # Use a simple heuristic based on architecture size until we get real complexity
-                estimated_complexity = self._estimate_complexity_heuristic(config)
-                base_time = avg_time_per_complexity * estimated_complexity * data_factor
-                return max(base_time, 0.5)
-        
-        # Fallback to conservative estimate if no historical data
-        estimated_complexity = self._estimate_complexity_heuristic(config)
-        return self.get_conservative_time_estimate(estimated_complexity, data_factor, estimated_epochs)
-    
-    def _estimate_complexity_heuristic(self, config):
-        """Simple heuristic for complexity estimation when no real complexity available."""
-        if self.classifier_type == 'cwt_image':
-            # CWT models are typically 8-12M parameters for standard architectures
-            conv_layers = len(config['conv_filters'])
-            dense_size = sum(config['dense_units']) if config['dense_units'] else 128
-            # Rough heuristic: more layers and dense units = more parameters
-            estimated_complexity = (conv_layers * 500000) + (dense_size * 30000)
-            return max(estimated_complexity, 8000000)  # Minimum 8M for CWT
-        else:
-            # PD models are typically 0.5-2M parameters  
-            conv_layers = len(config['conv_filters'])
-            dense_size = sum(config['dense_units']) if config['dense_units'] else 128
-            estimated_complexity = (conv_layers * 50000) + (dense_size * 5000)
-            return max(estimated_complexity, 500000)  # Minimum 500K for PD
-    
-    def get_conservative_time_estimate(self, complexity, data_factor, estimated_epochs):
-        """Conservative time estimate when no historical data is available."""
-        # Conservative estimate: ~1-5 seconds per thousand parameters per epoch
-        base_time_per_epoch = (complexity / 1000.0) * 0.05  # 3 seconds per 1K params per epoch
-        base_time = base_time_per_epoch * estimated_epochs * data_factor
-        
-        return max(base_time, 1.0)  # Minimum 1 minute
-    
-    def update_timing_database(self, config, actual_time_minutes, model_complexity=None):
-        """Update the timing database with actual training results."""
-        # Use real model complexity if available, otherwise fall back to calculation
-        if model_complexity and model_complexity > 0:
-            complexity = model_complexity
-        else:
-            complexity = self.calculate_model_complexity(config)
-            
-        # Simplified data factor - just batch size and k-folds scaling
-        batch_efficiency = 16.0 / config['batch_size']  # Normalize to batch_size=16
-        fold_factor = config['k_folds'] / 5.0  # Normalize to 5 folds
-        data_factor = batch_efficiency * fold_factor
-        
-        # Calculate actual time per complexity unit
-        actual_time_per_complexity = actual_time_minutes / (complexity * data_factor)
-        
-        # Get predicted time using appropriate model  
-        estimated_epochs = self.estimate_actual_epochs(config)
-        if len(self.timing_data['timing_records']) >= 2:
-            predicted_time = self.get_power_law_time_estimate(complexity, data_factor, estimated_epochs, config)
-        else:
-            predicted_time = self.get_conservative_time_estimate(complexity, data_factor, estimated_epochs)
-        
-        # Clean, minimal record structure - only essential data for power law modeling
-        record = {
-            'timestamp': datetime.datetime.now().isoformat(),
-            'complexity': complexity,  # Real Keras parameter count
-            'data_factor': data_factor,  # Simplified: batch size and k-fold scaling only  
-            'actual_time': actual_time_minutes,  # Total training time
-            'predicted_time': predicted_time,  # What we predicted
-            'epochs_trained': estimated_epochs,  # Estimated actual epochs (for reference)
-            'classifier_type': self.classifier_type,  # Track PD vs CWT
-            # Minimal config fingerprint for debugging
-            'config_key': {
-                'arch': f"{config['conv_filters']}-{config['dense_units']}",
-                'lr': config['learning_rate'],
-                'bs': config['batch_size'],
-                'kf': config['k_folds']
-            }
-        }
-        
-        self.timing_data['timing_records'].append(record)
-        
-        # Update metadata
-        self.timing_data['last_updated'] = datetime.datetime.now().isoformat()
-        
-        # Keep only last 30 records per classifier type (more manageable)
-        self.timing_data['timing_records'] = self.timing_data['timing_records'][-30:]
-        
-        # Save to disk
-        with open(self.timing_db_file, 'w') as f:
-            json.dump(self.timing_data, f, indent=2)
-        
-        if self.verbose:
-            error_pct = abs(actual_time_minutes - predicted_time) / actual_time_minutes * 100 if actual_time_minutes > 0 else 0
-            print(f"Updated timing database: {actual_time_minutes:.1f}min actual vs {predicted_time:.1f}min predicted ({error_pct:.1f}% error)")
-    
+
+        return total_params
+
     def save_config_to_file(self, config, config_number_in_run):
         """Save configuration to JSON file with run-scoped sequential numbering."""
         config_file = Path(self.output_root) / f"config_{config_number_in_run:03d}.json"
-        
+
         # Normalize config using strategy
         normalized_config = self.strategy.normalize_config(config)
         
@@ -1426,7 +1317,24 @@ class HyperparameterTuner:
                 '--config_file', config_file_path,
                 '--config_number_in_run', str(config_number_in_run)
             ])
-        
+
+        # Add dataset variant if specified (for k-fold CV datasets)
+        if self.dataset_variant:
+            cmd.extend(['--dataset_variant', str(self.dataset_variant)])
+
+        # Add label file if specified (for prepared datasets)
+        if self.label_file:
+            cmd.extend(['--label_file', str(self.label_file)])
+            cmd.extend(['--label_column', 'has_porosity'])  # Standard column for binary classification
+
+        # Add label arguments if specified (for CSV-based labeling)
+        if 'label_file' in config and config['label_file']:
+            cmd.extend(['--label_file', str(config['label_file'])])
+        if 'label_column' in config and config['label_column']:
+            cmd.extend(['--label_column', str(config['label_column'])])
+        if 'label_type' in config and config['label_type']:
+            cmd.extend(['--label_type', str(config['label_type'])])
+
         # Add concise flag if needed
         if concise:
             cmd.append('--concise')
@@ -1434,9 +1342,7 @@ class HyperparameterTuner:
         try:
             # Set up environment for subprocess
             env = os.environ.copy()
-            env['PYTHONIOENCODING'] = 'utf-8'
-            env['PYTHONLEGACYWINDOWSFSENCODING'] = '0'
-            
+
             if verbose or concise:
                 # Run with real-time output for verbose or concise mode
                 result = subprocess.run(
@@ -1625,34 +1531,50 @@ class HyperparameterTuner:
         """Analyze the configuration space and return summary statistics."""
         if not configs:
             return {}
-        
+
+        from hyperparameter_registry import HYPERPARAMETER_REGISTRY, get_parameter_info
+
         analysis = {
             'total_configs': len(configs),
-            'learning_rates': sorted(set(config['learning_rate'] for config in configs)),
-            'batch_sizes': sorted(set(config['batch_size'] for config in configs)),
-            'epochs': sorted(set(config['epochs'] for config in configs)),
-            'k_folds': sorted(set(config['k_folds'] for config in configs)),
-            'conv_dropouts': sorted(set(config['conv_dropout'] for config in configs)),
-            'dense_dropouts': self._analyze_dense_dropouts(configs),
-            'l2_regs': sorted(set(config['l2_regularization'] for config in configs)),
-            'architectures': []
+            'parameters': {}  # Will store all non-fixed parameters
         }
-        
-        # Analyze unique architectures
-        arch_set = set()
-        for config in configs:
-            arch = (tuple(config['conv_filters']), tuple(config['dense_units']))
-            arch_set.add(arch)
-        analysis['architectures'] = sorted(list(arch_set))
-        
-        # Calculate total training time estimate using simple timing system
+
+        # Collect all non-fixed parameters that vary across configs
+        for param_name in HYPERPARAMETER_REGISTRY:
+            param_info = get_parameter_info(param_name, self.classifier_type)
+            if param_info is None:
+                continue
+
+            # Skip fixed parameters
+            if param_info.get('category') == 'fixed':
+                continue
+
+            # Check if this parameter exists in configs and varies
+            if param_name in configs[0]:
+                values = set()
+                for config in configs:
+                    value = config.get(param_name)
+                    if value is not None:
+                        # Handle list/tuple values
+                        if isinstance(value, (list, tuple)):
+                            values.add(tuple(value))
+                        else:
+                            values.add(value)
+
+                # Only include if there are multiple values or at least one value
+                if values:
+                    analysis['parameters'][param_name] = sorted(list(values))
+
+        # Calculate total training time estimate
         total_time_minutes = 0
         for config in configs:
-            time_estimate = self.timing_estimator.estimate_time(config)
+            # Calculate real model complexity for accurate estimation
+            complexity = self.calculate_model_complexity(config)
+            time_estimate = self.timing_estimator.estimate_time(config, real_complexity=complexity)
             total_time_minutes += time_estimate
-        
+
         analysis['estimated_total_time_hours'] = total_time_minutes / 60
-        
+
         return analysis
     
     def _analyze_dense_dropouts(self, configs):
@@ -1750,10 +1672,12 @@ class HyperparameterTuner:
             
             for i, config in enumerate(configs):
                 config_index = i  # 0-based index
-                if (config_index not in skip_from_deduplication and 
-                    config_index not in skip_from_max_configs and 
+                if (config_index not in skip_from_deduplication and
+                    config_index not in skip_from_max_configs and
                     (i + 1) not in completed_ids):
-                    time_estimate = self.timing_estimator.estimate_time(config)
+                    # Calculate real model complexity for accurate estimation
+                    complexity = self.calculate_model_complexity(config)
+                    time_estimate = self.timing_estimator.estimate_time(config, real_complexity=complexity)
                     total_time_for_running_configs += time_estimate
                     configs_counted += 1
                     if configs_counted >= configs_to_run_count:
@@ -1787,18 +1711,51 @@ class HyperparameterTuner:
         else:
             print(f"   Timing Database: No historical data (using conservative estimates)")
         
-        print(f"\nHYPERPARAMETER RANGES (most significant):")
-        print(f"   Learning Rates: {analysis['learning_rates']}")
-        print(f"   Batch Sizes: {analysis['batch_sizes']}")
-        print(f"   Epochs per Config: {analysis['epochs']}")
-        print(f"   K-Folds per Config: {analysis['k_folds']}")
-        print(f"   Conv Dropout Rates: {analysis['conv_dropouts']}")
-        print(f"   Dense Dropout Rates: {self._format_dense_dropouts(analysis['dense_dropouts'])}")
-        print(f"   L2 Regularization: {analysis['l2_regs']}")
-        
-        print(f"\nNETWORK ARCHITECTURES:")
-        for i, (conv_arch, dense_arch) in enumerate(analysis['architectures'], 1):
-            print(f"   Architecture {i}: Conv{list(conv_arch)} + Dense{list(dense_arch)}")
+        print(f"\nHYPERPARAMETER RANGES (all non-fixed parameters):")
+
+        # Group parameters by category for better organization
+        from hyperparameter_registry import get_parameter_info
+
+        params_by_category = {}
+        for param_name, param_values in sorted(analysis['parameters'].items()):
+            param_info = get_parameter_info(param_name, self.classifier_type)
+            if param_info:
+                category = param_info.get('category', 'other')
+                if category not in params_by_category:
+                    params_by_category[category] = []
+                params_by_category[category].append((param_name, param_values))
+
+        # Display by category
+        category_order = ['training', 'regularization', 'architecture', 'augmentation', 'training_control']
+        for category in category_order:
+            if category in params_by_category:
+                category_title = category.replace('_', ' ').title()
+                print(f"\n   {category_title}:")
+                for param_name, param_values in params_by_category[category]:
+                    # Format parameter name nicely
+                    param_display = param_name.replace('_', ' ').title()
+
+                    # Format values based on type
+                    if all(isinstance(v, (list, tuple)) for v in param_values):
+                        # List values (e.g., architectures)
+                        values_str = ', '.join([str(list(v)) for v in param_values])
+                    else:
+                        values_str = str(param_values)
+
+                    print(f"      {param_display}: {values_str}")
+
+        # Show any remaining categories not in the standard order
+        for category, params in params_by_category.items():
+            if category not in category_order:
+                category_title = category.replace('_', ' ').title()
+                print(f"\n   {category_title}:")
+                for param_name, param_values in params:
+                    param_display = param_name.replace('_', ' ').title()
+                    if all(isinstance(v, (list, tuple)) for v in param_values):
+                        values_str = ', '.join([str(list(v)) for v in param_values])
+                    else:
+                        values_str = str(param_values)
+                    print(f"      {param_display}: {values_str}")
         
         # Show configurations that will actually be executed
         num_to_show = min(3, len(configs_to_execute))
@@ -2040,10 +1997,10 @@ class HyperparameterTuner:
             else:
                 print("   Please enter 'y' for yes or 'n' for no.")
     
-    def run_optimization(self, mode='smart', max_configs=None, resume=False, verbose=False, concise=False, deduplication=True, search_radius=1, grid_search=False, ignore_params=None, max_grid_size=100, categories=None, priority_tiers=None):
+    def run_optimization(self, mode='smart', max_configs=None, resume=False, verbose=False, concise=False, deduplication=True, search_radius=1, grid_search=False, include_seed=False, ignore_params=None, max_grid_size=100, categories=None, priority_tiers=None):
         """
         Run hyperparameter optimization.
-        
+
         Args:
             mode: Optimization mode options:
                 - test: 2 configs for testing (2 folds, 2 epochs)
@@ -2054,6 +2011,7 @@ class HyperparameterTuner:
             deduplication: If True, skip previously tested configurations (default: True)
             search_radius: For smart mode, number of neighboring values to test around best config (±1 or ±2)
             grid_search: If True, do full grid search; if False, use OFAT (default)
+            include_seed: If True, include seed/base config in smart mode search (default: False)
             ignore_params: List of parameters to ignore in smart mode
             max_grid_size: Maximum grid size before parameter limiting
             categories: List of parameter categories to include (training, regularization, architecture, training_control, augmentation)
@@ -2068,7 +2026,16 @@ class HyperparameterTuner:
         # For smart mode, store config info for later display in OPTIMIZATION DETAILS
         smart_config_info = None
         if mode == 'smart':
-            best_config = self._find_best_previous_config()
+            # Determine base config for smart mode: --base takes precedence over auto-best
+            if self.base_version is not None:
+                # User explicitly specified --base, use that config
+                best_config = self.base_config.copy()
+                best_config['version'] = f'v{self.base_version:03d}'  # Add version for display
+                if self.verbose:
+                    print(f"Using --base {self.base_version} as origin for smart search")
+            else:
+                # Auto-find best config by accuracy
+                best_config = self._find_best_previous_config()
             print()
             print('Best config:')
             print(best_config)
@@ -2097,10 +2064,11 @@ class HyperparameterTuner:
         # Generate configurations
         if mode == 'smart':
             configs = self.generate_smart_configs(
-                search_radius=search_radius, 
-                grid_search=grid_search, 
-                ignore_params=ignore_params or [], 
-                max_grid_size=max_grid_size, 
+                search_radius=search_radius,
+                grid_search=grid_search,
+                include_seed=include_seed,
+                ignore_params=ignore_params or [],
+                max_grid_size=max_grid_size,
                 categories=categories,
                 priority_tiers=priority_tiers,
                 best_config=best_config
@@ -2110,10 +2078,18 @@ class HyperparameterTuner:
             if self.classifier_type != 'cwt_image':
                 raise ValueError("Channel ablation mode is only supported for CWT image classifier")
             configs = self.generate_channel_ablation_configs()
+        elif mode == 'doe':
+            # Design of Experiments mode - statistically efficient parameter exploration
+            configs = self.generate_doe_configs(
+                doe_design=getattr(self, '_doe_design', 'factorial'),
+                doe_factors=getattr(self, '_doe_factors', None),
+                search_radius=search_radius,
+                max_configs=max_configs
+            )
         elif mode == 'test':
             configs = self.generate_test_configs()
         else:
-            available_modes = ['smart', 'channel-ablation', 'test']
+            available_modes = ['smart', 'doe', 'channel-ablation', 'test']
             raise ValueError(f"Unknown mode: {mode}. Available modes: {available_modes}")
         
         # Determine which configs to skip and which to run
@@ -2148,9 +2124,18 @@ class HyperparameterTuner:
         for i, config in enumerate(configs, 1):
             # Skip configs that were already tested, completed, or beyond max_configs limit
             config_index = i - 1  # Convert to 0-based index for skip checks
-            if (config_index in skip_from_deduplication or 
-                config_index in skip_from_max_configs or 
-                i in completed_ids):
+
+            # Special case: if --include_seed was specified in smart mode, never skip the seed config (index 0)
+            is_seed_config = (mode == 'smart' and config_index == 0)
+            skip_seed_override = is_seed_config and include_seed
+
+            # Check if this config should be skipped
+            should_skip = (config_index in skip_from_deduplication or
+                          config_index in skip_from_max_configs or
+                          i in completed_ids)
+
+            # Apply skip decision (unless overridden by --include_seed for seed config)
+            if should_skip and not skip_seed_override:
                 if not self.concise:
                     if i in completed_ids:
                         skip_reason = "already completed"
@@ -2160,6 +2145,10 @@ class HyperparameterTuner:
                         skip_reason = "beyond max_configs limit"
                     print(f"Skipping configuration {i} ({skip_reason})")
                 continue
+
+            # If we reach here, config will be executed
+            if skip_seed_override and not self.concise:
+                print(f"Config {i}: Re-running seed config (--include_seed specified)")
             
             # Increment sequential counter for configs actually being run in this run
             config_number_in_run += 1
@@ -2367,80 +2356,114 @@ class HyperparameterTuner:
             print(f"\n{len(self.failed_configs)} configs failed - see {failed_file.as_posix()}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Hyperparameter Optimization for ML Classifiers')
+    parser = argparse.ArgumentParser(
+        description='Hyperparameter Optimization for ML Classifiers',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    # Core arguments
     parser.add_argument('--classifier', choices=['pd_signal', 'cwt_image'], default='pd_signal',
-                       help='Type of classifier to optimize (default: pd_signal)')
+                       help='Type of classifier to optimize. Options: pd_signal, cwt_image (default: pd_signal)')
     parser.add_argument('--multi-channel', action='store_true',
                        help='Use multi-channel configuration for CWT classifier (uses hardcoded paths from config.py)')
-    parser.add_argument('--base', type=int, default=None,
+    parser.add_argument('--channel', type=str, default=None, metavar='CHANNEL',
+                       help='For CWT classifier: specify single channel to use (e.g., "PD1_cmor1.5-1.0", "PD1_mexh"). Mutually exclusive with --multi-channel. Available channels defined in config.py CWT_DATA_DIR_DICT. If not specified, uses default_channel from config.py.')
+    parser.add_argument('--base', type=int, default=None, metavar='VERSION',
                        help='Use configuration from specific version as base (e.g., --base 115 for v115)')
-    parser.add_argument('--mode', choices=['test', 'smart', 'channel-ablation'], default='smart',
-                       help='Optimization mode (default: smart). Modes: test=quick validation, smart=registry-based adaptive search, channel-ablation=multi-channel analysis study (CWT only)')
-    parser.add_argument('--max_configs', type=int, default=None,
-                       help='Maximum number of configurations to test')
-    parser.add_argument('--output_dir', type=str, default=None,
-                       help='Output directory for results (defaults to config PD_HYPEROPT_RESULTS_DIR)')
+    parser.add_argument('--mode', choices=['test', 'smart', 'doe', 'channel-ablation'], default='smart',
+                       help='Optimization mode. Options: test (quick validation with 2 configs), smart (registry-based adaptive search), doe (Design of Experiments for efficient parameter space exploration), channel-ablation (multi-channel analysis, CWT only). Default: smart')
+    parser.add_argument('--max_configs', type=int, default=None, metavar='N',
+                       help='Maximum number of configurations to test (default: no limit)')
+    parser.add_argument('--output_dir', type=str, default=None, metavar='DIR',
+                       help='Output directory for results (default: from config PD_HYPEROPT_RESULTS_DIR or CWT_HYPEROPT_RESULTS_DIR)')
     parser.add_argument('--resume', action='store_true',
-                       help='Resume from previous run')
+                       help='Resume from previous run in the same output directory')
     parser.add_argument('--verbose', action='store_true',
-                       help='Show training output in real-time')
+                       help='Show training output in real-time (detailed mode)')
     parser.add_argument('--concise', action='store_true',
                        help='Show concise progress updates (one line per epoch)')
     parser.add_argument('--skip_deduplication', action='store_true',
                        help='Disable smart deduplication - allow retesting previous configurations')
-    parser.add_argument('--search_radius', type=int, choices=[1, 2], default=1,
-                       help='For smart mode: search radius around best config (±1 or ±2 values per parameter)')
+
+    # Smart mode arguments
+    parser.add_argument('--search_radius', type=int, choices=[1, 2], default=1, metavar='R',
+                       help='For smart mode: search radius around best config. Options: 1 (±1 value per parameter), 2 (±2 values per parameter). Default: 1')
     parser.add_argument('--grid_search', action='store_true',
-                       help='For smart mode: do full grid search instead of OFAT')
+                       help='For smart mode: do full grid search instead of OFAT (One Factor At a Time)')
+    parser.add_argument('--include_seed', action='store_true',
+                       help='For smart mode: include seed/base config in search (re-run the base/best config even if already tested)')
     parser.add_argument('--ignore', nargs='+', default=[], metavar='PARAM',
-                       help='For smart mode: parameters to ignore in search, using previous optimum value')
+                       help='For smart mode: parameters to ignore in search, using previous optimum value (e.g., --ignore batch_size learning_rate)')
     parser.add_argument('--max_grid_size', type=int, default=100, metavar='N',
-                       help='Maximum grid search size before parameter limiting kicks in')
+                       help='Maximum grid search size before parameter limiting kicks in (default: 100)')
     parser.add_argument('--category', nargs='+', choices=['training', 'regularization', 'architecture', 'training_control', 'augmentation', 'fixed'], default=None, metavar='CAT',
-                       help='For smart mode: parameter categories to include (default: all non-fixed categories)')
+                       help='For smart mode: parameter categories to include. Options: training, regularization, architecture, training_control, augmentation, fixed. Default: all non-fixed categories. Example: --category training regularization')
     parser.add_argument('--priority', nargs='+', type=int, choices=[1, 2, 3, 4, 5], default=None, metavar='TIER',
-                       help='For smart mode: priority tiers to include (1=highest, 5=lowest, default: all tiers)')
-    
+                       help='For smart mode: priority tiers to include. Options: 1 (highest), 2, 3, 4, 5 (lowest). Default: all tiers. Example: --priority 1 2')
+    # Label file argument (for prepared datasets)
+    parser.add_argument('--label-file', type=str,
+                       help='Path to prepared label CSV file from prepare_training_dataset.py '
+                            '(e.g., 1.0ms-window_prepared_AlSi10Mg_L1_threshold10_ratio1.5.csv)')
+
+    # Dataset variant argument (for k-fold CV datasets)
+    parser.add_argument('--dataset-variant', type=str,
+                       help='Name of pre-prepared dataset variant for k-fold CV '
+                            '(e.g., baseline_5fold). Mutually exclusive with --label-file.')
+
     # DoE-specific arguments
-    parser.add_argument('--doe_design', type=str, choices=['factorial', 'response_surface', 'lhs', 'from_file'], default='factorial',
-                       help='DoE design type for --mode doe (default: factorial)')
-    parser.add_argument('--doe_file', type=str,
-                       help='Path to CSV file containing DoE experiments (for --doe_design from_file)')
-    parser.add_argument('--doe_phase', type=int, choices=[1, 2, 3],
-                       help='DoE phase (1=screening, 2=optimization, 3=validation)')
-    parser.add_argument('--doe_factors', type=str, nargs='*',
-                       help='Specific factors to include in DoE (default: auto-select based on analysis)')
+    parser.add_argument('--doe_design', type=str, choices=['factorial', 'response_surface', 'lhs'], default='factorial', metavar='DESIGN',
+                       help='DoE design type for --mode doe. Options: factorial, response_surface, lhs. Default: factorial')
+    parser.add_argument('--doe_factors', type=str, nargs='*', metavar='FACTOR',
+                       help='Specific factors to include in DoE (default: auto-select based on analysis). Example: --doe_factors learning_rate batch_size')
     parser.add_argument('--auto_analyze', action='store_true',
                        help='Automatically run comprehensive analysis after DoE completion')
     
     args = parser.parse_args()
-    
+
     # Validate arguments
     if args.multi_channel and args.classifier != 'cwt_image':
         parser.error("--multi-channel can only be used with --classifier cwt_image")
-    
+
+    if args.channel and args.classifier != 'cwt_image':
+        parser.error("--channel can only be used with --classifier cwt_image")
+
+    if args.channel and args.multi_channel:
+        parser.error("--channel and --multi-channel are mutually exclusive")
+
+    # Validate channel name if specified
+    if args.channel:
+        from config import CWT_DATA_DIR_DICT
+        if args.channel not in CWT_DATA_DIR_DICT:
+            available_channels = ', '.join(CWT_DATA_DIR_DICT.keys())
+            parser.error(f"Unknown channel '{args.channel}'. Available channels: {available_channels}")
+
     # Channel-ablation mode requires multi-channel configuration
     if args.mode == 'channel-ablation':
         if args.classifier != 'cwt_image':
             parser.error("--mode channel-ablation can only be used with --classifier cwt_image")
         args.multi_channel = True  # Automatically enable multi-channel mode
     
+    # Validate mutually exclusive arguments
+    if hasattr(args, 'label_file') and args.label_file and hasattr(args, 'dataset_variant') and args.dataset_variant:
+        parser.error("--label-file and --dataset-variant are mutually exclusive. Use one or the other.")
+
     # Initialize tuner with classifier type (output_root will be set when run_optimization is called)
     tuner = HyperparameterTuner(
         classifier_type=args.classifier,
-        output_root=args.output_dir, 
-        verbose=args.verbose, 
+        output_root=args.output_dir,
+        verbose=args.verbose,
         concise=args.concise,
         multi_channel=args.multi_channel,
-        base_version=args.base
+        channel=args.channel,
+        base_version=args.base,
+        label_file=args.label_file if hasattr(args, 'label_file') else None,
+        dataset_variant=args.dataset_variant if hasattr(args, 'dataset_variant') else None
     )
     
     # Set DoE-specific parameters as instance variables for access in DoE mode
     if args.mode == 'doe':
         tuner._doe_design = args.doe_design
-        tuner._doe_phase = args.doe_phase
         tuner._doe_factors = args.doe_factors
-        tuner._doe_file = args.doe_file
         tuner._auto_analyze = args.auto_analyze
     
     # Run optimization
@@ -2453,6 +2476,7 @@ def main():
         deduplication=not args.skip_deduplication,  # Default to True unless --skip_deduplication is used
         search_radius=args.search_radius,
         grid_search=args.grid_search,
+        include_seed=args.include_seed,
         ignore_params=args.ignore,
         max_grid_size=args.max_grid_size,
         categories=args.category,
