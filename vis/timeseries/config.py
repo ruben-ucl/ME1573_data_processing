@@ -65,6 +65,8 @@ class ProcessingConfig:
     # Normalization
     apply_normalization: bool = False
     normalization_method: str = 'standard'  # 'standard', 'minmax', 'robust'
+    use_global_normalization: bool = False  # Use global statistics across all tracks instead of per-track
+    global_stats_file: Optional[str] = None  # Path to hdf5_dataset_statistics.csv (auto-detected if None)
 
     # Resampling
     apply_resampling: bool = False
@@ -73,10 +75,34 @@ class ProcessingConfig:
 
     # Outlier removal
     remove_outliers: bool = False
-    outlier_method: str = 'iqr'  # 'iqr', 'zscore', 'mad' (median absolute deviation)
-    outlier_threshold: float = 3.0  # IQR multiplier (1.5=mild, 3.0=extreme) or z-score threshold
+    outlier_method: str | list[str] = 'iqr'  # Single method or list of methods: 'iqr', 'zscore', 'mad', 'gradient', 'second_derivative'
+    outlier_threshold: float | list[float] = 3.0  # Single threshold or list of thresholds (one per method)
     outlier_window: int = 50  # Will be scaled based on sampling rate (0=global)
+    outlier_gradient_smoothing: int = 1  # Median filter window for gradient smoothing (gradient/second_derivative methods)
     handle_nans: bool = True  # Handle NaN values by default
 
     # Auto alignment
     apply_auto_alignment: bool = True  # Enable/disable automatic time series alignment
+    apply_manual_lag_corrections: bool = False  # Enable/disable manual per-track lag corrections (overrides auto-alignment)
+
+    # Alignment reference configuration
+    alignment_reference_label: str = 'PD1'  # Reference signal for alignment
+    alignment_reference_group: Optional[str] = None  # Reference group (overrides reference_label if set)
+
+    # Alignment method selection
+    alignment_method: str = 'mutual_info'  # 'ccf' (cross-correlation), 'feature' (feature matching), 'mutual_info' (mutual information)
+
+    # General alignment parameters
+    correlation_window_time: float = 0.001  # Window size for cross-correlation in seconds
+    max_shift_time: float = 0.0005  # Maximum shift to search in seconds
+    correlation_method: str = 'normalized'  # 'normalized', 'standard', or 'zero_mean'
+    normalize_signals: bool = True  # Remove DC offset and normalize amplitude before correlation
+    sync_within_groups: bool = True  # Maintain synchronization within dataset groups
+    use_raw_data: bool = True  # Use raw (uncropped) or processed data for alignment
+
+    # Feature-based alignment parameters (used when alignment_method='feature')
+    feature_method: str = 'peak'  # 'peak' (envelope peaks), 'edge' (transitions), 'energy' (energy bursts)
+    n_features: int = 5  # Number of features to detect and match
+
+    # Mutual information alignment parameters (used when alignment_method='mutual_info')
+    mi_bins: int = 50  # Number of bins for MI histogram

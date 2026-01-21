@@ -16,8 +16,11 @@ from .config import ProcessingConfig
 class TimeSeriesProcessor:
     """Advanced time series processing and analysis class"""
 
-    def __init__(self, processing_config: ProcessingConfig):
+    def __init__(self, processing_config: ProcessingConfig, verbose: bool = True):
         self.config = processing_config
+        self.verbose = verbose
+        self.outlier_masks = {}  # Store outlier masks per signal label
+        self.gradient_diagnostics = {}  # Store gradient diagnostic data per signal label for plotting
 
     def _scale_window_to_sampling_rate(self, window_samples: int, sampling_rate: float) -> int:
         """
@@ -45,13 +48,16 @@ class TimeSeriesProcessor:
 
         return scaled_window
 
-    def process_signal(self, data: np.ndarray, sampling_rate: float = 1.0) -> np.ndarray:
+    def process_signal(self, data: np.ndarray, sampling_rate: float = 1.0, label: str = None, group: str = None, dataset_name: str = None) -> np.ndarray:
         """
         Apply comprehensive signal processing pipeline
 
         Args:
             data: Input signal array
             sampling_rate: Sampling rate of the signal
+            label: Optional label for the signal (used to store outlier mask)
+            group: Optional group name (used to skip outlier removal for AMPM signals)
+            dataset_name: Full dataset path (e.g., 'AMPM/Photodiode1Bits') for global normalization
 
         Returns:
             Processed signal array
@@ -63,8 +69,17 @@ class TimeSeriesProcessor:
             processed_data = self._handle_nan_values(processed_data)
 
         # Remove statistical outliers (measurement errors)
-        if self.config.remove_outliers:
-            processed_data = self._remove_outliers(processed_data, sampling_rate)
+        # Skip outlier removal for AMPM group signals
+        if self.config.remove_outliers and group != 'AMPM':
+            processed_data, outlier_mask = self._remove_outliers(processed_data, sampling_rate, label=label)
+            if label is not None:
+                self.outlier_masks[label] = outlier_mask
+        elif self.config.remove_outliers and group == 'AMPM':
+            if self.verbose:
+                print(f"  Outlier removal skipped for AMPM group signal")
+            # Create empty outlier mask for consistency
+            if label is not None:
+                self.outlier_masks[label] = np.zeros(len(data), dtype=bool)
 
         # Apply detrending
         if self.config.apply_detrend:
@@ -93,7 +108,7 @@ class TimeSeriesProcessor:
 
         # Apply normalization
         if self.config.apply_normalization:
-            processed_data = self._apply_normalization(processed_data)
+            processed_data = self._apply_normalization(processed_data, dataset_name)
 
         return processed_data
 
@@ -107,92 +122,149 @@ class TimeSeriesProcessor:
                 data = np.interp(indices, indices[mask], data[mask])
         return data
 
-    def _remove_outliers(self, data: np.ndarray, sampling_rate: float) -> np.ndarray:
+    def _remove_outliers(self, data: np.ndarray, sampling_rate: float, label: str = None) -> tuple[np.ndarray, np.ndarray]:
         """
-        Remove statistical outliers using IQR, Z-score, or MAD methods.
+        Remove statistical outliers using single or multiple sequential methods.
         Can operate globally or on local windows for time series data.
 
-        Window size is scaled based on sampling rate to ensure consistent
-        temporal characteristics across signals with different sampling rates.
+        Supports sequential application: methods are applied in order, each operating on
+        the signal cleaned by the previous method. For example, ['gradient', 'iqr'] will
+        first remove gradient-based outliers, then apply IQR to the cleaned signal.
 
         Args:
             data: Input signal array
             sampling_rate: Sampling rate in Hz
+            label: Optional signal label for storing gradient diagnostics
 
         Returns:
-            Signal array with outliers replaced by interpolated values
+            Tuple of (cleaned signal array, combined outlier mask boolean array)
         """
+        # Normalize methods and thresholds to lists for uniform processing
+        if isinstance(self.config.outlier_method, str):
+            methods = [self.config.outlier_method]
+        else:
+            methods = self.config.outlier_method
+
+        if isinstance(self.config.outlier_threshold, (int, float)):
+            thresholds = [self.config.outlier_threshold] * len(methods)
+        else:
+            thresholds = self.config.outlier_threshold
+            if len(thresholds) != len(methods):
+                raise ValueError(f"Number of thresholds ({len(thresholds)}) must match number of methods ({len(methods)})")
+
+        # Initialize with original data
         data_cleaned = data.copy()
-        outlier_mask = np.zeros(len(data), dtype=bool)
+        combined_outlier_mask = np.zeros(len(data), dtype=bool)
 
-        # Global outlier detection
-        if self.config.outlier_window == 0:
-            outlier_mask = self._detect_outliers_global(data)
+        # Apply each method sequentially
+        for method_idx, (method, threshold) in enumerate(zip(methods, thresholds)):
+            print(f"  Applying outlier method {method_idx+1}/{len(methods)}: {method} (threshold={threshold})")
 
-        # Local (windowed) outlier detection
-        else:
-            # Scale window based on sampling rate
-            window = self._scale_window_to_sampling_rate(self.config.outlier_window, sampling_rate)
-            half_window = window // 2
+            # Store current method and threshold temporarily
+            original_method = self.config.outlier_method
+            original_threshold = self.config.outlier_threshold
+            self.config.outlier_method = method
+            self.config.outlier_threshold = threshold
 
-            for i in range(len(data)):
-                # Define window boundaries
-                start_idx = max(0, i - half_window)
-                end_idx = min(len(data), i + half_window + 1)
-                window_data = data[start_idx:end_idx]
+            # Detect outliers using current method
+            method_outlier_mask = np.zeros(len(data_cleaned), dtype=bool)
 
-                # Detect outliers within this window
-                local_outliers = self._detect_outliers_global(window_data)
+            # For gradient/second_derivative methods: compute diagnostics on CLEANED signal (after previous passes)
+            # Only do this for the first occurrence of these methods and if label is provided
+            if method in ['gradient', 'second_derivative'] and label is not None and self.config.outlier_window > 0:
+                if method_idx == 0 or method not in methods[:method_idx]:  # First occurrence
+                    _ = self._detect_outliers_global(data_cleaned, label=label, method=method, threshold=threshold)
 
-                # Map back to position in window
-                local_i = i - start_idx
-                if local_i < len(local_outliers):
-                    outlier_mask[i] = local_outliers[local_i]
-
-        # Count and report outliers
-        n_outliers = np.sum(outlier_mask)
-        outlier_percentage = 100 * n_outliers / len(data)
-
-        if n_outliers > 0:
+            # Global outlier detection
             if self.config.outlier_window == 0:
-                mode_str = "global"
+                method_outlier_mask = self._detect_outliers_global(data_cleaned, label=(label if method_idx==0 else None),
+                                                                   method=method, threshold=threshold)
+
+            # Local (windowed) outlier detection
             else:
-                mode_str = f"local (window={window} samples, {window/sampling_rate*1000:.1f}ms)"
-            print(f"  Outlier removal ({self.config.outlier_method}, {mode_str}, threshold={self.config.outlier_threshold}): "
-                  f"{n_outliers} outliers detected ({outlier_percentage:.2f}%) - interpolating...")
+                # Scale window based on sampling rate
+                window = self._scale_window_to_sampling_rate(self.config.outlier_window, sampling_rate)
+                half_window = window // 2
 
-            # Get outlier statistics
-            outlier_values = data[outlier_mask]
-            if len(outlier_values) > 0:
-                print(f"    Outlier range: [{np.min(outlier_values):.4f}, {np.max(outlier_values):.4f}]")
-                print(f"    Signal range: [{np.min(data):.4f}, {np.max(data):.4f}]")
-        else:
-            print(f"  Outlier removal ({self.config.outlier_method}): No outliers detected")
+                for i in range(len(data_cleaned)):
+                    # Define window boundaries
+                    start_idx = max(0, i - half_window)
+                    end_idx = min(len(data_cleaned), i + half_window + 1)
+                    window_data = data_cleaned[start_idx:end_idx]
 
-        # Replace outliers with NaN for interpolation
-        data_cleaned[outlier_mask] = np.nan
+                    # Detect outliers within this window
+                    local_outliers = self._detect_outliers_global(window_data, method=method, threshold=threshold)
 
-        # Interpolate the outliers
-        if np.any(np.isnan(data_cleaned)):
-            mask = ~np.isnan(data_cleaned)
-            if np.sum(mask) > 1:
-                indices = np.arange(len(data_cleaned))
-                data_cleaned = np.interp(indices, indices[mask], data_cleaned[mask])
+                    # Map back to position in window
+                    local_i = i - start_idx
+                    if local_i < len(local_outliers):
+                        method_outlier_mask[i] = local_outliers[local_i]
 
-        return data_cleaned
+            # Count and report outliers for this method
+            n_outliers = np.sum(method_outlier_mask)
+            outlier_percentage = 100 * n_outliers / len(data_cleaned)
 
-    def _detect_outliers_global(self, data: np.ndarray) -> np.ndarray:
+            if n_outliers > 0:
+                if self.config.outlier_window == 0:
+                    mode_str = "global"
+                else:
+                    mode_str = f"local (window={window} samples, {window/sampling_rate*1000:.1f}ms)"
+                print(f"    {method} ({mode_str}): {n_outliers} outliers detected ({outlier_percentage:.2f}%) - interpolating...")
+
+                # Get outlier statistics
+                outlier_values = data_cleaned[method_outlier_mask]
+                if len(outlier_values) > 0:
+                    print(f"      Outlier range: [{np.min(outlier_values):.4f}, {np.max(outlier_values):.4f}]")
+                    print(f"      Signal range: [{np.min(data_cleaned):.4f}, {np.max(data_cleaned):.4f}]")
+
+                # Replace outliers with NaN for interpolation
+                data_cleaned[method_outlier_mask] = np.nan
+
+                # Interpolate the outliers
+                if np.any(np.isnan(data_cleaned)):
+                    mask = ~np.isnan(data_cleaned)
+                    if np.sum(mask) > 1:
+                        indices = np.arange(len(data_cleaned))
+                        data_cleaned = np.interp(indices, indices[mask], data_cleaned[mask])
+
+                # Update combined mask
+                combined_outlier_mask = combined_outlier_mask | method_outlier_mask
+            else:
+                print(f"    {method}: No outliers detected")
+
+            # Restore original config values
+            self.config.outlier_method = original_method
+            self.config.outlier_threshold = original_threshold
+
+        # Final summary
+        total_outliers = np.sum(combined_outlier_mask)
+        total_percentage = 100 * total_outliers / len(data)
+        print(f"  Total outliers removed across all methods: {total_outliers} ({total_percentage:.2f}%)")
+
+        # Store cleaned data and combined outlier mask in diagnostics if gradient/second_derivative was used
+        if label is not None and label in self.gradient_diagnostics:
+            self.gradient_diagnostics[label]['data_cleaned'] = data_cleaned.copy()
+            # Update outliers to include ALL passes (not just first method)
+            self.gradient_diagnostics[label]['outliers'] = combined_outlier_mask.copy()
+
+        return data_cleaned, combined_outlier_mask
+
+    def _detect_outliers_global(self, data: np.ndarray, label: str = None,
+                               method: str = None, threshold: float = None) -> np.ndarray:
         """
         Detect outliers using specified statistical method.
 
         Args:
             data: Input signal array
+            label: Optional signal label for storing gradient diagnostics
+            method: Optional method override (uses config if None)
+            threshold: Optional threshold override (uses config if None)
 
         Returns:
             Boolean mask where True indicates outlier
         """
-        method = self.config.outlier_method
-        threshold = self.config.outlier_threshold
+        method = method if method is not None else self.config.outlier_method
+        threshold = threshold if threshold is not None else self.config.outlier_threshold
 
         if method == 'iqr':
             # Interquartile Range method
@@ -223,6 +295,110 @@ class TimeSeriesProcessor:
                 outliers = np.abs(modified_z_scores) > threshold
             else:
                 outliers = np.zeros(len(data), dtype=bool)
+
+        elif method == 'gradient':
+            # Gradient-based outlier detection for sudden spikes
+            # Compute gradient (rate of change)
+            gradient = np.gradient(data)
+
+            # Optional median filtering to smooth gradient and reduce noise sensitivity
+            if self.config.outlier_gradient_smoothing > 1:
+                from scipy.ndimage import median_filter
+                gradient_smoothed = median_filter(gradient, size=self.config.outlier_gradient_smoothing, mode='nearest')
+            else:
+                gradient_smoothed = gradient
+
+            # Compute MAD of absolute gradient
+            abs_gradient = np.abs(gradient_smoothed)
+
+            # Exclude near-zero values from median/MAD calculation (handles flat signal regions)
+            # Use small epsilon to avoid excluding legitimate small gradients
+            epsilon = 1e-10
+            non_zero_mask = abs_gradient > epsilon
+
+            if np.sum(non_zero_mask) > 0:
+                # Calculate statistics on non-zero gradient values only
+                median_grad = np.median(abs_gradient[non_zero_mask])
+                mad_grad = np.median(np.abs(abs_gradient[non_zero_mask] - median_grad))
+            else:
+                # All gradients are essentially zero (completely flat signal)
+                median_grad = 0.0
+                mad_grad = 0.0
+
+            if mad_grad > 0:
+                # Detect points where gradient exceeds threshold × MAD
+                grad_threshold = median_grad + threshold * mad_grad
+                outliers = abs_gradient > grad_threshold
+            else:
+                outliers = np.zeros(len(data), dtype=bool)
+
+            # Store diagnostic data for plotting (keyed by signal label)
+            if label is not None:
+                self.gradient_diagnostics[label] = {
+                    'data': data.copy(),
+                    'gradient_raw': gradient.copy(),
+                    'gradient_smoothed': gradient_smoothed.copy(),
+                    'abs_gradient': abs_gradient.copy(),
+                    'median_grad': median_grad,
+                    'mad_grad': mad_grad,
+                    'threshold_value': median_grad + threshold * mad_grad if mad_grad > 0 else 0,
+                    'outliers': outliers.copy(),
+                    'method': 'gradient'
+                }
+
+        elif method == 'second_derivative':
+            # Second derivative-based outlier detection for acceleration/curvature spikes
+            # Compute first derivative (velocity)
+            first_deriv = np.gradient(data)
+
+            # Compute second derivative (acceleration/curvature)
+            second_deriv = np.gradient(first_deriv)
+
+            # Optional median filtering to smooth second derivative
+            if self.config.outlier_gradient_smoothing > 1:
+                from scipy.ndimage import median_filter
+                second_deriv_smoothed = median_filter(second_deriv, size=self.config.outlier_gradient_smoothing, mode='nearest')
+            else:
+                second_deriv_smoothed = second_deriv
+
+            # Compute MAD of absolute second derivative
+            abs_second_deriv = np.abs(second_deriv_smoothed)
+
+            # Exclude near-zero values from median/MAD calculation (handles flat signal regions)
+            # Use small epsilon to avoid excluding legitimate small second derivatives
+            epsilon = 1e-10
+            non_zero_mask = abs_second_deriv > epsilon
+
+            if np.sum(non_zero_mask) > 0:
+                # Calculate statistics on non-zero second derivative values only
+                median_second = np.median(abs_second_deriv[non_zero_mask])
+                mad_second = np.median(np.abs(abs_second_deriv[non_zero_mask] - median_second))
+            else:
+                # All second derivatives are essentially zero (completely flat signal)
+                median_second = 0.0
+                mad_second = 0.0
+
+            if mad_second > 0:
+                # Detect points where second derivative exceeds threshold × MAD
+                second_threshold = median_second + threshold * mad_second
+                outliers = abs_second_deriv > second_threshold
+            else:
+                outliers = np.zeros(len(data), dtype=bool)
+
+            # Store diagnostic data for plotting (keyed by signal label)
+            if label is not None:
+                self.gradient_diagnostics[label] = {
+                    'data': data.copy(),
+                    'gradient_raw': second_deriv.copy(),  # Raw second derivative (for plotting)
+                    'gradient_smoothed': second_deriv_smoothed.copy(),  # Smoothed second derivative (for plotting)
+                    'abs_gradient': abs_second_deriv.copy(),
+                    'median_grad': median_second,
+                    'mad_grad': mad_second,
+                    'threshold_value': median_second + threshold * mad_second if mad_second > 0 else 0,
+                    'outliers': outliers.copy(),
+                    'method': 'second_derivative',
+                    'first_deriv': first_deriv.copy()  # Store first derivative for reference
+                }
 
         else:
             raise ValueError(f"Unknown outlier detection method: {method}")
@@ -351,10 +527,83 @@ class TimeSeriesProcessor:
             return data
         return signal.resample(data, self.config.target_samples)
 
-    def _apply_normalization(self, data: np.ndarray) -> np.ndarray:
-        """Apply normalization using specified method"""
+    def _apply_normalization(self, data: np.ndarray, dataset_name: str = None) -> np.ndarray:
+        """
+        Apply normalization using specified method.
+
+        Args:
+            data: Input signal array
+            dataset_name: Full dataset path (e.g., 'AMPM/Photodiode1Bits') for global normalization
+
+        Returns:
+            Normalized signal array
+        """
         data_reshaped = data.reshape(-1, 1)
 
+        # Global normalization using pre-computed statistics
+        if self.config.use_global_normalization and dataset_name is not None:
+            try:
+                from tools import get_dataset_normalization_params
+                from pathlib import Path
+
+                # Determine stats file path
+                hdf5_dir = None
+                if self.config.global_stats_file is not None:
+                    hdf5_dir = Path(self.config.global_stats_file).parent
+
+                if self.config.normalization_method == 'standard':
+                    # Z-score normalization using global mean and std
+                    mean_val, std_val = get_dataset_normalization_params(
+                        dataset_name, method='zscore', hdf5_dir=hdf5_dir
+                    )
+                    if std_val > 0:
+                        normalized = (data_reshaped - mean_val) / std_val
+                    else:
+                        normalized = data_reshaped - mean_val
+                    print(f"  ✓ Using GLOBAL normalization (zscore): mean={mean_val:.4f}, std={std_val:.4f}")
+
+                elif self.config.normalization_method == 'minmax':
+                    # Min-max normalization using global min and max
+                    min_val, max_val = get_dataset_normalization_params(
+                        dataset_name, method='minmax', hdf5_dir=hdf5_dir
+                    )
+                    range_val = max_val - min_val
+                    if range_val > 0:
+                        normalized = (data_reshaped - min_val) / range_val
+                    else:
+                        normalized = data_reshaped - min_val
+                    print(f"  ✓ Using GLOBAL normalization (minmax): min={min_val:.4f}, max={max_val:.4f}, range={range_val:.4f}")
+
+                elif self.config.normalization_method == 'robust':
+                    # Robust normalization not yet supported for global stats
+                    print("  Warning: Robust normalization with global stats not yet implemented. Using per-track normalization.")
+                    normalized = self._apply_local_normalization(data_reshaped)
+
+                else:
+                    normalized = data_reshaped
+
+            except Exception as e:
+                print(f"  Warning: Global normalization failed ({e}). Falling back to per-track normalization.")
+                normalized = self._apply_local_normalization(data_reshaped)
+
+        # Per-track (local) normalization
+        else:
+            if self.verbose:
+                print(f"  Using PER-TRACK normalization ({self.config.normalization_method})")
+            normalized = self._apply_local_normalization(data_reshaped)
+
+        return normalized.flatten()
+
+    def _apply_local_normalization(self, data_reshaped: np.ndarray) -> np.ndarray:
+        """
+        Apply per-track normalization using local statistics.
+
+        Args:
+            data_reshaped: Input signal array reshaped to (-1, 1)
+
+        Returns:
+            Normalized signal array (still reshaped)
+        """
         if self.config.normalization_method == 'standard':
             # Create fresh scaler for each signal
             scaler = StandardScaler()
@@ -365,8 +614,9 @@ class TimeSeriesProcessor:
             normalized = scaler.fit_transform(data_reshaped)
         elif self.config.normalization_method == 'robust':
             # Robust scaling using median and IQR
-            median = np.median(data)
-            q75, q25 = np.percentile(data, [75, 25])
+            data_flat = data_reshaped.flatten()
+            median = np.median(data_flat)
+            q75, q25 = np.percentile(data_flat, [75, 25])
             iqr = q75 - q25
             if iqr > 0:
                 normalized = (data_reshaped - median) / iqr
@@ -375,4 +625,4 @@ class TimeSeriesProcessor:
         else:
             normalized = data_reshaped
 
-        return normalized.flatten()
+        return normalized

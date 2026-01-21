@@ -151,6 +151,8 @@ class StatisticsMixin:
 
         P-values are corrected for time series autocorrelation using effective sample size
         based on the Bretherton et al. (1999) method.
+
+        Results are stored in self.correlations and also returned.
         """
         correlations = {}
         labels = list(self.processed_data.keys())
@@ -199,6 +201,8 @@ class StatisticsMixin:
                     'autocorr_lag1_series2': rho1_2
                 }
 
+        # Store in instance variable
+        self.correlations = correlations
         return correlations
     
     def calculate_differences(self) -> Dict[str, Dict[str, float]]:
@@ -238,7 +242,109 @@ class StatisticsMixin:
                 }
         
         return differences
-    
+
+    def calculate_silhouette_scores(self, silhouette_threshold: float = 0.6) -> Dict[str, Dict[str, float]]:
+        """
+        Calculate silhouette scores for signal pairs using KMeans clustering.
+
+        Tests clustering quality with k=2 and k=3 clusters, then determines
+        optimal cluster count based on silhouette scores.
+
+        Parameters:
+        -----------
+        silhouette_threshold : float, default=0.25
+            Threshold below which clustering is considered weak (predicts k=1)
+
+        Returns:
+        --------
+        silhouette_scores : dict
+            Dictionary with silhouette analysis for each pair:
+            - 'silhouette_k2': Silhouette score for 2 clusters
+            - 'silhouette_k3': Silhouette score for 3 clusters
+            - 'optimal_k': Predicted optimal cluster count (1, 2, or 3)
+        """
+        from sklearn.cluster import KMeans
+        from sklearn.metrics import silhouette_score
+        from sklearn.preprocessing import StandardScaler
+
+        if not self.processed_data:
+            raise ValueError("No processed data available. Call process_data() first.")
+
+        labels = list(self.processed_data.keys())
+        if len(labels) < 2:
+            return {}
+
+        silhouette_scores = {}
+
+        for i, label1 in enumerate(labels):
+            for label2 in labels[i+1:]:
+                # Get synchronized data
+                data1 = self.processed_data[label1]
+                data2 = self.processed_data[label2]
+
+                # Create feature matrix (N samples × 2 features)
+                # Stack signals as columns
+                min_len = min(len(data1), len(data2))
+                X = np.column_stack([
+                    data1[:min_len],
+                    data2[:min_len]
+                ])
+
+                # Standardize features
+                scaler = StandardScaler()
+                X_scaled = scaler.fit_transform(X)
+
+                # Need at least 3 samples for k=3 clustering
+                if len(X_scaled) < 3:
+                    pair_key = f"{label1} vs {label2}"
+                    silhouette_scores[pair_key] = {
+                        'silhouette_k2': np.nan,
+                        'silhouette_k3': np.nan,
+                        'optimal_k': 1
+                    }
+                    continue
+
+                # Calculate silhouette score for k=2
+                try:
+                    kmeans_k2 = KMeans(n_clusters=2, random_state=42, n_init=10)
+                    labels_k2 = kmeans_k2.fit_predict(X_scaled)
+                    score_k2 = silhouette_score(X_scaled, labels_k2)
+                except:
+                    score_k2 = np.nan
+
+                # Calculate silhouette score for k=3
+                try:
+                    kmeans_k3 = KMeans(n_clusters=3, random_state=42, n_init=10)
+                    labels_k3 = kmeans_k3.fit_predict(X_scaled)
+                    score_k3 = silhouette_score(X_scaled, labels_k3)
+                except:
+                    score_k3 = np.nan
+
+                # Determine optimal k
+                if np.isnan(score_k2) and np.isnan(score_k3):
+                    optimal_k = 1
+                elif np.isnan(score_k3):
+                    optimal_k = 2 if score_k2 > silhouette_threshold else 1
+                elif np.isnan(score_k2):
+                    optimal_k = 3 if score_k3 > silhouette_threshold else 1
+                else:
+                    # Both scores valid
+                    if score_k2 < silhouette_threshold and score_k3 < silhouette_threshold:
+                        optimal_k = 1  # No meaningful clustering
+                    elif score_k2 > score_k3:
+                        optimal_k = 2
+                    else:
+                        optimal_k = 3
+
+                pair_key = f"{label1} vs {label2}"
+                silhouette_scores[pair_key] = {
+                    'silhouette_k2': score_k2,
+                    'silhouette_k3': score_k3,
+                    'optimal_k': optimal_k
+                }
+
+        return silhouette_scores
+
     def calculate_cross_correlation_lags(self, max_lag: Optional[int] = None,
                                         use_statsmodels: bool = True) -> Dict[str, Dict[str, float]]:
         """

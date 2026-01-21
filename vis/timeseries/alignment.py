@@ -124,6 +124,278 @@ class AlignmentMixin:
 
         return lags, correlation_values, peak_lag
 
+    def _detect_signal_features(self, signal: np.ndarray,
+                                feature_method: str = 'peak',
+                                n_features: int = 5,
+                                prominence_threshold: Optional[float] = None,
+                                envelope_smoothing: int = 3) -> np.ndarray:
+        """
+        Detect prominent features in a signal for alignment.
+
+        Args:
+            signal: Input signal
+            feature_method: 'peak' (maxima), 'edge' (transitions), or 'energy' (energy bursts)
+            n_features: Number of features to detect
+            prominence_threshold: Minimum prominence for peak detection (auto if None)
+            envelope_smoothing: Smoothing window for envelope computation
+
+        Returns:
+            Array of feature indices (sample positions)
+        """
+        from scipy.signal import hilbert, find_peaks
+        from scipy.ndimage import median_filter
+
+        # Compute signal envelope using Hilbert transform
+        analytic_signal = hilbert(signal)
+        envelope = np.abs(analytic_signal)
+
+        # Apply smoothing to envelope if requested
+        if envelope_smoothing > 1:
+            envelope = median_filter(envelope, size=envelope_smoothing, mode='nearest')
+
+        if feature_method == 'peak':
+            # Detect peaks in envelope
+            # Auto-compute prominence threshold using MAD
+            if prominence_threshold is None:
+                envelope_median = np.median(envelope)
+                envelope_mad = np.median(np.abs(envelope - envelope_median))
+                prominence_threshold = envelope_median + 2.0 * envelope_mad
+
+            # Find peaks with minimum prominence
+            peaks, properties = find_peaks(envelope, prominence=prominence_threshold)
+
+            # Sort by prominence and take top n_features
+            if len(peaks) > 0:
+                prominences = properties['prominences']
+                top_indices = np.argsort(prominences)[-n_features:]
+                features = peaks[top_indices]
+                features = np.sort(features)  # Return in temporal order
+            else:
+                # Fallback: use maximum values if no peaks found
+                features = np.argsort(envelope)[-n_features:]
+                features = np.sort(features)
+
+        elif feature_method == 'edge':
+            # Detect edges using gradient
+            gradient = np.gradient(envelope)
+            abs_gradient = np.abs(gradient)
+
+            # Find top n_features gradient positions
+            features = np.argsort(abs_gradient)[-n_features:]
+            features = np.sort(features)
+
+        elif feature_method == 'energy':
+            # Detect energy bursts using windowed energy
+            window_size = max(len(signal) // 100, 10)
+            energy = np.convolve(signal**2, np.ones(window_size)/window_size, mode='same')
+
+            # Find top n_features energy positions
+            features = np.argsort(energy)[-n_features:]
+            features = np.sort(features)
+
+        else:
+            raise ValueError(f"Unknown feature_method: {feature_method}")
+
+        return features
+
+    def _align_by_feature_matching(self, signal1: np.ndarray, signal2: np.ndarray,
+                                   feature_method: str = 'peak',
+                                   n_features: int = 5,
+                                   max_lag: Optional[int] = None) -> Tuple[int, float, Dict]:
+        """
+        Align two signals by matching temporal positions of detected features.
+
+        This method:
+        1. Detects prominent features in both signals (peaks, edges, or energy bursts)
+        2. Computes average temporal offset between corresponding features
+        3. Returns the lag that aligns the features
+
+        Args:
+            signal1: Reference signal
+            signal2: Target signal to align
+            feature_method: 'peak', 'edge', or 'energy'
+            n_features: Number of features to detect and match
+            max_lag: Maximum allowed lag (samples), None for unlimited
+
+        Returns:
+            Tuple of (lag, quality_score, diagnostics):
+            - lag: Optimal lag in samples (positive = signal2 lags behind signal1)
+            - quality_score: Alignment quality metric (0-1, higher is better)
+            - diagnostics: Dict with detected features and matching info
+        """
+        # Detect features in both signals
+        features1 = self._detect_signal_features(signal1, feature_method=feature_method,
+                                                 n_features=n_features)
+        features2 = self._detect_signal_features(signal2, feature_method=feature_method,
+                                                 n_features=n_features)
+
+        # Compute all pairwise temporal offsets
+        n_feat1 = len(features1)
+        n_feat2 = len(features2)
+
+        if n_feat1 == 0 or n_feat2 == 0:
+            # Fallback: no features detected
+            return 0, 0.0, {'features1': features1, 'features2': features2,
+                           'error': 'No features detected'}
+
+        # Compute pairwise lags (signal2 index - signal1 index)
+        # Positive lag means signal2 feature occurs later than signal1 feature
+        pairwise_lags = []
+        for f2 in features2:
+            for f1 in features1:
+                lag = f2 - f1
+                if max_lag is None or abs(lag) <= max_lag:
+                    pairwise_lags.append(lag)
+
+        if len(pairwise_lags) == 0:
+            # All lags exceed max_lag
+            return 0, 0.0, {'features1': features1, 'features2': features2,
+                           'error': 'All lags exceed max_lag'}
+
+        # Use median lag (robust to outliers)
+        optimal_lag = int(np.median(pairwise_lags))
+
+        # Compute quality score based on lag consistency
+        # Low MAD of lags = high consistency = high quality
+        lag_mad = np.median(np.abs(np.array(pairwise_lags) - optimal_lag))
+        lag_spread = np.ptp(pairwise_lags) if len(pairwise_lags) > 1 else 0
+
+        # Quality score: inverse of normalized spread (0-1 range)
+        # Good alignment: low spread → high quality
+        if lag_spread > 0:
+            quality_score = 1.0 / (1.0 + lag_spread / (0.1 * len(signal1)))
+        else:
+            quality_score = 1.0
+
+        # Diagnostic information
+        diagnostics = {
+            'features1': features1,
+            'features2': features2,
+            'pairwise_lags': np.array(pairwise_lags),
+            'optimal_lag': optimal_lag,
+            'lag_mad': lag_mad,
+            'lag_spread': lag_spread,
+            'n_matches': len(pairwise_lags)
+        }
+
+        return optimal_lag, quality_score, diagnostics
+
+    def _compute_mutual_information(self, signal1: np.ndarray, signal2: np.ndarray,
+                                   n_bins: int = 50) -> float:
+        """
+        Compute mutual information between two signals.
+
+        MI measures how much information one signal provides about the other.
+        Higher MI indicates stronger relationship/alignment.
+
+        Args:
+            signal1: First signal
+            signal2: Second signal
+            n_bins: Number of bins for histogram (affects MI resolution)
+
+        Returns:
+            Mutual information value (higher = more information shared)
+        """
+        from sklearn.metrics import mutual_info_score
+
+        # Ensure signals have same length
+        min_len = min(len(signal1), len(signal2))
+        s1 = signal1[:min_len]
+        s2 = signal2[:min_len]
+
+        # Discretize signals into bins for MI computation
+        s1_binned = np.digitize(s1, bins=np.linspace(s1.min(), s1.max(), n_bins))
+        s2_binned = np.digitize(s2, bins=np.linspace(s2.min(), s2.max(), n_bins))
+
+        # Compute mutual information
+        mi = mutual_info_score(s1_binned, s2_binned)
+
+        return mi
+
+    def _align_by_mutual_information(self, signal1: np.ndarray, signal2: np.ndarray,
+                                    max_lag: Optional[int] = None,
+                                    n_bins: int = 50,
+                                    lag_step: int = 1) -> Tuple[int, float, Dict]:
+        """
+        Align two signals by maximizing mutual information across lag range.
+
+        This method:
+        1. Shifts signal2 relative to signal1 across lag range
+        2. Computes MI at each lag
+        3. Returns the lag with maximum MI
+
+        Args:
+            signal1: Reference signal
+            signal2: Target signal to align
+            max_lag: Maximum lag to search (samples), None uses 20% of signal length
+            n_bins: Number of bins for MI histogram
+            lag_step: Step size for lag search (1=every sample, larger=faster)
+
+        Returns:
+            Tuple of (lag, mi_score, diagnostics):
+            - lag: Optimal lag in samples (positive = signal2 lags behind signal1)
+            - mi_score: Mutual information at optimal lag (higher is better)
+            - diagnostics: Dict with MI curve and search info
+        """
+        n1, n2 = len(signal1), len(signal2)
+
+        # Determine max lag
+        if max_lag is None:
+            max_lag = min(n1, n2) // 5  # Search ±20% of signal length
+        else:
+            max_lag = min(max_lag, min(n1, n2) - 1)
+
+        # Generate lag range to search
+        lags = np.arange(-max_lag, max_lag + 1, lag_step)
+        mi_scores = np.zeros(len(lags))
+
+        # Compute MI at each lag
+        for i, lag in enumerate(lags):
+            if lag == 0:
+                # No shift
+                overlap_len = min(n1, n2)
+                s1_overlap = signal1[:overlap_len]
+                s2_overlap = signal2[:overlap_len]
+            elif lag > 0:
+                # signal2 lags behind signal1
+                overlap_len = min(n1 - lag, n2)
+                s1_overlap = signal1[lag:lag + overlap_len]
+                s2_overlap = signal2[:overlap_len]
+            else:
+                # signal2 leads signal1 (negative lag)
+                overlap_len = min(n1, n2 + lag)
+                s1_overlap = signal1[:overlap_len]
+                s2_overlap = signal2[-lag:-lag + overlap_len]
+
+            # Compute MI for this alignment
+            if overlap_len > n_bins:  # Need sufficient samples
+                mi_scores[i] = self._compute_mutual_information(s1_overlap, s2_overlap, n_bins=n_bins)
+            else:
+                mi_scores[i] = 0.0
+
+        # Find optimal lag (maximum MI)
+        optimal_idx = np.argmax(mi_scores)
+        optimal_lag = lags[optimal_idx]
+        optimal_mi = mi_scores[optimal_idx]
+
+        # Normalize MI score to 0-1 range for quality metric
+        mi_range = mi_scores.max() - mi_scores.min()
+        if mi_range > 0:
+            quality_score = (optimal_mi - mi_scores.min()) / mi_range
+        else:
+            quality_score = 1.0
+
+        # Diagnostic information
+        diagnostics = {
+            'lags': lags,
+            'mi_scores': mi_scores,
+            'optimal_lag': optimal_lag,
+            'optimal_mi': optimal_mi,
+            'mi_range': mi_range
+        }
+
+        return optimal_lag, quality_score, diagnostics
+
     def load_data(self) -> None:
         """Load data from HDF5 file with individual time vectors"""
         print(f"Loading data from {self.hdf5_path}")
@@ -502,10 +774,13 @@ class AlignmentMixin:
                                    cross_correlation_window: Optional[int],
                                    max_shift_time: Optional[float],
                                    correlation_method: str, normalize_signals: bool,
-                                   visualize: bool = False) -> float:
+                                   alignment_method: str = 'ccf',
+                                   feature_method: str = 'peak',
+                                   n_features: int = 5,
+                                   mi_bins: int = 50) -> float:
         """
-        Calculate optimal shift between two groups of signals using composite correlation
-        
+        Calculate optimal shift between two groups of signals using various alignment methods
+
         Args:
             ref_group_name: Name of reference group
             ref_group_labels: List of signal labels in reference group
@@ -517,8 +792,11 @@ class AlignmentMixin:
             max_shift_time: Maximum shift to search
             correlation_method: Correlation method to use
             normalize_signals: Whether to normalize signals
-            visualize: Whether to show diagnostic plots
-            
+            alignment_method: 'ccf', 'feature', or 'mutual_info'
+            feature_method: For 'feature' method - 'peak', 'edge', or 'energy'
+            n_features: For 'feature' method - number of features to match
+            mi_bins: For 'mutual_info' method - number of bins for MI histogram
+
         Returns:
             Optimal time shift for target group
         """
@@ -662,81 +940,135 @@ class AlignmentMixin:
             dt = np.mean(np.diff(ref_composite_time))
             max_lag_samples = int(max_shift_time / dt)
 
-        # Use unified cross-correlation helper (checks both positive and negative lags)
-        lags_samples, correlation, peak_lag = self._compute_cross_correlation(
-            ref_for_corr, target_for_corr,
-            max_lag=max_lag_samples,
-            method='statsmodels'
-        )
+        # Select alignment method
+        if alignment_method == 'ccf':
+            # Use unified cross-correlation helper (checks both positive and negative lags)
+            lags_samples, correlation, peak_lag = self._compute_cross_correlation(
+                ref_for_corr, target_for_corr,
+                max_lag=max_lag_samples,
+                method='statsmodels'
+            )
 
-        # Convert lags to time
-        dt = np.mean(np.diff(ref_composite_time))
-        lags_time = lags_samples * dt
+            # Convert lags to time
+            dt = np.mean(np.diff(ref_composite_time))
+            lags_time = lags_samples * dt
 
-        # Extract results
-        time_shift = peak_lag * dt
-        peak_idx = np.where(lags_samples == peak_lag)[0][0]
-        max_corr_value = correlation[peak_idx]
+            # Extract results
+            time_shift = peak_lag * dt
+            peak_idx = np.where(lags_samples == peak_lag)[0][0]
+            max_corr_value = correlation[peak_idx]
+            quality_score = max_corr_value
 
-        # For compatibility with downstream code
-        correlation_limited = correlation
-        lags_time_limited = lags_time
-        
-        print(f"    Composite correlation: max={max_corr_value:.4f}, shift={time_shift*1000:.3f}ms")
-        
-        # Visualization for group correlation
-        if visualize:
-            import matplotlib.pyplot as plt
-            fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-            
-            # Plot composite signals
-            axes[0].plot(window_time, ref_windowed, label=f'{ref_group_name} (composite)', alpha=0.8)
-            axes[0].plot(window_time, target_windowed, label=f'{target_group_name} (composite)', alpha=0.8)
-            axes[0].set_title('Composite Group Signals')
-            axes[0].legend()
-            axes[0].grid(True, alpha=0.3)
-            
-            # Plot correlation
-            correlation_norm = correlation_limited / np.max(np.abs(correlation_limited))
-            axes[1].plot(lags_time_limited * 1000, correlation_norm, 'b-', linewidth=1)
-            axes[1].axvline(time_shift * 1000, color='red', linestyle='--', 
-                           label=f'{time_shift*1000:.3f}ms')
-            axes[1].set_xlabel('Lag [ms]')
-            axes[1].set_ylabel('Normalized Correlation')
-            axes[1].set_title(f'Group Cross-Correlation')
-            axes[1].legend()
-            axes[1].grid(True, alpha=0.3)
-            
-            # Plot aligned result
-            target_shifted = np.interp(window_time - time_shift, window_time, target_windowed)
-            axes[2].plot(window_time, ref_windowed, label=f'{ref_group_name}', alpha=0.8)
-            axes[2].plot(window_time, target_shifted, label=f'{target_group_name} (shifted)', alpha=0.8)
-            axes[2].set_title('Aligned Group Signals')
-            axes[2].legend()
-            axes[2].grid(True, alpha=0.3)
-            
-            plt.suptitle(f'Group Alignment: {ref_group_name} ↔ {target_group_name}')
-            plt.tight_layout()
+            # Store cross-correlation diagnostics for later plotting
+            if not hasattr(self, 'alignment_diagnostics'):
+                self.alignment_diagnostics = {}
 
-            plt.show()
-            plt.close()
-        
+            pair_key = f"{ref_group_name} vs {target_group_name}"
+            self.alignment_diagnostics[pair_key] = {
+                'method': 'ccf',
+                'lags_samples': lags_samples.copy(),
+                'lags_time': lags_time.copy(),
+                'correlation': correlation.copy(),
+                'peak_lag_samples': peak_lag,
+                'peak_lag_time': time_shift,
+                'max_correlation': max_corr_value,
+                'label1': ref_group_name,
+                'label2': target_group_name,
+                'data_length': len(ref_for_corr)
+            }
+
+            print(f"    CCF: max_corr={max_corr_value:.4f}, shift={time_shift*1000:.3f}ms")
+
+        elif alignment_method == 'feature':
+            # Use feature-based alignment
+            peak_lag, quality_score, diagnostics = self._align_by_feature_matching(
+                ref_for_corr, target_for_corr,
+                feature_method=feature_method,
+                n_features=n_features,
+                max_lag=max_lag_samples
+            )
+
+            # Convert lag to time
+            dt = np.mean(np.diff(ref_composite_time))
+            time_shift = peak_lag * dt
+
+            # Store diagnostics for later plotting
+            if not hasattr(self, 'alignment_diagnostics'):
+                self.alignment_diagnostics = {}
+
+            pair_key = f"{ref_group_name} vs {target_group_name}"
+            self.alignment_diagnostics[pair_key] = {
+                'method': 'feature',
+                'peak_lag_samples': peak_lag,
+                'peak_lag_time': time_shift,
+                'quality_score': quality_score,
+                'label1': ref_group_name,
+                'label2': target_group_name,
+                'data_length': len(ref_for_corr),
+                **diagnostics
+            }
+
+            print(f"    Feature ({feature_method}): quality={quality_score:.4f}, shift={time_shift*1000:.3f}ms, n_matches={diagnostics.get('n_matches', 0)}")
+
+        elif alignment_method == 'mutual_info':
+            # Use mutual information alignment
+            peak_lag, quality_score, diagnostics = self._align_by_mutual_information(
+                ref_for_corr, target_for_corr,
+                max_lag=max_lag_samples,
+                n_bins=mi_bins,
+                lag_step=1
+            )
+
+            # Convert lag to time
+            dt = np.mean(np.diff(ref_composite_time))
+            time_shift = peak_lag * dt
+
+            # Store diagnostics for later plotting
+            if not hasattr(self, 'alignment_diagnostics'):
+                self.alignment_diagnostics = {}
+
+            pair_key = f"{ref_group_name} vs {target_group_name}"
+            self.alignment_diagnostics[pair_key] = {
+                'method': 'mutual_info',
+                'peak_lag_samples': peak_lag,
+                'peak_lag_time': time_shift,
+                'quality_score': quality_score,
+                'label1': ref_group_name,
+                'label2': target_group_name,
+                'data_length': len(ref_for_corr),
+                **diagnostics
+            }
+
+            # Convert lags to time for compatibility
+            lags_samples = diagnostics['lags']
+            lags_time = lags_samples * dt
+            correlation = diagnostics['mi_scores']  # For compatibility with downstream code
+
+            print(f"    Mutual Info: MI={diagnostics['optimal_mi']:.4f}, shift={time_shift*1000:.3f}ms, quality={quality_score:.4f}")
+
+        else:
+            raise ValueError(f"Unknown alignment_method: {alignment_method}. Use 'ccf', 'feature', or 'mutual_info'.")
+
         return time_shift
     
     def auto_align_time_series(self, reference_label: str = None,
-                              reference_group: str = None, 
+                              reference_group: str = None,
                               cross_correlation_window: Optional[int] = None,
                               correlation_window_time: Optional[float] = None,
                               use_original_positions: bool = False,
                               use_raw_data: bool = True,
-                              visualize: bool = False,
                               max_shift_time: float = None,
                               normalize_signals: bool = True,
                               correlation_method: str = 'normalized',
-                              sync_within_groups: bool = True) -> Dict[str, float]:
+                              sync_within_groups: bool = True,
+                              use_precomputed_correlations: bool = False,
+                              alignment_method: str = 'ccf',
+                              feature_method: str = 'peak',
+                              n_features: int = 5,
+                              mi_bins: int = 50) -> Dict[str, float]:
         """
-        Automatically align time series using cross-correlation with group synchronization
-        
+        Automatically align time series using various alignment methods with group synchronization
+
         Args:
             reference_label: Label of the reference time series (overrides reference_group)
             reference_group: Group to use as reference (e.g., 'AMPM', 'KH')
@@ -744,12 +1076,15 @@ class AlignmentMixin:
             correlation_window_time: Window size for cross-correlation in SECONDS
             use_original_positions: Use original or current time vectors
             use_raw_data: Use raw (uncropped) or processed data
-            visualize: Show correlation plots for each signal pair
             max_shift_time: Maximum shift to search in seconds
             normalize_signals: Remove DC offset and normalize amplitude before correlation
             correlation_method: 'normalized', 'standard', or 'zero_mean'
             sync_within_groups: If True, maintain synchronization within dataset groups
-            
+            alignment_method: Alignment method - 'ccf' (cross-correlation), 'feature' (feature matching), 'mutual_info' (MI)
+            feature_method: For 'feature' method - 'peak', 'edge', or 'energy'
+            n_features: For 'feature' method - number of features to detect and match
+            mi_bins: For 'mutual_info' method - number of bins for MI histogram
+
         Returns:
             Dictionary of calculated time shifts for each dataset/group
         """
@@ -793,7 +1128,13 @@ class AlignmentMixin:
             print(f"\nAuto-aligning time series using '{reference_label}' as reference...")
             print(f"Individual signal mode: Each signal aligned independently")
         
-        print(f"Method: {correlation_method} correlation, normalize_signals: {normalize_signals}")
+        print(f"Alignment method: {alignment_method.upper()}")
+        if alignment_method == 'ccf':
+            print(f"  Correlation: {correlation_method}, normalize: {normalize_signals}")
+        elif alignment_method == 'feature':
+            print(f"  Feature method: {feature_method}, n_features: {n_features}")
+        elif alignment_method == 'mutual_info':
+            print(f"  MI bins: {mi_bins}")
         print(f"Using {position_type} positions with {data_type} data")
         
         # Choose time vectors and data [same as before]
@@ -884,114 +1225,68 @@ class AlignmentMixin:
                         ref_windowed = ref_sync
                         target_windowed = target_sync
 
-                    # Normalize if requested
-                    if normalize_signals:
-                        def normalize_for_correlation_local(signal, method='normalized'):
-                            if method == 'normalized':
-                                signal_zm = signal - np.mean(signal)
-                                std = np.std(signal_zm)
-                                return signal_zm / std if std > 0 else signal_zm
-                            return signal
-                        ref_for_corr = normalize_for_correlation_local(ref_windowed, correlation_method)
-                        target_for_corr = normalize_for_correlation_local(target_windowed, correlation_method)
-                    else:
-                        ref_for_corr = ref_windowed
-                        target_for_corr = target_windowed
-
-                    # Calculate shift using unified helper
-                    max_lag_samples = None
-                    if max_shift_time is not None:
-                        dt = np.mean(np.diff(time_vectors[reference_label]))
-                        max_lag_samples = int(max_shift_time / dt)
-
-                    lags_samples, correlation, peak_lag = self._compute_cross_correlation(
-                        ref_for_corr, target_for_corr,
-                        max_lag=max_lag_samples,
-                        method='statsmodels'
-                    )
-
                     dt = np.mean(np.diff(time_vectors[reference_label]))
-                    group_shift = peak_lag * dt
+                    pair_key = f"{reference_label} vs {first_target}"
+
+                    # Check if we should use precomputed correlation
+                    if use_precomputed_correlations and hasattr(self, 'alignment_diagnostics') and pair_key in self.alignment_diagnostics:
+                        # Use precomputed results
+                        diag = self.alignment_diagnostics[pair_key]
+                        peak_lag = diag['peak_lag_samples']
+                        group_shift = diag['peak_lag_time']
+                        lags_samples = diag['lags_samples']
+                        correlation = diag['correlation']
+                        print(f"✓ Using precomputed correlation for {pair_key}: {group_shift*1000:.3f}ms shift")
+                    else:
+                        # Compute cross-correlation
+                        # Normalize if requested
+                        if normalize_signals:
+                            def normalize_for_correlation_local(signal, method='normalized'):
+                                if method == 'normalized':
+                                    signal_zm = signal - np.mean(signal)
+                                    std = np.std(signal_zm)
+                                    return signal_zm / std if std > 0 else signal_zm
+                                return signal
+                            ref_for_corr = normalize_for_correlation_local(ref_windowed, correlation_method)
+                            target_for_corr = normalize_for_correlation_local(target_windowed, correlation_method)
+                        else:
+                            ref_for_corr = ref_windowed
+                            target_for_corr = target_windowed
+
+                        # Calculate shift using unified helper
+                        max_lag_samples = None
+                        if max_shift_time is not None:
+                            max_lag_samples = int(max_shift_time / dt)
+
+                        lags_samples, correlation, peak_lag = self._compute_cross_correlation(
+                            ref_for_corr, target_for_corr,
+                            max_lag=max_lag_samples,
+                            method='statsmodels'
+                        )
+
+                        group_shift = peak_lag * dt
+
+                        # Store cross-correlation diagnostics for later plotting
+                        if not hasattr(self, 'alignment_diagnostics'):
+                            self.alignment_diagnostics = {}
+
+                    peak_idx = np.where(lags_samples == peak_lag)[0][0]
+
+                    # Only store diagnostics if not using precomputed (avoid duplicates)
+                    if not use_precomputed_correlations or pair_key not in self.alignment_diagnostics:
+                        self.alignment_diagnostics[pair_key] = {
+                            'lags_samples': lags_samples.copy(),
+                            'lags_time': lags_samples * dt,
+                            'correlation': correlation.copy(),
+                        'peak_lag_samples': peak_lag,
+                        'peak_lag_time': group_shift,
+                        'max_correlation': correlation[peak_idx],
+                        'label1': reference_label,
+                        'label2': first_target,
+                        'data_length': len(ref_for_corr)
+                    }
 
                     print(f"✓ Aligned {first_target} to {reference_label}: {group_shift*1000:.3f}ms shift")
-
-                    # Visualization for single reference signal alignment
-                    if visualize:
-                        import matplotlib.pyplot as plt
-
-                        # MinMax normalization for visual comparison
-                        def minmax_norm(signal):
-                            s_min, s_max = np.min(signal), np.max(signal)
-                            if s_max > s_min:
-                                return (signal - s_min) / (s_max - s_min)
-                            return signal - s_min
-
-                        ref_minmax = minmax_norm(ref_windowed)
-                        target_minmax = minmax_norm(target_windowed)
-
-                        # Get common time for plotting
-                        common_time = np.linspace(max(ref_time[0], target_time[0]),
-                                                 min(ref_time[-1], target_time[-1]),
-                                                 len(ref_sync))
-                        if cross_correlation_window and cross_correlation_window < len(ref_sync):
-                            center = len(ref_sync) // 2
-                            half_window = cross_correlation_window // 2
-                            start_idx = max(0, center - half_window)
-                            end_idx = min(len(ref_sync), center + half_window)
-                            window_time = common_time[start_idx:end_idx]
-                        else:
-                            window_time = common_time
-
-                        # Create figure
-                        fig, axes = plt.subplots(1, 4, figsize=(20, 5))
-
-                        # Plot 1: Original signals (MinMax normalized)
-                        axes[0].plot(window_time, ref_minmax, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
-                        axes[0].plot(window_time, target_minmax, label=f'{first_target}', alpha=0.8, linewidth=1.5)
-                        axes[0].set_title(f'Signals: {reference_label} vs {first_target} (MinMax norm)')
-                        axes[0].set_ylabel('Normalized Amplitude [0-1]')
-                        axes[0].legend()
-                        axes[0].grid(True, alpha=0.3)
-
-                        # Plot 2: Signals used for correlation
-                        axes[1].plot(window_time, ref_for_corr, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
-                        axes[1].plot(window_time, target_for_corr, label=f'{first_target}', alpha=0.8, linewidth=1.5)
-                        axes[1].set_title(f'For Correlation ({correlation_method} norm)')
-                        axes[1].set_ylabel('Amplitude')
-                        axes[1].legend()
-                        axes[1].grid(True, alpha=0.3)
-
-                        # Plot 3: Cross-correlation
-                        lags_time = lags_samples * dt
-                        correlation_norm = correlation / np.max(np.abs(correlation))
-                        peak_idx = np.where(lags_samples == peak_lag)[0][0]
-                        max_corr_value = correlation[peak_idx]
-
-                        axes[2].plot(lags_time * 1000, correlation_norm, 'b-', linewidth=2)
-                        axes[2].axvline(group_shift * 1000, color='red', linestyle='--', linewidth=2,
-                                       label=f'Peak: {group_shift*1000:.3f}ms')
-                        axes[2].axvline(0, color='gray', linestyle=':', linewidth=1, alpha=0.5)
-                        axes[2].set_xlabel('Lag [ms]')
-                        axes[2].set_ylabel('Correlation')
-                        axes[2].set_title(f'Cross-Correlation (max={max_corr_value:.3f})')
-                        axes[2].legend()
-                        axes[2].grid(True, alpha=0.3)
-
-                        # Plot 4: Aligned result (MinMax normalized)
-                        target_shifted = np.interp(window_time - group_shift, window_time, target_windowed)
-                        target_shifted_minmax = minmax_norm(target_shifted)
-                        axes[3].plot(window_time, ref_minmax, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
-                        axes[3].plot(window_time, target_shifted_minmax,
-                                    label=f'{first_target} (shifted {group_shift*1000:.3f}ms)',
-                                    alpha=0.8, linewidth=1.5)
-                        axes[3].set_title(f'After Alignment (MinMax norm)\nApplied to all {group_name} signals')
-                        axes[3].set_ylabel('Normalized Amplitude [0-1]')
-                        axes[3].legend()
-                        axes[3].grid(True, alpha=0.3)
-
-                        plt.suptitle(f'Group Alignment: {reference_label} → {group_name} group (via {first_target})', fontsize=14)
-                        plt.tight_layout()
-                        plt.show()
 
                 else:
                     # Use composite group signals for alignment
@@ -1000,7 +1295,8 @@ class AlignmentMixin:
                         group_name, group_labels,
                         data_dict, time_vectors,
                         cross_correlation_window, max_shift_time,
-                        correlation_method, normalize_signals, visualize
+                        correlation_method, normalize_signals,
+                        alignment_method, feature_method, n_features, mi_bins
                     )
 
                 # Apply same shift to all signals in the target group
@@ -1023,17 +1319,7 @@ class AlignmentMixin:
             ref_data = data_dict[reference_label]
             ref_time = time_vectors[reference_label]
             calculated_shifts[reference_label] = 0.0
-            
-            # Visualization setup for individual signal mode
-            if visualize:
-                import matplotlib.pyplot as plt
-                n_targets = len([label for label in data_dict.keys() if label != reference_label])
-                if n_targets > 0:
-                    fig, axes = plt.subplots(n_targets, 4, figsize=(20, 5*n_targets))
-                    if n_targets == 1:
-                        axes = axes.reshape(1, -1)
-                    plot_idx = 0
-            
+
             # Individual signal processing loop
             for label, data in data_dict.items():
                 if label == reference_label:
@@ -1088,8 +1374,25 @@ class AlignmentMixin:
                 time_shift = peak_lag * dt
                 calculated_shifts[label] = time_shift
 
-                # Enhanced diagnostics
+                # Store cross-correlation diagnostics for later plotting
+                if not hasattr(self, 'alignment_diagnostics'):
+                    self.alignment_diagnostics = {}
+
+                pair_key = f"{reference_label} vs {label}"
                 peak_idx = np.where(lags_samples == peak_lag)[0][0]
+                self.alignment_diagnostics[pair_key] = {
+                    'lags_samples': lags_samples.copy(),
+                    'lags_time': lags_samples * dt,
+                    'correlation': correlation.copy(),
+                    'peak_lag_samples': peak_lag,
+                    'peak_lag_time': time_shift,
+                    'max_correlation': correlation[peak_idx],
+                    'label1': reference_label,
+                    'label2': label,
+                    'data_length': len(ref_for_corr)
+                }
+
+                # Enhanced diagnostics
                 max_corr_value = correlation[peak_idx]
 
                 # For compatibility with downstream code
@@ -1113,70 +1416,8 @@ class AlignmentMixin:
                 print(f"  Original - Ref: {ref_stats}, Target: {target_stats}")
                 if normalize_signals:
                     print(f"  Normalized - Ref: {ref_norm_stats}, Target: {target_norm_stats}")
-                
-                # Visualization
-                if visualize:
-                    # MinMax normalization for visual comparison
-                    def minmax_norm(signal):
-                        s_min, s_max = np.min(signal), np.max(signal)
-                        if s_max > s_min:
-                            return (signal - s_min) / (s_max - s_min)
-                        return signal - s_min
 
-                    ref_minmax = minmax_norm(ref_windowed)
-                    data_minmax = minmax_norm(data_windowed)
-
-                    # Plot 1: Original signals (MinMax normalized for visual comparison)
-                    axes[plot_idx, 0].plot(window_time, ref_minmax, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
-                    axes[plot_idx, 0].plot(window_time, data_minmax, label=f'{label}', alpha=0.8, linewidth=1.5)
-                    axes[plot_idx, 0].set_title(f'Signals: {reference_label} vs {label} (MinMax norm)')
-                    axes[plot_idx, 0].set_ylabel('Normalized Amplitude [0-1]')
-                    axes[plot_idx, 0].legend()
-                    axes[plot_idx, 0].grid(True, alpha=0.3)
-
-                    # Plot 2: Signals used for correlation (after processing)
-                    if normalize_signals:
-                        ref_for_plot = normalize_for_correlation(ref_windowed, correlation_method)
-                        target_for_plot = normalize_for_correlation(data_windowed, correlation_method)
-                        axes[plot_idx, 1].plot(window_time, ref_for_plot, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
-                        axes[plot_idx, 1].plot(window_time, target_for_plot, label=f'{label}', alpha=0.8, linewidth=1.5)
-                        axes[plot_idx, 1].set_title(f'For Correlation ({correlation_method} norm)')
-                    else:
-                        axes[plot_idx, 1].plot(window_time, ref_minmax, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
-                        axes[plot_idx, 1].plot(window_time, data_minmax, label=f'{label}', alpha=0.8, linewidth=1.5)
-                        axes[plot_idx, 1].set_title(f'For Correlation (MinMax norm)')
-                    axes[plot_idx, 1].set_ylabel('Amplitude')
-                    axes[plot_idx, 1].legend()
-                    axes[plot_idx, 1].grid(True, alpha=0.3)
-
-                    # Plot 3: Cross-correlation
-                    correlation_norm = correlation_limited / np.max(np.abs(correlation_limited))
-                    axes[plot_idx, 2].plot(lags_time_limited * 1000, correlation_norm, 'b-', linewidth=2)
-                    axes[plot_idx, 2].axvline(time_shift * 1000, color='red', linestyle='--', linewidth=2,
-                                            label=f'Peak: {time_shift*1000:.3f}ms')
-                    axes[plot_idx, 2].axvline(0, color='gray', linestyle=':', linewidth=1, alpha=0.5)
-                    axes[plot_idx, 2].set_xlabel('Lag [ms]')
-                    axes[plot_idx, 2].set_ylabel('Correlation')
-                    axes[plot_idx, 2].set_title(f'Cross-Correlation (max={max_corr_value:.3f})')
-                    axes[plot_idx, 2].legend()
-                    axes[plot_idx, 2].grid(True, alpha=0.3)
-
-                    # Plot 4: Aligned result (MinMax normalized)
-                    target_shifted = np.interp(window_time - time_shift, window_time, data_windowed)
-                    target_shifted_minmax = minmax_norm(target_shifted)
-                    axes[plot_idx, 3].plot(window_time, ref_minmax, label=f'{reference_label}', alpha=0.8, linewidth=1.5)
-                    axes[plot_idx, 3].plot(window_time, target_shifted_minmax, label=f'{label} (shifted {time_shift*1000:.3f}ms)',
-                                          alpha=0.8, linewidth=1.5)
-                    axes[plot_idx, 3].set_title(f'After Alignment (MinMax norm)')
-                    axes[plot_idx, 3].set_ylabel('Normalized Amplitude [0-1]')
-                    axes[plot_idx, 3].legend()
-                    axes[plot_idx, 3].grid(True, alpha=0.3)
-                    
-                    plot_idx += 1
-            
-            if visualize and 'n_targets' in locals() and n_targets > 0:
-                plt.tight_layout()
-                plt.show()
+            # Visualization removed - alignment details shown in processing_and_alignment_summary.png
 
         return calculated_shifts
     
@@ -1220,19 +1461,105 @@ class AlignmentMixin:
                 print(f"✓ Applied calculated shift of {shift:.6f}s to {label}")
                 print(f"  Total shift from original: {total_shift:.6f}s")
 
+    def compute_all_cross_correlations(self, max_shift_time: float = 0.002,
+                                       correlation_method: str = 'normalized',
+                                       use_raw_data: bool = True) -> None:
+        """
+        Compute cross-correlations for ALL signal pairs and store diagnostics.
+
+        This provides comprehensive cross-correlation data for visualization,
+        not just the pairs used for alignment calculation.
+
+        Args:
+            max_shift_time: Maximum time shift to search (seconds)
+            correlation_method: 'normalized' or 'covariance'
+            use_raw_data: If True, use raw data for correlation; if False, use processed
+        """
+        if not hasattr(self, 'alignment_diagnostics'):
+            self.alignment_diagnostics = {}
+
+        # Get all labels
+        labels = list(self.raw_data.keys()) if use_raw_data else list(self.processed_data.keys())
+
+        # Compute cross-correlation for all pairs
+        for i, label1 in enumerate(labels):
+            for label2 in labels[i+1:]:
+                pair_key = f"{label1} vs {label2}"
+
+                # Skip if already computed during alignment
+                if pair_key in self.alignment_diagnostics:
+                    continue
+
+                # Get data and time vectors
+                if use_raw_data:
+                    data1 = self.raw_data[label1]
+                    data2 = self.raw_data[label2]
+                else:
+                    data1 = self.full_processed_data.get(label1, self.processed_data[label1])
+                    data2 = self.full_processed_data.get(label2, self.processed_data[label2])
+
+                time1 = self.time_vectors[label1]
+                time2 = self.time_vectors[label2]
+
+                # Synchronize time series
+                data1_sync, data2_sync = self._synchronize_time_series(data1, time1, data2, time2)
+
+                # Normalize if requested
+                if correlation_method == 'normalized':
+                    # Inline normalization (z-score)
+                    data1_zm = data1_sync - np.mean(data1_sync)
+                    std1 = np.std(data1_zm)
+                    data1_for_corr = data1_zm / std1 if std1 > 0 else data1_zm
+
+                    data2_zm = data2_sync - np.mean(data2_sync)
+                    std2 = np.std(data2_zm)
+                    data2_for_corr = data2_zm / std2 if std2 > 0 else data2_zm
+                else:
+                    data1_for_corr = data1_sync
+                    data2_for_corr = data2_sync
+
+                # Determine max lag
+                dt = np.mean(np.diff(time1))
+                max_lag_samples = int(max_shift_time / dt)
+
+                # Compute cross-correlation
+                lags_samples, correlation, peak_lag = self._compute_cross_correlation(
+                    data1_for_corr, data2_for_corr,
+                    max_lag=max_lag_samples,
+                    method='statsmodels'
+                )
+
+                # Store diagnostics
+                peak_idx = np.where(lags_samples == peak_lag)[0][0]
+                self.alignment_diagnostics[pair_key] = {
+                    'lags_samples': lags_samples.copy(),
+                    'lags_time': lags_samples * dt,
+                    'correlation': correlation.copy(),
+                    'peak_lag_samples': peak_lag,
+                    'peak_lag_time': peak_lag * dt,
+                    'max_correlation': correlation[peak_idx],
+                    'label1': label1,
+                    'label2': label2,
+                    'data_length': len(data1_for_corr)
+                }
+
     def get_alignment_summary(self) -> pd.DataFrame:
         """Get summary of all time alignments applied"""
         alignment_data = []
-        
+
         for label, info in self.alignment_info.items():
+            # Format time shift with high precision to show small shifts (e.g., 0.010ms)
+            time_shift_ms = info['time_shift'] * 1000  # Convert to milliseconds
+            time_shift_str = f"{info['time_shift']:.6f} ({time_shift_ms:+.3f}ms)"
+
             alignment_data.append({
                 'Dataset': label,
-                'Time Shift [s]': f"{info['time_shift']:.4f}",
+                'Time Shift': time_shift_str,
                 'Shift Type': info['shift_type'],
                 'Original Duration [s]': f"{(self.original_time_vectors[label][-1] - self.original_time_vectors[label][0]):.6f}" if label in self.original_time_vectors else 'N/A',
                 'Current Duration [s]': f"{(self.time_vectors[label][-1] - self.time_vectors[label][0]):.6f}" if label in self.time_vectors else 'N/A'
             })
-        
+
         return pd.DataFrame(alignment_data)
     
     def crop_to_shortest_signal(self, use_processed_data: bool = True, 
@@ -1301,29 +1628,30 @@ class AlignmentMixin:
         
         # Crop each signal to the common time range
         cropping_info = {}
-        
+
         for label, data in data_dict.items():
             time_vec = self.time_vectors[label]
-            
+
             # Find indices for cropping
             start_idx = np.argmin(np.abs(time_vec - earliest_start))
             end_idx = np.argmin(np.abs(time_vec - latest_end))
-            
+
             # Ensure end_idx is after start_idx
             if end_idx <= start_idx:
                 end_idx = len(time_vec) - 1
-            
+
             # Crop data and time vector
             cropped_data = data[start_idx:end_idx+1]
             cropped_time = time_vec[start_idx:end_idx+1]
-            
+
             # Update the data structures
             if use_processed_data:
                 self.processed_data[label] = cropped_data
             else:
                 self.raw_data[label] = cropped_data
-            
-            # Always update time vectors to match cropped data length
+
+            # Update time vectors to match cropped data length
+            # IMPORTANT: Preserve any time shifts that were applied
             self.time_vectors[label] = cropped_time
             
             # Update sampling rate for consistency
