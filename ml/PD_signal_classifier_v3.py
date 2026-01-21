@@ -198,105 +198,57 @@ def load_data(root_dir, img_width, verbose=False, exclude_files=None):
 # -------------------------
 # 2. Augmentation function
 # -------------------------
-def augment_sample(pd1_signal, pd2_signal, time_shift_range=5, stretch_probability=0.3,
-                   stretch_scale=0.1, noise_probability=0.5, noise_std=0.02,
-                   amplitude_scale_probability=0.5, amplitude_scale=0.1):
-    """Augment a single dual-signal sample with configurable parameters."""
-    aug_pd1 = pd1_signal.copy()
-    aug_pd2 = pd2_signal.copy()
-
-    # Random horizontal shift (time shift) - apply same shift to both signals
-    max_shift = int(time_shift_range)
-    shift = np.random.randint(-max_shift, max_shift+1)
-    aug_pd1 = np.roll(aug_pd1, shift, axis=0)
-    aug_pd2 = np.roll(aug_pd2, shift, axis=0)
-
-    # Random horizontal stretch/compression - apply same to both signals
-    if random.random() < stretch_probability:
-        # Convert scale parameter to min/max: stretch_scale=0.1 -> uniform(0.9, 1.1)
-        scale_min = 1.0 - stretch_scale
-        scale_max = 1.0 + stretch_scale
-        scale_factor = random.uniform(scale_min, scale_max)
-        new_width = int(aug_pd1.shape[0] * scale_factor)
-        
-        # Resize both signals
-        aug_pd1_2d = cv2.resize(aug_pd1.squeeze(), (1, new_width), interpolation=cv2.INTER_LINEAR).reshape(-1, 1)
-        aug_pd2_2d = cv2.resize(aug_pd2.squeeze(), (1, new_width), interpolation=cv2.INTER_LINEAR).reshape(-1, 1)
-        
-        # Pad/crop back to original width
-        original_width = pd1_signal.shape[0]
-        if new_width < original_width:
-            pad_width = original_width - new_width
-            aug_pd1 = np.pad(aug_pd1_2d, ((0, pad_width), (0, 0)), mode='constant')[:original_width, :]
-            aug_pd2 = np.pad(aug_pd2_2d, ((0, pad_width), (0, 0)), mode='constant')[:original_width, :]
-        elif new_width > original_width:
-            aug_pd1 = aug_pd1_2d[:original_width, :]
-            aug_pd2 = aug_pd2_2d[:original_width, :]
-        else:
-            aug_pd1 = aug_pd1_2d
-            aug_pd2 = aug_pd2_2d
-
-    # Add Gaussian noise
-    if random.random() < noise_probability:
-        noise_pd1 = np.random.normal(0, noise_std, aug_pd1.shape)
-        noise_pd2 = np.random.normal(0, noise_std, aug_pd2.shape)
-        aug_pd1 = np.clip(aug_pd1 + noise_pd1, 0.0, 1.0)
-        aug_pd2 = np.clip(aug_pd2 + noise_pd2, 0.0, 1.0)
-
-    # Amplitude scaling per signal
-    if random.random() < amplitude_scale_probability:
-        # Convert scale parameter to min/max: amplitude_scale=0.1 -> uniform(0.9, 1.1)
-        scale_min = 1.0 - amplitude_scale
-        scale_max = 1.0 + amplitude_scale
-        scale_pd1 = random.uniform(scale_min, scale_max)
-        aug_pd1 = np.clip(aug_pd1 * scale_pd1, 0.0, 1.0)
-    
-    if random.random() < amplitude_scale_probability:
-        # Convert scale parameter to min/max: amplitude_scale=0.1 -> uniform(0.9, 1.1)
-        scale_min = 1.0 - amplitude_scale
-        scale_max = 1.0 + amplitude_scale
-        scale_pd2 = random.uniform(scale_min, scale_max)
-        aug_pd2 = np.clip(aug_pd2 * scale_pd2, 0.0, 1.0)
-
-    return aug_pd1, aug_pd2
-
-def augment_batch(X, y, augment_fraction=0.5, time_shift_range=5, stretch_probability=0.3,
-                  stretch_scale=0.1, noise_probability=0.5, noise_std=0.02,
-                  amplitude_scale_probability=0.5, amplitude_scale=0.1):
+def augment_batch(X, y, config):
     """
-    Apply augmentation to a batch with configurable parameters.
-    X is tuple of (pd1_batch, pd2_batch).
-    Only augments a fraction of samples to avoid duplicate processing.
+    Apply augmentation to a batch using simplified 3-parameter system.
+
+    Uses new augmentation module with:
+    - augment_probability: Probability that augmentation is applied
+    - augment_strength: Intensity preset ('low', 'medium', 'high')
+    - augment_methods: List of augmentation techniques to choose from
+
+    Each augmented sample receives exactly ONE randomly selected augmentation.
+
+    Args:
+        X: Tuple of (pd1_batch, pd2_batch)
+        y: Labels array
+        config: Configuration dictionary with augmentation parameters
+
+    Returns:
+        tuple: (augmented_X, augmented_y)
     """
+    from augmentation import augment_pd_sample
+
     pd1_batch, pd2_batch = X
     num_samples = len(pd1_batch)
-    num_to_augment = int(num_samples * augment_fraction)
-    
+
+    # Get augmentation probability
+    augment_prob = config.get('augment_probability', 0.5)
+    num_to_augment = int(num_samples * augment_prob)
+
     if num_to_augment == 0:
         return X, y
-    
+
     # Randomly select indices to augment
     indices_to_augment = np.random.choice(num_samples, num_to_augment, replace=False)
-    
+
     # Create augmented versions of selected samples
     pd1_aug_samples = []
     pd2_aug_samples = []
     y_aug_samples = []
-    
+
     for idx in indices_to_augment:
-        aug_pd1, aug_pd2 = augment_sample(pd1_batch[idx], pd2_batch[idx], 
-                                        time_shift_range, stretch_probability,
-                                        stretch_scale, noise_probability, noise_std,
-                                        amplitude_scale_probability, amplitude_scale)
+        # Apply ONE random augmentation from methods list
+        aug_pd1, aug_pd2 = augment_pd_sample(pd1_batch[idx], pd2_batch[idx], config)
         pd1_aug_samples.append(aug_pd1)
         pd2_aug_samples.append(aug_pd2)
         y_aug_samples.append(y[idx])
-    
+
     # Combine original and augmented data
     pd1_combined = np.concatenate([pd1_batch, np.array(pd1_aug_samples)], axis=0)
     pd2_combined = np.concatenate([pd2_batch, np.array(pd2_aug_samples)], axis=0)
     y_combined = np.concatenate([y, np.array(y_aug_samples)], axis=0)
-    
+
     return (pd1_combined, pd2_combined), y_combined
 
 # -------------------------
@@ -957,17 +909,9 @@ def train_kfold(X, y, config, experiment_dir=None, concise=False, progress_info=
         # Apply augmentation to training set
         if not concise:
             print("Applying augmentation to training data...")
-        
+
         (pd1_combined, pd2_combined), y_train_enc_combined = augment_batch(
-            (pd1_train, pd2_train), y_enc[train_idx], 
-            augment_fraction=config.get('augment_fraction', 0.5),
-            time_shift_range=config.get('time_shift_range', 5),
-            stretch_probability=config.get('stretch_probability', 0.3),
-            stretch_scale=config.get('stretch_scale', 0.1),
-            noise_probability=config.get('noise_probability', 0.5),
-            noise_std=config.get('noise_std', 0.02),
-            amplitude_scale_probability=config.get('amplitude_scale_probability', 0.5),
-            amplitude_scale=config.get('amplitude_scale', 0.1)
+            (pd1_train, pd2_train), y_enc[train_idx], config
         )
         y_combined = tf.keras.utils.to_categorical(y_train_enc_combined, n_classes)
         
