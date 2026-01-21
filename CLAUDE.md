@@ -59,6 +59,13 @@ This repository contains scripts for analyzing greyscale radiography data from l
 
 ## Development Practices
 
+### Core Principles
+- **Minimize Complexity**: Always prefer deletion over addition when solving problems
+  - If columns/data already exist, use them instead of recreating
+  - If a bug can be fixed by removing unnecessary code, do that instead of adding workarounds
+  - Question whether new code is truly necessary before adding it
+  - Simpler solutions are more maintainable and less error-prone
+
 ### Environment Setup
 - **Conda Environment**: Always use the `ml` conda environment
 - **Script Execution**: Run from repository root directory
@@ -232,3 +239,4 @@ process = subprocess.Popen(
 - the above list
 - when encountering a similar bug/issue on more than one occassion, promt the user to add the solution to memory to prevent further instances
 - keep concise temp logs of troubleshooting, and save final working solutions to claude.md
+- no hardcoded paths in scripts, always refer to config.py and dirs/ text files.

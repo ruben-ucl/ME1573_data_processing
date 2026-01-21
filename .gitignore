@@ -1,8 +1,15 @@
 # Ignore Notepad++ backup files
 *.bak
+*.png
+*.pyc
 desktop.ini
 data_path.txt
 ml/logs/
 ml/outputs/
 ml/temp/
 ml/models/
+
+# Ignore sim outputs and user configs
+sim/raytracer_results/
+sim/perimeter_extraction_test_results/
+sim/perimeter_extraction_config.json
