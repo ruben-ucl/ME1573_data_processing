@@ -5,7 +5,6 @@ Created on Tue Apr  5 12:14:30 2022
 @author: Ruben
 """
 
-
 import sys, functools, os, glob, h5py, pywt, traceback
 import numpy as np
 import pandas as pd
@@ -44,57 +43,87 @@ class Window(QMainWindow):
         # Create widgets in sublayout
         # Load data
         self.btnStart = QPushButton('Load data')
-        
-        # CWT settings
+
+        # CWT settings - Row 1: Basic window settings
+        pdLabel = QLabel('Photodiode channel:')
         wlLabel = QLabel('Window length:')
         msUnit1 = QLabel('ms')
         woLabel = QLabel('Window offset:')
         msUnit2 = QLabel('ms')
         nfLabel = QLabel('Frequency steps:')
-        wsLabel = QLabel('Wavelet:')
-        cmLabel = QLabel('Colourmap:')
-        
+
+        self.pdChannelSelector = QLineEdit('1')
         self.windowLengthSelector = QLineEdit('1')
         self.windowOffsetSelector = QLineEdit('1')
         self.freqsSelector = QLineEdit('256')
-        
+
+        # CWT settings - Row 2: Wavelet, computation mode, and COI
+        wsLabel = QLabel('Wavelet:')
+        cmLabel = QLabel('Colourmap:')
+        cwtModeLabel = QLabel('CWT Mode:')
+
         self.waveletSelector = QComboBox()
         wavelet_names = get_cwt_scales(None)
         for n in sorted(wavelet_names):
             self.waveletSelector.addItem(n)
-        
+
         self.cmapSelector = QComboBox()
         cmaps = ['grey', 'grey_r', 'jet', 'magma', 'plasma', 'viridis']
         for c in cmaps:
             self.cmapSelector.addItem(c)
-            
-        inputsRow = QGroupBox('Setup')
-        inputsLayout = QHBoxLayout()
-        inputsLayout.addWidget(self.btnStart, stretch=4)
-        inputsLayout.addStretch(4)
-        inputsLayout.addWidget(wlLabel, stretch=4)
-        inputsLayout.addWidget(self.windowLengthSelector, stretch=2)
-        inputsLayout.addWidget(msUnit1, stretch=8)
-        inputsLayout.addWidget(woLabel, stretch=4)
-        inputsLayout.addWidget(self.windowOffsetSelector, stretch=2)
-        inputsLayout.addWidget(msUnit2, stretch=8)
-        inputsLayout.addWidget(nfLabel, stretch=4)
-        inputsLayout.addWidget(self.freqsSelector, stretch=4)
-        inputsLayout.addWidget(wsLabel, stretch=4)
-        inputsLayout.addWidget(self.waveletSelector, stretch=4)
-        inputsLayout.addWidget(cmLabel, stretch=4)
-        inputsLayout.addWidget(self.cmapSelector, stretch=4)
-        inputsRow.setLayout(inputsLayout)
+
+        # CWT computation mode radio buttons
+        self.cwtModeFullSignal = QRadioButton('Full Signal')
+        self.cwtModePerWindow = QRadioButton('Per-Window')
+        self.cwtModeFullSignal.setChecked(True)  # Default to full signal
+
+        # COI masking checkbox
+        self.coiMaskingCheckbox = QCheckBox('COI Masking')
+        self.coiMaskingCheckbox.setToolTip('Set Cone of Influence edge artifacts to 0')
+
+        # Setup Row 1: Load data + basic window parameters
+        inputsRow1 = QGroupBox('Setup - Basic')
+        inputsLayout1 = QHBoxLayout()
+        inputsLayout1.addWidget(self.btnStart, stretch=3)
+        inputsLayout1.addStretch(2)
+        inputsLayout1.addWidget(pdLabel, stretch=3)
+        inputsLayout1.addWidget(self.pdChannelSelector, stretch=2)
+        inputsLayout1.addWidget(wlLabel, stretch=3)
+        inputsLayout1.addWidget(self.windowLengthSelector, stretch=2)
+        inputsLayout1.addWidget(msUnit1, stretch=1)
+        inputsLayout1.addWidget(woLabel, stretch=3)
+        inputsLayout1.addWidget(self.windowOffsetSelector, stretch=2)
+        inputsLayout1.addWidget(msUnit2, stretch=1)
+        inputsLayout1.addWidget(nfLabel, stretch=3)
+        inputsLayout1.addWidget(self.freqsSelector, stretch=2)
+        inputsRow1.setLayout(inputsLayout1)
+
+        # Setup Row 2: Wavelet settings + computation mode + COI
+        inputsRow2 = QGroupBox('Setup - Advanced')
+        inputsLayout2 = QHBoxLayout()
+        inputsLayout2.addWidget(wsLabel, stretch=2)
+        inputsLayout2.addWidget(self.waveletSelector, stretch=3)
+        inputsLayout2.addWidget(cmLabel, stretch=2)
+        inputsLayout2.addWidget(self.cmapSelector, stretch=3)
+        inputsLayout2.addWidget(cwtModeLabel, stretch=2)
+        inputsLayout2.addWidget(self.cwtModeFullSignal, stretch=2)
+        inputsLayout2.addWidget(self.cwtModePerWindow, stretch=2)
+        inputsLayout2.addStretch(1)
+        inputsLayout2.addWidget(self.coiMaskingCheckbox, stretch=2)
+        inputsRow2.setLayout(inputsLayout2)
         
         # Auto labelling inputs
-        self.autoLabelPath = QLineEdit(r'E:\AlSi10Mg single layer ffc\CWT_labelled_windows\250620_10-01-59_1.0ms-window_0.2ms-offset_labels.csv')
+        self.autoLabelPath = QLineEdit(r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\1.0ms-window_0.2ms_offset_data_labels.csv')
         self.btnAuto = QPushButton('Run auto')
         self.btnAuto.setEnabled(False)
-        
+        self.btnCancelAuto = QPushButton('Cancel')
+        self.btnCancelAuto.setEnabled(False)
+
         autoRow = QGroupBox('Auto labelling')
         autoLayout = QHBoxLayout()
         autoLayout.addWidget(self.autoLabelPath, stretch=6)
         autoLayout.addWidget(self.btnAuto, stretch=1)
+        autoLayout.addWidget(self.btnCancelAuto, stretch=1)
         autoRow.setLayout(autoLayout)
         
         # Radiograph image display    
@@ -123,10 +152,10 @@ class Window(QMainWindow):
         self.readout = QLineEdit()
         self.readout.setReadOnly(True)
         
-        # Combine GUI elements into main wndow layout
+        # Combine GUI elements into main window layout
         layout = QVBoxLayout()
-        # layout.addWidget(self.btnStart, stretch=1)
-        layout.addWidget(inputsRow, stretch=1)
+        layout.addWidget(inputsRow1, stretch=1)
+        layout.addWidget(inputsRow2, stretch=1)
         layout.addWidget(autoRow, stretch=1)
         layout.addWidget(self.figRow, stretch=20)
         layout.addWidget(self.btnRow, stretch=1)
@@ -145,6 +174,7 @@ class Window(QMainWindow):
         for label in self.buttons:
             self.buttons[label].setEnabled(mode)
         self.btnAuto.setEnabled(mode)
+        self.btnCancelAuto.setEnabled(False)  # Cancel button managed separately
         
     def set_readout_text(self, text):
         self.readout.setText(text)
@@ -396,6 +426,9 @@ class Controller(QObject):
         self.wStart = 0
         self.wEnd = 0
         self.label = ''
+        # Get PD channel name
+        self.pdChannelLong = f'Photodiode{self.view.pdChannelSelector.text()}Bits'
+        self.pdChannelShort = f'PD{self.view.pdChannelSelector.text()}'
         # CWT settings
         self.windowLength = float(self.view.windowLengthSelector.text())
         self.windowOffset = float(self.view.windowOffsetSelector.text())
@@ -405,6 +438,10 @@ class Controller(QObject):
         self.freq_min = None
         self.freq_max = None
         self.n_points = None
+        # CWT computation mode: 'full' or 'per-window'
+        self.cwtMode = 'full'  # Default to full signal
+        # COI masking setting
+        self.coiMasking = False  # Default to no masking
         # Initialise sampling rate variable
         self.samplingRate = 0 # Hz
         # Define file locations
@@ -413,11 +450,13 @@ class Controller(QObject):
         if not os.path.exists(self.outputFolder):
             os.makedirs(self.outputFolder)
         self.logbook = get_logbook()
-        # Create log file for storing window information and labels (only in manual mode)
-        self.logging = False
+        # Enable CSV logging for storing window information and labels (manual mode only)
+        self.csv_logging_enabled = False
         # Define xray resolution
         self.xrayRes = 4.3 # um/px
         self.autoSave = False # Sets to True if using auto-labelling
+        # Cancellation flag for auto labelling
+        self.cancel_auto_labelling = False
         # Tracks to exclude due to corrupted PD signal
         self.exclude = ['0514_02',
            '0514_04',
@@ -440,11 +479,18 @@ class Controller(QObject):
         self.view.btnStart.clicked.connect(self.view.grey_out_load)
         self.view.btnAuto.clicked.connect(lambda: self.view.enable_controls(mode=False))
         self.view.btnAuto.clicked.connect(self.auto_label)
+        self.view.btnCancelAuto.clicked.connect(self.cancel_auto_label)
+        self.view.pdChannelSelector.textEdited.connect(lambda: self.update_pd_channel(self.view.pdChannelSelector.text()))
         self.view.waveletSelector.currentTextChanged.connect(lambda: self.update_wavelet(self.view.waveletSelector.currentText()))
         self.view.cmapSelector.currentTextChanged.connect(lambda: self.update_cmap(self.view.cmapSelector.currentText()))
         self.view.windowLengthSelector.textEdited.connect(lambda: self.update_window_length(self.view.windowLengthSelector.text()))
         self.view.windowOffsetSelector.textEdited.connect(lambda: self.update_window_offset(self.view.windowOffsetSelector.text()))
-        self.view.freqsSelector.textEdited.connect(lambda: self.update_n_freqs(self.view.freqsSelector.text()))       
+        self.view.freqsSelector.textEdited.connect(lambda: self.update_n_freqs(self.view.freqsSelector.text()))
+        # CWT mode radio buttons
+        self.view.cwtModeFullSignal.toggled.connect(lambda: self.update_cwt_mode('full') if self.view.cwtModeFullSignal.isChecked() else None)
+        self.view.cwtModePerWindow.toggled.connect(lambda: self.update_cwt_mode('per-window') if self.view.cwtModePerWindow.isChecked() else None)
+        # COI masking checkbox
+        self.view.coiMaskingCheckbox.stateChanged.connect(lambda: self.update_coi_masking(self.view.coiMaskingCheckbox.isChecked()))
         self.updateReadout.connect(self.view.set_readout_text)
         self.view.buttons['Next'].clicked.connect(lambda: self.navigate(fileDirection='+'))
         self.view.buttons['Previous'].clicked.connect(lambda: self.navigate(fileDirection='-'))
@@ -458,39 +504,60 @@ class Controller(QObject):
         
     def print_settings(self):
         print()
+        print(f'PD channel = {self.pdChannelShort}')
         print(f'wavelet = {self.wavelet}')
         print(f'cmap = {self.cmap}')
         print(f'n_freqs = {self.n_freqs}')
         print(f'window length = {self.windowLength}')
         print(f'window offset = {self.windowOffset}')
-   
+        print(f'CWT mode = {self.cwtMode}')
+        print(f'COI masking = {self.coiMasking}')
+
+    def update_pd_channel(self, value):
+        """Update PD channel when selector text changes."""
+        try:
+            channel_num = int(value)
+            self.pdChannelLong = f'Photodiode{channel_num}Bits'
+            self.pdChannelShort = f'PD{channel_num}'
+            self.print_settings()
+        except ValueError:
+            pass  # Invalid input, keep current values
+
     def update_wavelet(self, name):
         self.wavelet = name
         self.print_settings()
-        
+
     def update_cmap(self, name):
         self.cmap = name
         self.print_settings()
-        
+
     def update_window_length(self, value):
         try:
             self.windowLength = float(value)
         except:
             pass
         self.print_settings()
-        
+
     def update_window_offset(self, value):
         try:
             self.windowOffset = float(value)
         except:
             pass
         self.print_settings()
-        
+
     def update_n_freqs(self, value):
         try:
             self.n_freqs = int(value)
         except:
             pass
+        self.print_settings()
+
+    def update_cwt_mode(self, mode):
+        self.cwtMode = mode
+        self.print_settings()
+
+    def update_coi_masking(self, enabled):
+        self.coiMasking = enabled
         self.print_settings()
         
     def show_viewer_windows(self):
@@ -568,13 +635,16 @@ class Controller(QObject):
             
         # Apply combination of above filters to select parameter subset to plot
         # log_red = log[np.logical_or(AlSi10Mg, lit) & L1 & cw & powder]
-        log_red = log[AlSi10Mg & cw & L1 & powder]
+        log_red = log[AlSi10Mg & L1]
         # log_red = log[s0514]
         
         return log_red
 
     def create_log(self):
-        logDf = pd.DataFrame({'trackid' : [],
+        """Create CSV log file with proper schema for flat directory + CSV labels."""
+        logDf = pd.DataFrame({
+            'image_filename' : [],      # Added for flat directory structure
+            'trackid' : [],
             'window_n' : [],
             'window_start_ms' : [],
             'window_end_ms' : [],
@@ -582,20 +652,27 @@ class Controller(QObject):
         logDf.set_index('trackid')
         now = strftime('%y%m%d_%H-%M-%S')
         self.logPath = Path(self.outputFolder, f'{now}_{self.windowLength}ms-window_{self.windowOffset}ms-offset_labels.csv')
-        logDf.to_csv(self.logPath, index=False)
+        logDf.to_csv(self.logPath, index=False, encoding='utf-8')
     
     def background_write(self):
         worker = Worker(self.write_to_log)
         self.threadpool.start(worker)
     
     def write_to_log(self):
-        if debug: print(f"🔧 DEBUG: write_to_log called - logging={self.logging}, autoSave={self.autoSave}")
-        logRow = pd.DataFrame({'trackid' : [self.trackid],
+        """Write label entry to CSV log with image_filename for flat directory structure."""
+        if debug: print(f"🔧 DEBUG: write_to_log called - csv_logging_enabled={self.csv_logging_enabled}, autoSave={self.autoSave}")
+
+        # Generate image filename matching the saved file format
+        image_filename = f'{self.trackid}_{round(self.wStart, 1)}-{round(self.wEnd, 1)}ms.png'
+
+        logRow = pd.DataFrame({
+            'image_filename' : [image_filename],
+            'trackid' : [self.trackid],
             'window_n' : [self.wIndex],
             'window_start_ms' : [self.wStart],
             'window_end_ms' : [self.wEnd],
             'label' : [self.label]})
-        logRow.to_csv(self.logPath, mode='a', index=False, header=False)
+        logRow.to_csv(self.logPath, mode='a', index=False, header=False, encoding='utf-8')
     
     def get_data(self):
         # Data loading - CSV log creation happens later when mode is determined
@@ -621,7 +698,7 @@ class Controller(QObject):
         
         self.nFiles = len(files)
         print(f'Reading {self.nFiles} files from \'{self.folder}\'')
-        group, time, series, colour = ('AMPM', 'Time', 'Photodiode2Bits', 'r')
+        group, time, series, colour = ('AMPM', 'Time', self.pdChannelLong, 'r')
         data = {'trackid': [], 't': [], 'PD': [], 'xray': [], 'video': []} 
         for i, filepath in enumerate(sorted(files)):
             trackid = Path(filepath).name[:7]
@@ -673,229 +750,437 @@ class Controller(QObject):
             self.view.update_progress(int(100*(self.fIndex+1)/self.nFiles), self.trackid)
         except IndexError:
             print('No more files')
-    
+
+    def cancel_auto_label(self):
+        """Request cancellation of auto labelling."""
+        self.cancel_auto_labelling = True
+        self.view.set_readout_text('Cancelling...')
+        self.view.btnCancelAuto.setEnabled(False)
+        print('AUTO-LABELLING CANCELLED BY USER')
+
     def auto_label(self):
+        """
+        Auto-labelling mode: Process all windows from CSV without GUI interaction.
+
+        OPTIMIZATIONS:
+        - No sleep() calls - processes windows directly
+        - Groups windows by trackid to cache CWT computation
+        - Direct numpy→image saving without matplotlib overhead
+        - Batch progress updates (every 100 windows)
+        - Cancellable via cancel button
+        """
+        # Reset cancellation flag and enable cancel button
+        self.cancel_auto_labelling = False
+        self.view.btnCancelAuto.setEnabled(True)
+
         self.autoSave = True
-        self.logging = False  # Disable logging in auto mode since we already have a labels file
+        self.csv_logging_enabled = False  # Don't write to CSV - labels already in input CSV
         plt.close('all')
         mpl.use('agg')
+
         labelPath = self.view.autoLabelPath.text()
         window_definitions = pd.read_csv(labelPath)
         n_windows = len(window_definitions)
-        
-        # Optimise dataframe for faster lookup of PD data
+
+        print(f'\n{"="*60}')
+        print(f'AUTO-LABELLING MODE: Processing {n_windows} windows')
+        print(f'CWT Mode: {self.cwtMode}')
+        print(f'COI Masking: {self.coiMasking}')
+        print(f'{"="*60}\n')
+
+        # Optimize dataframe for faster lookup
         if len(self.data.keys()) > 2:
-            self.data.drop(columns=['xray', 'video'], inplace=True)
-            self.data.set_index('trackid', inplace=True)
-            
-        for i, row in enumerate(window_definitions.itertuples()):
-            self.view.update_progress(int(100*(i+1)/n_windows), '')
-            self.trackid = row.trackid
-            if self.trackid in self.exclude:
+            self.data = self.data.drop(columns=['xray', 'video'])
+            self.data = self.data.set_index('trackid')
+
+        # Group windows by trackid for efficient processing
+        windows_by_track = window_definitions.groupby('trackid')
+
+        completed = 0
+        start_time = pd.Timestamp.now()
+
+        for trackid, track_windows in windows_by_track:
+            # Check for cancellation request
+            if self.cancel_auto_labelling:
+                break
+
+            if trackid in self.exclude:
+                completed += len(track_windows)
                 continue
-            self.wIndex = row.window_n
-            self.wStart = round(row.window_start_ms, 3)  # Round to 3 decimal places for consistency
-            self.wEnd = round(row.window_end_ms, 3)  # Round to 3 decimal places for consistency
-            self.label = str(row.label)
-            
-            print(f'\n{self.trackid} {self.wStart}-{self.wEnd} ms\n', '='*50)
+
             try:
-                data_row = self.data.loc[self.trackid]
+                data_row = self.data.loc[trackid]
             except KeyError:
-                print(self.trackid, ' not found, check filter_logbook() parameters')
-                continue            
-            
-            # Prepare windowed_data placeholder (will be generated in cwt method)
-            windowed_data_placeholder = None  # This will be set in _cwt_plot_internal
-            
-            worker = Worker(self.cwt,
-                            data = data_row,
-                            wavelet = self.wavelet,
-                            n_freqs = self.n_freqs,
-                            # Pass metadata for thread-safe processing (use rounded values)
-                            trackid = row.trackid,
-                            wStart = self.wStart,  # Use rounded values
-                            wEnd = self.wEnd,      # Use rounded values
-                            label = str(row.label),
-                            windowed_data = windowed_data_placeholder
-                            )
-            
-            # CRITICAL: Connect signals IMMEDIATELY after worker creation, before any other operations  
-            connection_result = worker.signals.output.connect(self.cwt_plot_thread_safe, Qt.QueuedConnection)  # Force queued connection
-            
-            # Test: Also connect to a simple test slot to see if ANY signal comes through
-            if debug:
-                def test_slot(data):
-                    print(f"🔧 DEBUG: *** TEST SLOT RECEIVED DATA *** {type(data)}")
-                worker.signals.output.connect(test_slot, Qt.QueuedConnection)
-                print(f"🔧 DEBUG: Connecting signal type: {type(worker.signals)}")
-                print(f"🔧 DEBUG: Signal output type: {type(worker.signals.output)}")
-                print(f"🔧 DEBUG: Signal connection result: {connection_result}")
-            
-            # WORKAROUND: Force immediate processing to avoid threading issues
-            if debug: print("🔧 DEBUG: Starting worker with signals connected...")
-            
-            # Now start the worker AFTER signals are connected
-            self.threadpool.start(worker)
-            
-            # Give worker time to complete and process Qt events before moving to next one
-            sleep(0.1)
-            QApplication.processEvents()  # Process queued signals
-            sleep(0.4)
-            QApplication.processEvents()  # Process any remaining signals
-            
-        self.view.set_readout_text('Done')    
+                print(f'{trackid} not found, check filter_logbook() parameters')
+                completed += len(track_windows)
+                continue
+
+            # OPTIMIZATION: For 'full' mode, compute CWT once per track
+            if self.cwtMode == 'full':
+                # Compute full CWT once
+                cwt_full = self.cwt(data=data_row, wavelet=self.wavelet, n_freqs=self.n_freqs)
+
+                # Process all windows from this cached CWT
+                for row in track_windows.itertuples():
+                    # Check for cancellation request
+                    if self.cancel_auto_labelling:
+                        break
+
+                    self.trackid = trackid
+                    self.wIndex = row.window_n
+                    self.wStart = round(row.window_start_ms, 3)
+                    self.wEnd = round(row.window_end_ms, 3)
+                    self.label = str(row.has_porosity)
+
+                    # Save directly using cached CWT (no worker thread needed)
+                    self._save_cwt_from_cached(cwt_full)
+                    completed += 1
+
+                    # Update progress every 100 windows
+                    if completed % 100 == 0:
+                        elapsed = (pd.Timestamp.now() - start_time).total_seconds()
+                        rate = completed / elapsed if elapsed > 0 else 0
+                        eta = (n_windows - completed) / rate if rate > 0 else 0
+                        self.view.update_progress(
+                            int(100*completed/n_windows),
+                            f'{completed}/{n_windows} | {rate:.1f} win/s | ETA: {eta:.0f}s'
+                        )
+            else:
+                # Per-window mode: must compute each separately (smart padding)
+                for row in track_windows.itertuples():
+                    # Check for cancellation request
+                    if self.cancel_auto_labelling:
+                        break
+
+                    self.trackid = trackid
+                    self.wIndex = row.window_n
+                    self.wStart = round(row.window_start_ms, 3)
+                    self.wEnd = round(row.window_end_ms, 3)
+                    self.label = str(row.has_porosity)
+
+                    # Compute CWT for this window
+                    cwt_result = self.cwt(data=data_row, wavelet=self.wavelet, n_freqs=self.n_freqs)
+
+                    # Save directly (no worker thread)
+                    self._save_cwt_from_cached(cwt_result)
+                    completed += 1
+
+                    # Update progress every 100 windows
+                    if completed % 100 == 0:
+                        elapsed = (pd.Timestamp.now() - start_time).total_seconds()
+                        rate = completed / elapsed if elapsed > 0 else 0
+                        eta = (n_windows - completed) / rate if rate > 0 else 0
+                        self.view.update_progress(
+                            int(100*completed/n_windows),
+                            f'{completed}/{n_windows} | {rate:.1f} win/s | ETA: {eta:.0f}s'
+                        )
+
+        # Final update
+        elapsed_total = (pd.Timestamp.now() - start_time).total_seconds()
+        final_rate = completed / elapsed_total if elapsed_total > 0 else 0
+
+        # Check if cancelled or completed
+        if self.cancel_auto_labelling:
+            print(f'\n{"="*60}')
+            print(f'AUTO-LABELLING CANCELLED')
+            print(f'Processed: {completed} of {n_windows} windows ({100*completed/n_windows:.1f}%)')
+            print(f'Time: {elapsed_total:.1f}s ({elapsed_total/60:.1f} min)')
+            print(f'Rate: {final_rate:.2f} windows/sec')
+            print(f'{"="*60}\n')
+
+            self.view.set_readout_text(f'Cancelled - {completed} of {n_windows} windows in {elapsed_total:.1f}s')
+        else:
+            print(f'\n{"="*60}')
+            print(f'AUTO-LABELLING COMPLETE')
+            print(f'Processed: {completed} windows')
+            print(f'Time: {elapsed_total:.1f}s ({elapsed_total/60:.1f} min)')
+            print(f'Rate: {final_rate:.2f} windows/sec')
+            print(f'{"="*60}\n')
+
+            self.view.set_readout_text(f'Done - {completed} windows in {elapsed_total:.1f}s')
+
         self.view.progressBar.reset()
+        self.view.btnCancelAuto.setEnabled(False)
         self.view.enable_controls()
-            
-        pass
     
-    def get_label_folder(self):
-        label_folder = Path(self.outputFolder,
+    def get_output_folder(self):
+        """
+        Get output directory for CWT images (flat directory structure).
+
+        Directory structure:
+        outputFolder/PD1/wavelet/window_ms/freq_range/cmap/[full_signal|per_window]/
+
+        Images are organized by computation mode to separate:
+        - full_signal: CWT computed on full signal, then window extracted
+        - per_window: CWT computed only on windowed region with smart padding
+
+        All images are saved here regardless of their classification label.
+        Labels are tracked separately in CSV file.
+
+        Returns:
+            Path: Output directory path
+        """
+        # Determine computation mode subdirectory name
+        mode_subdir = 'full_signal' if self.cwtMode == 'full' else 'per_window'
+
+        output_folder = Path(self.outputFolder,
+                            self.pdChannelShort,
                             self.wavelet.replace('.', '_'),
                             f'{self.windowLength}_ms',
                             f'{self.freq_min}-{self.freq_max}_Hz_{self.n_freqs}_steps',
                             self.cmap,
-                            self.label)
-        
-        if not os.path.exists(label_folder):
-            os.makedirs(label_folder)
-        
-        return label_folder
+                            mode_subdir)
+
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+
+        return output_folder
 
     def cwt(self, data, wavelet='cmor1.5-1.0', n_freqs=256, printCWTSpec=False):
-        if debug: print('cwt() called')
-        
-        # Perform CWT
+        """
+        Compute CWT with selectable computation mode.
+
+        Modes:
+        - 'full': Compute CWT on full signal with symmetric padding, then extract window (default)
+        - 'per-window': Extract window first, pad with actual signal where available
+
+        vmax is hardcoded per-wavelet to preserve amplitude comparison across dataset for ML training.
+        This ensures consistent scaling so the neural network can learn amplitude differences.
+        """
+        if debug: print(f'cwt() called with mode: {self.cwtMode}')
+
+        # Get basic signal parameters
         samplingPeriod = round(data['t'][1]-data['t'][0], 9)
         samplingRate = round(1/samplingPeriod, 7)
         s = data['PD']
         t = data['t']
         self.n_points = len(t)
         self.samplingRate = int(round(1/(t[1]-t[0])))
-        
+
         if debug:
             print(f"CWT: {len(s)} samples, {self.samplingRate} Hz")
-        
-        s_r = s[::-1]
-        s_pad = np.concatenate((s_r, s, s_r))
-        # if debug: print(f"Padded signal length: {len(s_pad)}")  # Commented to reduce noise
-        
-        scales, vmax = get_cwt_scales(wavelet, n_freqs)
-        cwtmatr, freqs = pywt.cwt(s_pad, scales, wavelet, sampling_period=samplingPeriod)
-        
-        # if debug: print(f"CWT matrix shape before cropping: {cwtmatr.shape}")  # Commented to reduce noise
-        
-        # Cropping out the padding
-        cwtmatr = np.abs(cwtmatr[:, self.n_points:2*self.n_points])
-        
+
+        # Get scales and vmax
+        scales, vmax = get_cwt_scales(wavelet, n_freqs, sampling_rate=self.samplingRate)
+
+        # Branch based on computation mode
+        if self.cwtMode == 'per-window':
+            # Per-window mode: compute only on windowed region with smart padding
+            cwtmatr, freqs = self._cwt_per_window(s, t, scales, wavelet, samplingPeriod)
+        else:
+            # Full signal mode (default): compute on full signal then extract window
+            cwtmatr, freqs = self._cwt_full_signal(s, scales, wavelet, samplingPeriod)
+
         n_samples_window = int(self.windowLength * self.samplingRate / 1000)
-        
-        # if debug:  # Commented to reduce debug noise
-        #     print(f"CWT matrix shape after cropping: {cwtmatr.shape}") # Should be (255, 999)
-        #     print(f"Frequencies array shape: {freqs.shape}") # Should be (256,)
-        #     print(f"Expected time points for {self.windowLength}ms window: {n_samples_window}")
-        #     print(f"================================")
-        
+
         if printCWTSpec:
             print(f'Wavelet: {wavelet}')
             print(f'Frequency range: {round(freqs[-1], 0)}-{round(freqs[0], 0)} Hz')
             print(f'Period range: {round(1000/freqs[0],2)}-{round(1000/freqs[-1],2)} ms')
-        
+
         # For use in folder naming
         self.freq_min = int(round(freqs[-1]))
         self.freq_max = int(round(freqs[0]))
-        
+
         # For use by cwt_plot
         return {'t': t, 'freqs': freqs, 'cwtmatr': cwtmatr, 'vmax': vmax, 'n_samples_window': n_samples_window}
-        
-    def cwt_plot_thread_safe(self, result_tuple):
-        """Thread-safe version of cwt_plot that receives metadata from worker"""
-        if debug: print(f"🔧 DEBUG: *** cwt_plot_thread_safe CALLED *** with {type(result_tuple)}")
-        try:
-            cwt_spec, metadata = result_tuple
-            
-            # Extract metadata
-            trackid = metadata['trackid']
-            wStart = metadata['wStart']
-            wEnd = metadata['wEnd']
-            label = metadata['label']
-            windowed_data = metadata['windowed_data']
-            
-            # Temporarily store in instance variables for save_cwt compatibility
-            original_trackid = getattr(self, 'trackid', None)
-            original_wStart = getattr(self, 'wStart', None)
-            original_wEnd = getattr(self, 'wEnd', None)
-            original_label = getattr(self, 'label', None)
-            original_windowed_data = getattr(self, 'current_windowed_data', None)
-            
-            self.trackid = trackid
-            self.wStart = wStart
-            self.wEnd = wEnd
-            self.label = label
-            self.current_windowed_data = windowed_data
-            
-            try:
-                # Call the original cwt_plot logic
-                self._cwt_plot_internal(cwt_spec)
-            finally:
-                # Restore original values (though this may not matter in auto mode)
-                if original_trackid is not None:
-                    self.trackid = original_trackid
-                if original_wStart is not None:
-                    self.wStart = original_wStart
-                if original_wEnd is not None:
-                    self.wEnd = original_wEnd
-                if original_label is not None:
-                    self.label = original_label
-                if original_windowed_data is not None:
-                    self.current_windowed_data = original_windowed_data
-                    
-        except Exception as e:
-            print(f"Error in cwt_plot_thread_safe: {e}")
-            traceback.print_exc()
+
+    def _cwt_full_signal(self, s, scales, wavelet, samplingPeriod):
+        """
+        Compute CWT on full signal with symmetric padding (improved from manual reversal).
+        Returns: (cwtmatr, freqs) with cwtmatr cropped to original signal length.
+        """
+        # Use symmetric padding for better edge continuity (C1 continuous)
+        s_pad = np.pad(s, len(s), mode='symmetric')
+
+        if debug:
+            print(f"Full signal mode: Padded signal length: {len(s_pad)} (3x original)")
+
+        # Perform CWT on padded signal
+        cwtmatr, freqs = pywt.cwt(s_pad, scales, wavelet, sampling_period=samplingPeriod)
+
+        # Crop out the padding (extract middle section = original signal)
+        cwtmatr = np.abs(cwtmatr[:, self.n_points:2*self.n_points])
+
+        return cwtmatr, freqs
+
+    def _cwt_per_window(self, s, t, scales, wavelet, samplingPeriod):
+        """
+        Compute CWT on windowed region with smart padding strategy.
+        Uses actual signal as padding where available, synthetic only at edges.
+        Returns: (cwtmatr, freqs) already extracted to window region.
+        """
+        t_ms = t * 1000  # Convert to milliseconds
+
+        # Find window indices
+        window_start_idx = np.argmin(np.abs(t_ms - self.wStart))
+        window_end_idx = np.argmin(np.abs(t_ms - self.wEnd))
+        window_length = window_end_idx - window_start_idx
+
+        if debug:
+            print(f"Per-window mode: Window [{window_start_idx}:{window_end_idx}] = {window_length} samples")
+
+        # Determine padding length (same as full signal mode for consistency)
+        pad_length = window_length
+
+        # LEFT PADDING: Use actual signal where available
+        if window_start_idx >= pad_length:
+            # Sufficient signal before window - use it directly
+            left_pad = s[window_start_idx - pad_length : window_start_idx]
+            if debug: print(f"Left padding: {pad_length} samples from actual signal")
+        else:
+            # Near signal start - need some synthetic padding
+            available_left = window_start_idx
+            left_signal = s[0:window_start_idx]
+            synthetic_needed = pad_length - available_left
+            synthetic_left = np.pad(left_signal, (synthetic_needed, 0), mode='symmetric')[:synthetic_needed]
+            left_pad = np.concatenate([synthetic_left, left_signal])
+            if debug: print(f"Left padding: {synthetic_needed} synthetic + {available_left} actual")
+
+        # WINDOW (actual data to analyze)
+        window = s[window_start_idx:window_end_idx]
+
+        # RIGHT PADDING: Use actual signal where available
+        if window_end_idx + pad_length <= len(s):
+            # Sufficient signal after window - use it directly
+            right_pad = s[window_end_idx : window_end_idx + pad_length]
+            if debug: print(f"Right padding: {pad_length} samples from actual signal")
+        else:
+            # Near signal end - need some synthetic padding
+            available_right = len(s) - window_end_idx
+            right_signal = s[window_end_idx : len(s)]
+            synthetic_needed = pad_length - available_right
+            synthetic_right = np.pad(right_signal, (0, synthetic_needed), mode='symmetric')[-synthetic_needed:]
+            right_pad = np.concatenate([right_signal, synthetic_right])
+            if debug: print(f"Right padding: {available_right} actual + {synthetic_needed} synthetic")
+
+        # Combine: [left_pad][window][right_pad]
+        s_pad = np.concatenate([left_pad, window, right_pad])
+
+        if debug:
+            print(f"Per-window padded signal length: {len(s_pad)} (window={window_length}, total_pad={2*pad_length})")
+
+        # Perform CWT on padded window
+        cwtmatr, freqs = pywt.cwt(s_pad, scales, wavelet, sampling_period=samplingPeriod)
+
+        # Extract only the window portion (middle section)
+        cwtmatr = np.abs(cwtmatr[:, pad_length : pad_length + window_length])
+
+        # Store window indices for use by _cwt_plot_internal
+        self._per_window_start_idx = window_start_idx
+        self._per_window_end_idx = window_end_idx
+
+        return cwtmatr, freqs
+
+    def _apply_coi_masking(self, cwtmatr, freqs):
+        """
+        Apply Cone of Influence (COI) masking to CWT coefficients.
+        Sets edge artifact regions to 0 based on wavelet support width.
+
+        The COI represents the region where edge effects from padding are significant.
+        For CWT, larger scales (lower frequencies) require more samples and have wider COI.
+
+        Args:
+            cwtmatr: CWT coefficient matrix, shape (n_scales, n_samples)
+            freqs: Frequency array corresponding to scales
+
+        Returns:
+            Masked CWT matrix with COI regions set to 0
+        """
+        n_scales, n_samples = cwtmatr.shape
+        cwtmatr_masked = cwtmatr.copy()
+
+        # COI boundary calculation
+        # For most wavelets, the e-folding time (support width) is approximately sqrt(2)*scale
+        # At the edges, coefficients within e-folding distance are affected by boundary
+        for i, freq in enumerate(freqs):
+            # Convert frequency to scale (inverse relationship)
+            scale = self.samplingRate / freq
+
+            # e-folding distance in samples (approximate wavelet support width)
+            # This is wavelet-dependent; sqrt(2)*scale is a reasonable approximation
+            coi_width = int(np.ceil(np.sqrt(2) * scale))
+
+            # Mask left edge
+            cwtmatr_masked[i, :coi_width] = 0
+
+            # Mask right edge
+            cwtmatr_masked[i, -coi_width:] = 0
+
+        if debug:
+            n_masked = np.sum(cwtmatr_masked == 0) - np.sum(cwtmatr == 0)
+            print(f"COI masking: Set {n_masked} coefficients to 0 (edge artifacts)")
+
+        return cwtmatr_masked
 
     def cwt_plot(self, cwt_spec):
-        """Original cwt_plot method - now calls internal implementation"""
+        """Process CWT result from worker thread - display or save based on mode."""
         try:
             self._cwt_plot_internal(cwt_spec)
         except Exception as e:
             print(f"Error in cwt_plot: {e}")
             traceback.print_exc()
-                 
+
     def _cwt_plot_internal(self, cwt_spec):
-        """Internal implementation shared by both cwt_plot methods"""
+        """
+        Process CWT scalogram and either display (manual mode) or save (auto mode).
+
+        Uses instance variables set before worker execution:
+        - self.trackid, self.wStart, self.wEnd: Window identification
+        - self.label: Classification label (0 or 1)
+        - self.autoSave: Mode flag (True=auto, False=manual)
+        - self.cwtMode: 'full' or 'per-window' computation mode
+        """
         # Define CWT figure attributes
         dpi = 100
         rect = [0, 0, 1, 1]  # Full figure for pixel-perfect output
-        
+
         t = cwt_spec['t']
         t_ms = t * 1000  # Convert to milliseconds
-        
-        # Find the indices corresponding to the window
-        window_start_idx = np.argmin(np.abs(t_ms - self.wStart))
-        window_end_idx = np.argmin(np.abs(t_ms - self.wEnd))
-        n_samples = window_end_idx - window_start_idx
-        
-        # Check that window is full length, and skip to next file if end of signal has been reached
-        if n_samples < cwt_spec['n_samples_window']:
-            self.navigate(fileDirection = '+')
-            return
-        
-        if debug:
-            print(f"=== WINDOW EXTRACTION DEBUG ===")
-            print(f"Window start: {self.wStart} ms, idx: {window_start_idx}")
-            print(f"Window end: {self.wEnd} ms, idx: {window_end_idx}")
-            print(f"Window width in samples: {n_samples}")
-        
-        # Extract the windowed portion of data
-        t_windowed = t[window_start_idx:window_end_idx]
-        cwt_windowed = cwt_spec['cwtmatr'][:, window_start_idx:window_end_idx]
-        
+
+        # Handle window extraction based on CWT mode
+        if self.cwtMode == 'per-window':
+            # Per-window mode: CWT is already windowed, just use stored indices
+            window_start_idx = self._per_window_start_idx
+            window_end_idx = self._per_window_end_idx
+            n_samples = window_end_idx - window_start_idx
+
+            if debug:
+                print(f"=== PER-WINDOW MODE ===")
+                print(f"Using pre-computed window [{window_start_idx}:{window_end_idx}] = {n_samples} samples")
+
+            # CWT is already windowed - use directly
+            t_windowed = t[window_start_idx:window_end_idx]
+            cwt_windowed = cwt_spec['cwtmatr']  # Already extracted in _cwt_per_window
+        else:
+            # Full signal mode: Extract window from full CWT
+            window_start_idx = np.argmin(np.abs(t_ms - self.wStart))
+            window_end_idx = np.argmin(np.abs(t_ms - self.wEnd))
+            n_samples = window_end_idx - window_start_idx
+
+            # Check that window is full length, skip to next file if end of signal reached
+            if n_samples < cwt_spec['n_samples_window']:
+                self.navigate(fileDirection = '+')
+                return
+
+            if debug:
+                print(f"=== FULL SIGNAL MODE - WINDOW EXTRACTION ===")
+                print(f"Window start: {self.wStart} ms, idx: {window_start_idx}")
+                print(f"Window end: {self.wEnd} ms, idx: {window_end_idx}")
+                print(f"Window width in samples: {n_samples}")
+
+            # Extract the windowed portion from full CWT
+            t_windowed = t[window_start_idx:window_end_idx]
+            cwt_windowed = cwt_spec['cwtmatr'][:, window_start_idx:window_end_idx]
+
         if debug:
             print(f"Windowed time array shape: {t_windowed.shape}")
             print(f"Windowed CWT matrix shape: {cwt_windowed.shape}")
-        
+
+        # Apply COI masking if enabled
+        if self.coiMasking:
+            cwt_windowed = self._apply_coi_masking(cwt_windowed, cwt_spec['freqs'])
+
         tAx, fAx = np.meshgrid(t_windowed*1000, cwt_spec['freqs']/1000) # convert to ms and kHz
         
         # Store windowed data for saving
@@ -915,11 +1200,11 @@ class Controller(QObject):
             
         else:
             if debug: print('manual labelling triggered')
-            
-            # Enable logging and create CSV log file for manual mode (first time only)
-            if not self.logging:
-                self.logging = True
-                if debug: print("🔧 DEBUG: First manual label - enabling logging and creating CSV")
+
+            # Enable CSV logging and create log file for manual mode (first time only)
+            if not self.csv_logging_enabled:
+                self.csv_logging_enabled = True
+                if debug: print("🔧 DEBUG: First manual label - enabling CSV logging")
                 self.create_log()
             
             self.cwt_window.cwtFig.clear()
@@ -957,42 +1242,94 @@ class Controller(QObject):
             
             plt.close()
                  
+    def _save_cwt_from_cached(self, cwt_spec):
+        """
+        OPTIMIZED: Save CWT image directly from cached cwt_spec without matplotlib overhead.
+
+        This bypasses the cwt_plot → save_cwt pipeline used in manual mode.
+        Direct numpy → PIL conversion is ~5-10x faster than matplotlib rendering.
+
+        Args:
+            cwt_spec: CWT result dict from cwt() function
+        """
+        from PIL import Image
+        import matplotlib.cm as cm
+
+        # Extract window from CWT based on mode
+        t = cwt_spec['t']
+        t_ms = t * 1000
+
+        if self.cwtMode == 'per-window':
+            # CWT already windowed
+            cwt_windowed = cwt_spec['cwtmatr']
+        else:
+            # Full signal mode: extract window
+            window_start_idx = np.argmin(np.abs(t_ms - self.wStart))
+            window_end_idx = np.argmin(np.abs(t_ms - self.wEnd))
+            cwt_windowed = cwt_spec['cwtmatr'][:, window_start_idx:window_end_idx]
+
+        # Apply COI masking if enabled
+        if self.coiMasking:
+            cwt_windowed = self._apply_coi_masking(cwt_windowed, cwt_spec['freqs'])
+
+        # Normalize to 0-1 range using vmax
+        vmax = cwt_spec['vmax']
+        cwt_normalized = np.clip(cwt_windowed / vmax, 0, 1)
+
+        # Apply colormap
+        cmap_func = cm.get_cmap(self.cmap)
+        cwt_colored = cmap_func(cwt_normalized)  # Returns RGBA (0-1)
+
+        # Convert to RGB uint8 and flip vertically (matplotlib convention)
+        cwt_rgb = (cwt_colored[:, :, :3] * 255).astype(np.uint8)
+
+        # Save using PIL (much faster than matplotlib)
+        output_folder = self.get_output_folder()
+        output_path = Path(output_folder, f'{self.trackid}_{round(self.wStart, 1)}-{round(self.wEnd, 1)}ms.png')
+
+        img = Image.fromarray(cwt_rgb, mode='RGB')
+        img.save(output_path, optimize=True)
+
     def save_cwt(self, label):
+        """
+        Original save_cwt for manual mode - uses matplotlib for GUI consistency.
+        Auto mode now uses _save_cwt_from_cached() for speed.
+        """
         self.label = label
-        label_folder = self.get_label_folder()
-        
-        outputFPath = Path(label_folder, f'{self.trackid}_{round(self.wStart, 1)}-{round(self.wEnd, 1)}ms.png')
+        output_folder = self.get_output_folder()
+
+        outputFPath = Path(output_folder, f'{self.trackid}_{round(self.wStart, 1)}-{round(self.wEnd, 1)}ms.png')
         if debug: print(f"🔧 DEBUG: Attempting to save image to: {outputFPath}")
-        
+
         # Only write to CSV when logging is enabled (manual mode)
-        if debug: print(f"🔧 DEBUG: save_cwt called, autoSave={self.autoSave}, logging={self.logging}, will write CSV: {self.logging}")
-        if self.logging:
+        if debug: print(f"🔧 DEBUG: save_cwt called, autoSave={self.autoSave}, csv_logging_enabled={self.csv_logging_enabled}")
+        if self.csv_logging_enabled:
             self.background_write()
-        
+
         # Use the stored windowed data to create a clean save
         # Create a temporary figure for saving with exact dimensions
         windowed_data = self.current_windowed_data
-        
+
         actual_time_points = windowed_data['cwt'].shape[1]
         actual_freq_points = windowed_data['cwt'].shape[0]
-        
-        temp_fig = plt.figure(frameon=False, dpi=100, 
+
+        temp_fig = plt.figure(frameon=False, dpi=100,
                             figsize=(actual_time_points/100, actual_freq_points/100))
         temp_ax = temp_fig.add_axes([0, 0, 1, 1])
         temp_ax.set_axis_off()
-        
+
         if debug:
             print('=====================')
             print('Saved figure spec:')
             print('tAx: ', windowed_data['tAx'].shape)
             print('fAx: ', windowed_data['fAx'].shape)
             print('cwt_windowed_data: ', windowed_data['cwt'].shape)
-        
+
         # Plot the windowed data
-        temp_ax.pcolormesh(windowed_data['tAx'], windowed_data['fAx'], windowed_data['cwt'], 
+        temp_ax.pcolormesh(windowed_data['tAx'], windowed_data['fAx'], windowed_data['cwt'],
                           cmap=self.cmap, vmin=0, vmax=windowed_data['vmax'])
         temp_ax.set_yscale('log', base=2)
-        
+
         temp_fig.savefig(outputFPath, dpi=100)
         plt.close(temp_fig)
         if debug:
@@ -1002,7 +1339,7 @@ class Controller(QObject):
                 print(f"🔧 DEBUG: File exists, size: {outputFPath.stat().st_size} bytes")
             else:
                 print(f"🔧 DEBUG: ERROR - File was not created!")
-        
+
         if debug:
             # DEBUG: Check saved image dimensions
             try:
@@ -1041,78 +1378,33 @@ class Controller(QObject):
         
     
 class Worker(QRunnable):
-    def __init__(self, fn, *args, trackid=None, wStart=None, wEnd=None, label=None, windowed_data=None, **kwargs):
+    def __init__(self, fn, *args, **kwargs):
         super(Worker, self).__init__()
         # Store constructor arguments (re-used for processing)
         self.fn = fn
         self.args = args
         self.kwargs = kwargs
-        # Store metadata for thread-safe processing (None means regular worker)
-        self.trackid = trackid
-        self.wStart = wStart
-        self.wEnd = wEnd
-        self.label = label
-        self.windowed_data = windowed_data
-        
-        # Use metadata-aware signals if any metadata is provided
-        self.has_metadata = any([trackid is not None, wStart is not None, wEnd is not None, 
-                               label is not None, windowed_data is not None])
-        
-        if debug: print(f"🔧 DEBUG: === WORKER {trackid} ===\n🔧 DEBUG: Worker created with has_metadata={self.has_metadata}, trackid={trackid}")
-        
-        if self.has_metadata:
-            self.signals = MetadataWorkerSignals()
-        else:
-            self.signals = WorkerSignals()
+        self.signals = WorkerSignals()
 
     @pyqtSlot()
     def run(self):
-        # print(f'Worker instance running on thread: {int(QThread.currentThreadId())}')
-        if debug: print(f"🔧 DEBUG: Worker.run() starting, has_metadata={self.has_metadata}")
+        """Execute the worker function in a background thread."""
         try:
             result = self.fn(*self.args, **self.kwargs)
-            if debug: print(f"🔧 DEBUG: Worker.run() function completed successfully")
         except:
-            if debug: print(f"🔧 DEBUG: Worker.run() ERROR during execution")
             traceback.print_exc()
             exctype, value = sys.exc_info()[:2]
             self.signals.error.emit((exctype, value, traceback.format_exc()))
         else:
-            if self.has_metadata:
-                if debug: print(f"🔧 DEBUG: Worker.run() emitting result with metadata")
-                # Create metadata dict to pass with result
-                metadata = {
-                    'trackid': self.trackid,
-                    'wStart': self.wStart,
-                    'wEnd': self.wEnd,
-                    'label': self.label,
-                    'windowed_data': self.windowed_data
-                }
-                if debug: 
-                    print(f"🔧 DEBUG: About to emit tuple: ({type(result)}, {type(metadata)})")
-                    print(f"🔧 DEBUG: Metadata contents: {metadata}")
-                
-                self.signals.output.emit((result, metadata))  # Return result with metadata
-                
-                if debug: print(f"🔧 DEBUG: Signal emit completed")
-            else:
-                if debug: print(f"🔧 DEBUG: Worker.run() emitting result without metadata")
-                self.signals.output.emit(result)  # Return result only
+            self.signals.output.emit(result)
         finally:
-            if debug: print(f"🔧 DEBUG: Worker.run() finished")
-            self.signals.finished.emit()  # Done  
+            self.signals.finished.emit()  
 
 
 class WorkerSignals(QObject):
     # Defines the signals available from a running worker thread.
     finished = pyqtSignal()
-    output = pyqtSignal(object)  # Original signal for regular workers
-    error = pyqtSignal(tuple)
-
-class MetadataWorkerSignals(QObject):
-    # Defines the signals available from a metadata-aware worker thread.
-    finished = pyqtSignal()
-    output = pyqtSignal(object)  # Use object instead of tuple for better Qt compatibility
+    output = pyqtSignal(object)
     error = pyqtSignal(tuple)
 
 
