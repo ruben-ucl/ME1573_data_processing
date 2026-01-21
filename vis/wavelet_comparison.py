@@ -25,13 +25,13 @@ sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from tools import get_paths, get_cwt_scales
 
 # Configuration
-TARGET_TRACKID = '0110_04'  # Hardcoded test track
+TARGET_TRACKID = '0323_05'  # Hardcoded test track
 SAVE_OUTPUT = True
 DEBUG = True
 
 # Wavelets to test - organized by type
 WAVELETS_TO_TEST = {
-    'Recommended Trio': ['cmor1.5-1.0', 'mexh', 'gaus2'],
+    'Recommended Trio': ['cmor2.5-0.5', 'mexh', 'gaus2'],
     'Frequency B-Splines': ['fbsp1-1.5-1.0', 'fbsp4-0.6-1.0'],
     'Other Interesting': ['morl', 'shan1.5-1.0', 'cgau8'],
 }
@@ -81,15 +81,36 @@ def plot_wavelet_function(wavelet_name, ax):
         return False
 
 def compute_cwt_for_signal(signal, time, wavelet_name, sampling_period):
-    """Compute CWT for given signal and wavelet."""
+    """Compute CWT for given signal and wavelet with symmetric padding."""
     try:
-        # Get scales for this wavelet
-        scales, vmax = get_cwt_scales(wavelet_name, 128)  # Fewer scales for faster computation
-        
-        # Compute CWT
-        cwtmatr, freqs = pywt.cwt(signal, scales, wavelet_name, sampling_period)
-        cwtmatr = np.abs(cwtmatr)
-        
+        # Calculate sampling rate from period
+        sampling_rate = 1.0 / sampling_period
+
+        # Get scales for this wavelet with actual sampling rate
+        # Note: We ignore the vmax from get_cwt_scales, will compute from actual data
+        scales, _ = get_cwt_scales(wavelet_name, num=256, sampling_rate=sampling_rate)
+
+        # Apply symmetric padding to minimize edge artifacts (best practice)
+        signal_pad = np.pad(signal, len(signal), mode='symmetric')
+        if DEBUG:
+            print(f"  {wavelet_name}: Padded {len(signal)} → {len(signal_pad)} samples")
+
+        # Compute CWT on padded signal
+        cwtmatr, freqs = pywt.cwt(signal_pad, scales, wavelet_name, sampling_period)
+
+        # Normalise to preserve amplitude proportionality
+        # cwtmatr /= np.sqrt(scales[:, None])
+
+        # Crop to original signal length (extract middle section, removing padding)
+        cwtmatr = np.abs(cwtmatr[:, len(signal):2*len(signal)])
+
+        # Automatically determine vmax from the actual scalogram data
+        # Use 95th percentile to avoid outliers affecting the colormap
+        vmax = np.percentile(cwtmatr, 99)
+
+        if DEBUG:
+            print(f"  {wavelet_name}: vmax = {vmax:.2f} (95th percentile, max = {cwtmatr.max():.2f})")
+
         return cwtmatr, freqs, vmax
     except Exception as e:
         if DEBUG: print(f"Failed to compute CWT for {wavelet_name}: {e}")
@@ -156,6 +177,9 @@ def create_wavelet_comparison_figure():
         # Crop the data
         t = t[start_idx:end_idx]
         s = s[start_idx:end_idx]
+        
+        # Apply logarithm to smooth peaks at laser onset
+        s = np.log(s)
         
         if DEBUG:
             print(f"Original data: {len(t) + start_idx + (len(s) - end_idx)} samples")
