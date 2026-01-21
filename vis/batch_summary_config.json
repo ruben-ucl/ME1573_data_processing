@@ -1,0 +1,20 @@
+{
+  "columns_to_skip": [],
+  "_comment_filter_examples": {
+    "material": "AlSi10Mg | Al7A77 | Al | Ti64 | [list of materials]",
+    "layer": "1 | 2 | [1, 2] (integer or list)",
+    "laser_mode": "cw | pwm",
+    "base_type": "powder | welding",
+    "regime": "conduction | keyhole | unstable keyhole | keyhole flickering | quasi-stable keyhole | quasi-stable vapour depression | not_cond",
+    "pores_threshold": "integer (minimum number of pores)",
+    "travel_direction": "cw | ccw (clockwise or counter-clockwise)",
+    "substrate_no": "514 | 515 | 504 | [list of substrate numbers]"
+  },
+  "_comment_usage": "Remove the empty 'filters' object above and uncomment the example below to apply filters",
+  "filters": {
+    "material": "AlSi10Mg",
+    "layer": 1,
+    "base_type": "powder",
+    "laser_mode": "cw"
+  }
+}

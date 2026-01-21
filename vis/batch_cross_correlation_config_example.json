@@ -1,0 +1,93 @@
+{
+  "description": "Batch cross-correlation config matching timeseries_compare.py setup",
+  "comment": "This configuration matches the current single-track analysis setup but for multi-file concatenation",
+
+  "filters": {
+    "material": "AlSi10Mg",
+    "layer": 1,
+    "base_type": "powder"
+  },
+
+  "datasets": [
+    {
+      "group": "AMPM",
+      "name": "Photodiode1Bits",
+      "label": "PD1",
+      "color": null,
+      "linestyle": "-",
+      "time_group": "AMPM",
+      "time_name": "Time",
+      "sampling_rate": null,
+      "time_units": "s"
+    },
+    {
+      "group": "AMPM",
+      "name": "Photodiode2Bits",
+      "label": "PD2",
+      "color": null,
+      "linestyle": "-",
+      "time_group": "AMPM",
+      "time_name": "Time",
+      "sampling_rate": null,
+      "time_units": "s"
+    },
+    {
+      "group": "KH",
+      "name": "max_depth",
+      "label": "KH depth",
+      "color": null,
+      "linestyle": "-",
+      "time_group": "KH",
+      "time_name": "time",
+      "sampling_rate": null,
+      "time_units": "s"
+    },
+    {
+      "group": "KH",
+      "name": "area",
+      "label": "KH area",
+      "color": "#57106e",
+      "linestyle": "-",
+      "time_group": "KH",
+      "time_name": "time",
+      "sampling_rate": null,
+      "time_units": "s"
+    }
+  ],
+
+  "processing": {
+    "comment": "Processing configuration matching timeseries_compare.py (lines 171-197)",
+
+    "apply_savgol": false,
+    "savgol_window": 31,
+    "savgol_polyorder": 2,
+
+    "apply_lowpass": false,
+    "lowpass_cutoff": 0.4,
+    "lowpass_order": 4,
+
+    "apply_highpass": false,
+    "apply_bandpass": false,
+
+    "apply_detrend": false,
+    "detrend_method": "linear",
+
+    "apply_normalization": false,
+    "normalization_method": "minmax",
+    "use_global_normalization": true,
+    "global_stats_file": null,
+    "comment_normalization": "Global normalization: statistics computed from concatenated data across all filtered files",
+
+    "remove_outliers": true,
+    "outlier_method": ["second_derivative", "second_derivative", "iqr"],
+    "outlier_threshold": [4.5, 4.5, 2.2],
+    "outlier_window": 0,
+    "outlier_gradient_smoothing": 1,
+    "comment_outliers": "Sequential application: second_derivative with threshold 4.5, applied twice with global detection (window=0)",
+
+    "apply_smoothing": false,
+    "apply_resampling": false
+  },
+
+  "note": "Manual lag corrections and auto-alignment are not used in batch mode since data is non-continuous across files"
+}
