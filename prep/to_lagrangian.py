@@ -27,7 +27,7 @@ logbook = get_logbook()
 
 # Read folder path to hdf5 files
 # filepath = get_paths()['hdf5']
-filepath = r'E:/ESRF ME1573 LTP 6 Al data HDF5/ffc'
+filepath = r'F:/ESRF ME1573 LTP 6 Al data HDF5/ffc'
 
 # Read .csv file containing substrate linear fits
 # File should have headers: 'trackid', 'm', 'c'

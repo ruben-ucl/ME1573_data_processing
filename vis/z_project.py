@@ -27,7 +27,7 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 # Input informaton
 # Read data folder path from .txt file
 # filepath = get_paths()['hdf5']
-filepath = r'E:/ESRF ME1573 LTP 6 Al data HDF5/ffc'
+filepath = r'F:/ESRF ME1573 LTP 6 Al data HDF5/ffc'
     
 input_dset_name = 'bs-f40_lagrangian_long'
 

@@ -342,9 +342,9 @@ def count_actual_images(selected_trackids, regime_trackids, data_directories=Non
         # If no config directories exist, fall back to common patterns
         if not data_directories:
             common_patterns = [
-                "E:/AlSi10Mg single layer ffc/CWT_labelled_windows",
+                "F:/AlSi10Mg single layer ffc/CWT_labelled_windows",
                 "./data/cwt",
-                "./cwt_data", 
+                "./cwt_data",
                 "../data/cwt"
             ]
             for pattern in common_patterns:

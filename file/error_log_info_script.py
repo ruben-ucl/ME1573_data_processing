@@ -12,7 +12,7 @@ import csv
 import matplotlib.pyplot as plt
 
 # === USER: Set your log file path here ===
-log_path = 'E:/sim_segmented_300W_800mm_s/log.ruun'  # <-- Change this to your log file path
+log_path = 'F:/sim_segmented_300W_800mm_s/log.ruun'  # <-- Change this to your log file path
 
 # Extract directory and filename
 directory = os.path.dirname(log_path)

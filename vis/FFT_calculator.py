@@ -15,7 +15,7 @@ __version__ = '1.0'
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
 # data_path = get_paths()['hdf5']
-data_path = r'E:/sim_segmented_300W_800mm_s/SLM_Al10SiMg_1st_layer_4mm_350W_800mms'
+data_path = r'F:/sim_segmented_300W_800mm_s/SLM_Al10SiMg_1st_layer_4mm_350W_800mms'
 # group = 'AMPM/'
 group = 'meas/'
 # time_label = 'Time'

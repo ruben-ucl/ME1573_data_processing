@@ -101,7 +101,7 @@ def save_measurements_to_hdf5(time_data, measurement_data, output_path, measurem
     return output_path
 
 def main():
-    image_folder = r"E:\sim_segmented_350W\Weka_segmented_tiffs"
+    image_folder = r"F:\sim_segmented_350W\Weka_segmented_tiffs"
     substrate_height = 89
     resolution = 0.858
     framerate = 100000

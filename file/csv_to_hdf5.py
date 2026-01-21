@@ -4,9 +4,9 @@ import pandas as pd
 
 def main():
     # Inputs
-    input_path = 'E:/sim_segmented_300W_800mm_s/simulation_data.csv'    # Old .csv file to read
+    input_path = r'F:/sim_segmented_300W_800mm_s/SLM_Al10SiMg_1st_layer_4mm_350W_800mms/integrated_variables_over_time.csv'    # Old .csv file to read
     time_col = 'Time'                                           # Collumn name for time data
-    measurment_col = 'EnergyAbsorbed_W'                         #  Column name for measurement data
+    measurment_col = 'sum(Q) (stats)'                         #  Column name for measurement data
     output_path = 'absorption.hdf5'                             # New .hdf5 file to write
     
     csv_to_hdf5(input_path, output_path, time_col, measurment_col)
@@ -51,10 +51,10 @@ def save_measurements_to_hdf5(time_data, measurement_data, output_path, measurem
         time_series_group.attrs["measurement_type"] = measurement_name
         
         # Add some basic statistics as attributes
-        time_series_group.attrs["measurement_mean"] = float(np.mean(measurement_array))
-        time_series_group.attrs["measurement_std"] = float(np.std(measurement_array))
-        time_series_group.attrs["measurement_min"] = float(np.min(measurement_array))
-        time_series_group.attrs["measurement_max"] = float(np.max(measurement_array))
+        # time_series_group.attrs["measurement_mean"] = float(np.mean(measurement_array))
+        # time_series_group.attrs["measurement_std"] = float(np.std(measurement_array))
+        # time_series_group.attrs["measurement_min"] = float(np.min(measurement_array))
+        # time_series_group.attrs["measurement_max"] = float(np.max(measurement_array))
     
     return output_path
 

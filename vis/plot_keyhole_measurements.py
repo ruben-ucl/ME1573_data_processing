@@ -10,7 +10,7 @@ from tools import get_paths, get_logbook, get_logbook_data
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-mode = 'save'
+mode = 'preview'
 
 # Read data folder path from .txt file
 filepath = get_paths()['hdf5']
