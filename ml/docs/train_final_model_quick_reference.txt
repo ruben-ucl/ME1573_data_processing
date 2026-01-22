@@ -1,0 +1,13 @@
+(1) Generate labelled CWTs with wavelet parameters:
+
+	python ml/dataset_labeller.py
+
+
+(2) Define dataset (adjust to fit labelled data):
+
+	python ml/prepare_training_dataset.py --dataset-name "AlSi10Mg_CW_L1_powder_porosity_with-test_auto-split_mexh_PD2" --label-file "F:\AlSi10Mg single layer ffc\CWT_labelled_windows\1.0ms-window_0.2ms_offset_data_labels.csv" --image-dir "F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\mexh\1.0_ms\1000-50000_Hz_256_steps\grey\per_window" --material AlSi10Mg --layer 1 --laser-mode cw --base-type powder --test-holdout 0.2 --test-selection-strategy preserve_diversity --signal-threshold 0.0
+
+
+(3) Run final model trainer on new dataset:
+
+	python ml/final_model_trainer.py --version 115 --classifier_type cwt_image --dataset_variant AlSi10Mg_CW_L1_powder_porosity_with-test_auto-split_mexh_PD2 
