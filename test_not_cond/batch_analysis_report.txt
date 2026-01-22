@@ -1,0 +1,600 @@
+================================================================================
+BATCH CROSS-CORRELATION ANALYSIS REPORT
+================================================================================
+
+FILES ANALYZED: 100
+--------------------------------------------------------------------------------
+1. 0100_01
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+2. 0100_02
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+3. 0100_03
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+4. 0100_05
+   PD1: 1,333 samples
+   PD2: 1,333 samples
+   KH depth: 145 samples
+   KH area: 145 samples
+5. 0100_06
+   PD1: 1,333 samples
+   PD2: 1,333 samples
+   KH depth: 145 samples
+   KH area: 145 samples
+6. 0101_01
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+7. 0101_02
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+8. 0101_03
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+9. 0101_04
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+10. 0101_05
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+11. 0101_06
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+12. 0102_02
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+13. 0102_03
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+14. 0102_04
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+15. 0102_05
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+16. 0102_06
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+17. 0103_01
+   PD1: 1,900 samples
+   PD2: 1,900 samples
+   KH depth: 372 samples
+   KH area: 372 samples
+18. 0103_02
+   PD1: 1,900 samples
+   PD2: 1,900 samples
+   KH depth: 372 samples
+   KH area: 372 samples
+19. 0103_03
+   PD1: 1,900 samples
+   PD2: 1,900 samples
+   KH depth: 372 samples
+   KH area: 372 samples
+20. 0103_04
+   PD1: 1,900 samples
+   PD2: 1,900 samples
+   KH depth: 372 samples
+   KH area: 372 samples
+21. 0103_05
+   PD1: 1,900 samples
+   PD2: 1,900 samples
+   KH depth: 372 samples
+   KH area: 372 samples
+22. 0103_06
+   PD1: 1,900 samples
+   PD2: 1,900 samples
+   KH depth: 372 samples
+   KH area: 372 samples
+23. 0104_01
+   PD1: 1,450 samples
+   PD2: 1,450 samples
+   KH depth: 192 samples
+   KH area: 192 samples
+24. 0104_02
+   PD1: 1,450 samples
+   PD2: 1,450 samples
+   KH depth: 192 samples
+   KH area: 192 samples
+25. 0104_03
+   PD1: 1,450 samples
+   PD2: 1,450 samples
+   KH depth: 192 samples
+   KH area: 192 samples
+26. 0104_04
+   PD1: 1,450 samples
+   PD2: 1,450 samples
+   KH depth: 192 samples
+   KH area: 192 samples
+27. 0104_05
+   PD1: 1,450 samples
+   PD2: 1,450 samples
+   KH depth: 192 samples
+   KH area: 192 samples
+28. 0104_06
+   PD1: 1,450 samples
+   PD2: 1,450 samples
+   KH depth: 192 samples
+   KH area: 192 samples
+29. 0105_01
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+30. 0105_02
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+31. 0105_03
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+32. 0105_04
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+33. 0105_05
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+34. 0105_06
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+35. 0106_01
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+36. 0106_02
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+37. 0106_03
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+38. 0106_04
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+39. 0106_05
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+40. 0106_06
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+41. 0107_03
+   PD1: 1,333 samples
+   PD2: 1,333 samples
+   KH depth: 145 samples
+   KH area: 145 samples
+42. 0107_04
+   PD1: 1,444 samples
+   PD2: 1,444 samples
+   KH depth: 190 samples
+   KH area: 190 samples
+43. 0107_05
+   PD1: 1,666 samples
+   PD2: 1,666 samples
+   KH depth: 279 samples
+   KH area: 279 samples
+44. 0323_01
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+45. 0323_02
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+46. 0323_03
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+47. 0323_04
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+48. 0323_05
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+49. 0324_01
+   PD1: 1,333 samples
+   PD2: 1,333 samples
+   KH depth: 145 samples
+   KH area: 145 samples
+50. 0324_02
+   PD1: 1,333 samples
+   PD2: 1,333 samples
+   KH depth: 145 samples
+   KH area: 145 samples
+51. 0324_03
+   PD1: 1,333 samples
+   PD2: 1,333 samples
+   KH depth: 145 samples
+   KH area: 145 samples
+52. 0324_04
+   PD1: 1,333 samples
+   PD2: 1,333 samples
+   KH depth: 145 samples
+   KH area: 145 samples
+53. 0324_05
+   PD1: 1,250 samples
+   PD2: 1,250 samples
+   KH depth: 112 samples
+   KH area: 112 samples
+54. 0324_06
+   PD1: 1,250 samples
+   PD2: 1,250 samples
+   KH depth: 112 samples
+   KH area: 112 samples
+55. 0325_01
+   PD1: 1,250 samples
+   PD2: 1,250 samples
+   KH depth: 112 samples
+   KH area: 112 samples
+56. 0325_02
+   PD1: 1,250 samples
+   PD2: 1,250 samples
+   KH depth: 112 samples
+   KH area: 112 samples
+57. 0325_03
+   PD1: 1,250 samples
+   PD2: 1,250 samples
+   KH depth: 112 samples
+   KH area: 112 samples
+58. 0325_04
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+59. 0325_05
+   PD1: 1,500 samples
+   PD2: 1,500 samples
+   KH depth: 212 samples
+   KH area: 212 samples
+60. 0325_06
+   PD1: 1,333 samples
+   PD2: 1,333 samples
+   KH depth: 145 samples
+   KH area: 145 samples
+61. 0514_01
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH depth: 412 samples
+   KH area: 412 samples
+62. 0514_02
+   PD1: 1,666 samples
+   PD2: 1,666 samples
+   KH depth: 279 samples
+   KH area: 279 samples
+63. 0514_03
+   PD1: 1,666 samples
+   PD2: 1,666 samples
+   KH depth: 279 samples
+   KH area: 279 samples
+64. 0514_04
+   PD1: 1,400 samples
+   PD2: 1,400 samples
+   KH depth: 172 samples
+   KH area: 172 samples
+65. 0514_05
+   PD1: 1,400 samples
+   PD2: 1,400 samples
+   KH depth: 172 samples
+   KH area: 172 samples
+66. 0514_06
+   PD1: 1,400 samples
+   PD2: 1,400 samples
+   KH depth: 172 samples
+   KH area: 172 samples
+67. 0515_01
+   PD1: 1,400 samples
+   PD2: 1,400 samples
+   KH depth: 172 samples
+   KH area: 172 samples
+68. 0515_02
+   PD1: 1,400 samples
+   PD2: 1,400 samples
+   KH depth: 172 samples
+   KH area: 172 samples
+69. 0515_03
+   PD1: 1,285 samples
+   PD2: 1,285 samples
+   KH depth: 126 samples
+   KH area: 126 samples
+70. 0515_04
+   PD1: 1,285 samples
+   PD2: 1,285 samples
+   KH depth: 126 samples
+   KH area: 126 samples
+71. 0515_05
+   PD1: 1,285 samples
+   PD2: 1,285 samples
+   KH depth: 126 samples
+   KH area: 126 samples
+72. 0515_06
+   PD1: 1,200 samples
+   PD2: 1,200 samples
+   KH depth: 92 samples
+   KH area: 92 samples
+73. 0516_01
+   PD1: 1,222 samples
+   PD2: 1,222 samples
+   KH depth: 101 samples
+   KH area: 101 samples
+74. 0516_02
+   PD1: 1,222 samples
+   PD2: 1,222 samples
+   KH depth: 101 samples
+   KH area: 101 samples
+75. 0516_03
+   PD1: 1,200 samples
+   PD2: 1,200 samples
+   KH depth: 101 samples
+   KH area: 101 samples
+76. 0516_04
+   PD1: 1,666 samples
+   PD2: 1,666 samples
+   KH depth: 279 samples
+   KH area: 279 samples
+77. 0516_06
+   PD1: 1,250 samples
+   PD2: 1,250 samples
+   KH depth: 112 samples
+   KH area: 112 samples
+78. 0555_01
+   PD1: 1,333 samples
+   PD2: 1,333 samples
+   KH depth: 145 samples
+   KH area: 145 samples
+79. 0555_02
+   PD1: 1,250 samples
+   PD2: 1,250 samples
+   KH depth: 112 samples
+   KH area: 112 samples
+80. 0555_04
+   PD1: 1,222 samples
+   PD2: 1,222 samples
+   KH depth: 101 samples
+   KH area: 101 samples
+81. 0555_05
+   PD1: 1,400 samples
+   PD2: 1,400 samples
+   KH depth: 172 samples
+   KH area: 172 samples
+82. 0555_06
+   PD1: 1,400 samples
+   PD2: 1,400 samples
+   KH depth: 172 samples
+   KH area: 172 samples
+83. 0556_01
+   PD1: 1,300 samples
+   PD2: 1,300 samples
+   KH depth: 132 samples
+   KH area: 132 samples
+84. 0556_02
+   PD1: 1,300 samples
+   PD2: 1,300 samples
+   KH depth: 132 samples
+   KH area: 132 samples
+85. 0556_03
+   PD1: 1,300 samples
+   PD2: 1,300 samples
+   KH depth: 132 samples
+   KH area: 132 samples
+86. 0556_04
+   PD1: 1,300 samples
+   PD2: 1,300 samples
+   KH depth: 132 samples
+   KH area: 132 samples
+87. 0556_05
+   PD1: 1,225 samples
+   PD2: 1,225 samples
+   KH depth: 102 samples
+   KH area: 102 samples
+88. 0556_06
+   PD1: 1,225 samples
+   PD2: 1,225 samples
+   KH depth: 102 samples
+   KH area: 102 samples
+89. 0557_01
+   PD1: 1,466 samples
+   PD2: 1,466 samples
+   KH depth: 199 samples
+   KH area: 199 samples
+90. 0557_02
+   PD1: 1,311 samples
+   PD2: 1,311 samples
+   KH depth: 137 samples
+   KH area: 137 samples
+91. 0557_03
+   PD1: 1,466 samples
+   PD2: 1,466 samples
+   KH depth: 199 samples
+   KH area: 199 samples
+92. 0557_04
+   PD1: 1,311 samples
+   PD2: 1,311 samples
+   KH depth: 137 samples
+   KH area: 137 samples
+93. 0557_05
+   PD1: 1,466 samples
+   PD2: 1,466 samples
+   KH depth: 199 samples
+   KH area: 199 samples
+94. 0557_06
+   PD1: 1,466 samples
+   PD2: 1,466 samples
+   KH depth: 199 samples
+   KH area: 199 samples
+95. 0558_01
+   PD1: 1,311 samples
+   PD2: 1,311 samples
+   KH depth: 137 samples
+   KH area: 137 samples
+96. 0558_02
+   PD1: 1,466 samples
+   PD2: 1,466 samples
+   KH depth: 199 samples
+   KH area: 199 samples
+97. 0558_03
+   PD1: 1,934 samples
+   PD2: 1,934 samples
+   KH depth: 386 samples
+   KH area: 386 samples
+98. 0558_04
+   PD1: 1,934 samples
+   PD2: 1,934 samples
+   KH depth: 386 samples
+   KH area: 386 samples
+99. 0558_05
+   PD1: 1,934 samples
+   PD2: 1,934 samples
+   KH depth: 386 samples
+   KH area: 386 samples
+100. 0558_06
+   PD1: 1,233 samples
+   PD2: 1,233 samples
+   KH depth: 105 samples
+   KH area: 105 samples
+
+CONCATENATED DATA SUMMARY
+--------------------------------------------------------------------------------
+PD1: 153,124 total samples (100 files)
+PD2: 153,124 total samples (100 files)
+KH depth: 22,466 total samples (100 files)
+KH area: 22,466 total samples (100 files)
+
+SIGNAL STATISTICS
+--------------------------------------------------------------------------------
+
+PD1:
+  mean: 0.108301
+  median: 0.019023
+  std: 0.220639
+  var: 0.048681
+  min: 0.000000
+  max: 1.000000
+  range: 1.000000
+  skewness: 3.085555
+  kurtosis: 8.436317
+  rms: 0.245786
+  energy: 9250.305042
+  zero_crossings: 0.000000
+
+PD2:
+  mean: 0.058278
+  median: 0.044613
+  std: 0.035042
+  var: 0.001228
+  min: 0.000000
+  max: 1.000000
+  range: 1.000000
+  skewness: 5.676910
+  kurtosis: 57.154270
+  rms: 0.068002
+  energy: 708.092462
+  zero_crossings: 0.000000
+
+KH depth:
+  mean: 0.274485
+  median: 0.250509
+  std: 0.203543
+  var: 0.041430
+  min: 0.000000
+  max: 1.000000
+  range: 1.000000
+  skewness: 0.650747
+  kurtosis: -0.063982
+  rms: 0.341719
+  energy: 2623.401889
+  zero_crossings: 0.000000
+
+KH area:
+  mean: 0.118490
+  median: 0.076992
+  std: 0.120232
+  var: 0.014456
+  min: 0.000000
+  max: 1.000000
+  range: 1.000000
+  skewness: 1.721093
+  kurtosis: 4.116887
+  rms: 0.168806
+  energy: 640.180747
+  zero_crossings: 0.000000
+
+CROSS-CORRELATIONS
+--------------------------------------------------------------------------------
+
+PD1 vs PD2:
+  Pearson r:  0.671548 (p=0.000000e+00)
+  Spearman ρ: 0.828894 (p=0.000000e+00)
+
+PD1 vs KH depth:
+  Pearson r:  0.003712 (p=9.468796e-01)
+  Spearman ρ: 0.027944 (p=6.158778e-01)
+
+PD1 vs KH area:
+  Pearson r:  -0.023975 (p=6.280217e-01)
+  Spearman ρ: 0.027565 (p=5.774665e-01)
+
+PD2 vs KH depth:
+  Pearson r:  0.016192 (p=7.713010e-01)
+  Spearman ρ: 0.045112 (p=4.178428e-01)
+
+PD2 vs KH area:
+  Pearson r:  -0.014593 (p=7.629267e-01)
+  Spearman ρ: 0.037078 (p=4.432963e-01)
+
+KH depth vs KH area:
+  Pearson r:  0.771165 (p=2.980891e-65)
+  Spearman ρ: 0.839168 (p=2.328958e-87)
+

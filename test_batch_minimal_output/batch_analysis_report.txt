@@ -1,0 +1,110 @@
+================================================================================
+BATCH CROSS-CORRELATION ANALYSIS REPORT
+================================================================================
+
+FILES ANALYZED: 2
+--------------------------------------------------------------------------------
+1. 0100_01
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH_depth: 412 samples
+   KH_area: 412 samples
+2. 0100_02
+   PD1: 2,000 samples
+   PD2: 2,000 samples
+   KH_depth: 412 samples
+   KH_area: 412 samples
+
+CONCATENATED DATA SUMMARY
+--------------------------------------------------------------------------------
+PD1: 4,000 total samples (2 files)
+PD2: 4,000 total samples (2 files)
+KH_depth: 824 total samples (2 files)
+KH_area: 824 total samples (2 files)
+
+SIGNAL STATISTICS
+--------------------------------------------------------------------------------
+
+PD1:
+  mean: 0.144174
+  median: 0.106829
+  std: 0.140664
+  var: 0.019786
+  min: 0.000000
+  max: 1.000000
+  range: 1.000000
+  skewness: 0.392739
+  kurtosis: -1.145368
+  rms: 0.201426
+  energy: 162.289983
+  zero_crossings: 0.000000
+
+PD2:
+  mean: 0.024753
+  median: 0.016908
+  std: 0.026027
+  var: 0.000677
+  min: 0.000000
+  max: 1.000000
+  range: 1.000000
+  skewness: 13.353555
+  kurtosis: 490.671613
+  rms: 0.035918
+  energy: 5.160468
+  zero_crossings: 0.000000
+
+KH_depth:
+  mean: 0.580324
+  median: 0.582418
+  std: 0.152097
+  var: 0.023134
+  min: 0.000000
+  max: 1.000000
+  range: 1.000000
+  skewness: -0.570805
+  kurtosis: 2.258439
+  rms: 0.599924
+  energy: 296.565270
+  zero_crossings: 0.000000
+
+KH_area:
+  mean: 0.228780
+  median: 0.171529
+  std: 0.171789
+  var: 0.029512
+  min: 0.000000
+  max: 1.000000
+  range: 1.000000
+  skewness: 1.792335
+  kurtosis: 3.651596
+  rms: 0.286097
+  energy: 67.445796
+  zero_crossings: 0.000000
+
+CROSS-CORRELATIONS
+--------------------------------------------------------------------------------
+
+PD1 vs PD2:
+  Pearson r:  0.845965 (p=4.890758e-29)
+  Spearman ρ: 0.973265 (p=1.216379e-65)
+
+PD1 vs KH_depth:
+  Pearson r:  -0.394590 (p=9.080946e-03)
+  Spearman ρ: -0.424004 (p=4.754066e-03)
+
+PD1 vs KH_area:
+  Pearson r:  -0.310006 (p=4.382294e-02)
+  Spearman ρ: -0.328695 (p=3.200844e-02)
+
+PD2 vs KH_depth:
+  Pearson r:  -0.189799 (p=6.029278e-02)
+  Spearman ρ: -0.446333 (p=3.780859e-06)
+
+PD2 vs KH_area:
+  Pearson r:  -0.157933 (p=1.507888e-01)
+  Spearman ρ: -0.339268 (p=1.570575e-03)
+
+KH_depth vs KH_area:
+  Pearson r:  0.439341 (p=2.831318e-05)
+  Spearman ρ: 0.578584 (p=7.827983e-09)
+

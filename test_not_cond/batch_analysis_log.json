@@ -1,0 +1,1580 @@
+{
+  "files": [
+    {
+      "trackid": "0100_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0100_01.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0100_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0100_02.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0100_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0100_03.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0100_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0100_05.hdf5",
+      "samples": {
+        "PD1": 1333,
+        "PD2": 1333,
+        "KH depth": 145,
+        "KH area": 145
+      }
+    },
+    {
+      "trackid": "0100_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0100_06.hdf5",
+      "samples": {
+        "PD1": 1333,
+        "PD2": 1333,
+        "KH depth": 145,
+        "KH area": 145
+      }
+    },
+    {
+      "trackid": "0101_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0101_01.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0101_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0101_02.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0101_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0101_03.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0101_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0101_04.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0101_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0101_05.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0101_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0101_06.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0102_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0102_02.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0102_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0102_03.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0102_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0102_04.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0102_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0102_05.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0102_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0102_06.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0103_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0103_01.hdf5",
+      "samples": {
+        "PD1": 1900,
+        "PD2": 1900,
+        "KH depth": 372,
+        "KH area": 372
+      }
+    },
+    {
+      "trackid": "0103_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0103_02.hdf5",
+      "samples": {
+        "PD1": 1900,
+        "PD2": 1900,
+        "KH depth": 372,
+        "KH area": 372
+      }
+    },
+    {
+      "trackid": "0103_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0103_03.hdf5",
+      "samples": {
+        "PD1": 1900,
+        "PD2": 1900,
+        "KH depth": 372,
+        "KH area": 372
+      }
+    },
+    {
+      "trackid": "0103_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0103_04.hdf5",
+      "samples": {
+        "PD1": 1900,
+        "PD2": 1900,
+        "KH depth": 372,
+        "KH area": 372
+      }
+    },
+    {
+      "trackid": "0103_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0103_05.hdf5",
+      "samples": {
+        "PD1": 1900,
+        "PD2": 1900,
+        "KH depth": 372,
+        "KH area": 372
+      }
+    },
+    {
+      "trackid": "0103_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0103_06.hdf5",
+      "samples": {
+        "PD1": 1900,
+        "PD2": 1900,
+        "KH depth": 372,
+        "KH area": 372
+      }
+    },
+    {
+      "trackid": "0104_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0104_01.hdf5",
+      "samples": {
+        "PD1": 1450,
+        "PD2": 1450,
+        "KH depth": 192,
+        "KH area": 192
+      }
+    },
+    {
+      "trackid": "0104_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0104_02.hdf5",
+      "samples": {
+        "PD1": 1450,
+        "PD2": 1450,
+        "KH depth": 192,
+        "KH area": 192
+      }
+    },
+    {
+      "trackid": "0104_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0104_03.hdf5",
+      "samples": {
+        "PD1": 1450,
+        "PD2": 1450,
+        "KH depth": 192,
+        "KH area": 192
+      }
+    },
+    {
+      "trackid": "0104_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0104_04.hdf5",
+      "samples": {
+        "PD1": 1450,
+        "PD2": 1450,
+        "KH depth": 192,
+        "KH area": 192
+      }
+    },
+    {
+      "trackid": "0104_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0104_05.hdf5",
+      "samples": {
+        "PD1": 1450,
+        "PD2": 1450,
+        "KH depth": 192,
+        "KH area": 192
+      }
+    },
+    {
+      "trackid": "0104_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0104_06.hdf5",
+      "samples": {
+        "PD1": 1450,
+        "PD2": 1450,
+        "KH depth": 192,
+        "KH area": 192
+      }
+    },
+    {
+      "trackid": "0105_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0105_01.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0105_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0105_02.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0105_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0105_03.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0105_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0105_04.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0105_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0105_05.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0105_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0105_06.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0106_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0106_01.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0106_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0106_02.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0106_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0106_03.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0106_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0106_04.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0106_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0106_05.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0106_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0106_06.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0107_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0107_03.hdf5",
+      "samples": {
+        "PD1": 1333,
+        "PD2": 1333,
+        "KH depth": 145,
+        "KH area": 145
+      }
+    },
+    {
+      "trackid": "0107_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0107_04.hdf5",
+      "samples": {
+        "PD1": 1444,
+        "PD2": 1444,
+        "KH depth": 190,
+        "KH area": 190
+      }
+    },
+    {
+      "trackid": "0107_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0107_05.hdf5",
+      "samples": {
+        "PD1": 1666,
+        "PD2": 1666,
+        "KH depth": 279,
+        "KH area": 279
+      }
+    },
+    {
+      "trackid": "0323_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0323_01.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0323_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0323_02.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0323_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0323_03.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0323_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0323_04.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0323_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0323_05.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0324_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0324_01.hdf5",
+      "samples": {
+        "PD1": 1333,
+        "PD2": 1333,
+        "KH depth": 145,
+        "KH area": 145
+      }
+    },
+    {
+      "trackid": "0324_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0324_02.hdf5",
+      "samples": {
+        "PD1": 1333,
+        "PD2": 1333,
+        "KH depth": 145,
+        "KH area": 145
+      }
+    },
+    {
+      "trackid": "0324_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0324_03.hdf5",
+      "samples": {
+        "PD1": 1333,
+        "PD2": 1333,
+        "KH depth": 145,
+        "KH area": 145
+      }
+    },
+    {
+      "trackid": "0324_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0324_04.hdf5",
+      "samples": {
+        "PD1": 1333,
+        "PD2": 1333,
+        "KH depth": 145,
+        "KH area": 145
+      }
+    },
+    {
+      "trackid": "0324_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0324_05.hdf5",
+      "samples": {
+        "PD1": 1250,
+        "PD2": 1250,
+        "KH depth": 112,
+        "KH area": 112
+      }
+    },
+    {
+      "trackid": "0324_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0324_06.hdf5",
+      "samples": {
+        "PD1": 1250,
+        "PD2": 1250,
+        "KH depth": 112,
+        "KH area": 112
+      }
+    },
+    {
+      "trackid": "0325_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0325_01.hdf5",
+      "samples": {
+        "PD1": 1250,
+        "PD2": 1250,
+        "KH depth": 112,
+        "KH area": 112
+      }
+    },
+    {
+      "trackid": "0325_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0325_02.hdf5",
+      "samples": {
+        "PD1": 1250,
+        "PD2": 1250,
+        "KH depth": 112,
+        "KH area": 112
+      }
+    },
+    {
+      "trackid": "0325_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0325_03.hdf5",
+      "samples": {
+        "PD1": 1250,
+        "PD2": 1250,
+        "KH depth": 112,
+        "KH area": 112
+      }
+    },
+    {
+      "trackid": "0325_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0325_04.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0325_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0325_05.hdf5",
+      "samples": {
+        "PD1": 1500,
+        "PD2": 1500,
+        "KH depth": 212,
+        "KH area": 212
+      }
+    },
+    {
+      "trackid": "0325_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0325_06.hdf5",
+      "samples": {
+        "PD1": 1333,
+        "PD2": 1333,
+        "KH depth": 145,
+        "KH area": 145
+      }
+    },
+    {
+      "trackid": "0514_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0514_01.hdf5",
+      "samples": {
+        "PD1": 2000,
+        "PD2": 2000,
+        "KH depth": 412,
+        "KH area": 412
+      }
+    },
+    {
+      "trackid": "0514_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0514_02.hdf5",
+      "samples": {
+        "PD1": 1666,
+        "PD2": 1666,
+        "KH depth": 279,
+        "KH area": 279
+      }
+    },
+    {
+      "trackid": "0514_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0514_03.hdf5",
+      "samples": {
+        "PD1": 1666,
+        "PD2": 1666,
+        "KH depth": 279,
+        "KH area": 279
+      }
+    },
+    {
+      "trackid": "0514_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0514_04.hdf5",
+      "samples": {
+        "PD1": 1400,
+        "PD2": 1400,
+        "KH depth": 172,
+        "KH area": 172
+      }
+    },
+    {
+      "trackid": "0514_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0514_05.hdf5",
+      "samples": {
+        "PD1": 1400,
+        "PD2": 1400,
+        "KH depth": 172,
+        "KH area": 172
+      }
+    },
+    {
+      "trackid": "0514_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0514_06.hdf5",
+      "samples": {
+        "PD1": 1400,
+        "PD2": 1400,
+        "KH depth": 172,
+        "KH area": 172
+      }
+    },
+    {
+      "trackid": "0515_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0515_01.hdf5",
+      "samples": {
+        "PD1": 1400,
+        "PD2": 1400,
+        "KH depth": 172,
+        "KH area": 172
+      }
+    },
+    {
+      "trackid": "0515_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0515_02.hdf5",
+      "samples": {
+        "PD1": 1400,
+        "PD2": 1400,
+        "KH depth": 172,
+        "KH area": 172
+      }
+    },
+    {
+      "trackid": "0515_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0515_03.hdf5",
+      "samples": {
+        "PD1": 1285,
+        "PD2": 1285,
+        "KH depth": 126,
+        "KH area": 126
+      }
+    },
+    {
+      "trackid": "0515_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0515_04.hdf5",
+      "samples": {
+        "PD1": 1285,
+        "PD2": 1285,
+        "KH depth": 126,
+        "KH area": 126
+      }
+    },
+    {
+      "trackid": "0515_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0515_05.hdf5",
+      "samples": {
+        "PD1": 1285,
+        "PD2": 1285,
+        "KH depth": 126,
+        "KH area": 126
+      }
+    },
+    {
+      "trackid": "0515_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0515_06.hdf5",
+      "samples": {
+        "PD1": 1200,
+        "PD2": 1200,
+        "KH depth": 92,
+        "KH area": 92
+      }
+    },
+    {
+      "trackid": "0516_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0516_01.hdf5",
+      "samples": {
+        "PD1": 1222,
+        "PD2": 1222,
+        "KH depth": 101,
+        "KH area": 101
+      }
+    },
+    {
+      "trackid": "0516_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0516_02.hdf5",
+      "samples": {
+        "PD1": 1222,
+        "PD2": 1222,
+        "KH depth": 101,
+        "KH area": 101
+      }
+    },
+    {
+      "trackid": "0516_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0516_03.hdf5",
+      "samples": {
+        "PD1": 1200,
+        "PD2": 1200,
+        "KH depth": 101,
+        "KH area": 101
+      }
+    },
+    {
+      "trackid": "0516_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0516_04.hdf5",
+      "samples": {
+        "PD1": 1666,
+        "PD2": 1666,
+        "KH depth": 279,
+        "KH area": 279
+      }
+    },
+    {
+      "trackid": "0516_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0516_06.hdf5",
+      "samples": {
+        "PD1": 1250,
+        "PD2": 1250,
+        "KH depth": 112,
+        "KH area": 112
+      }
+    },
+    {
+      "trackid": "0555_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0555_01.hdf5",
+      "samples": {
+        "PD1": 1333,
+        "PD2": 1333,
+        "KH depth": 145,
+        "KH area": 145
+      }
+    },
+    {
+      "trackid": "0555_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0555_02.hdf5",
+      "samples": {
+        "PD1": 1250,
+        "PD2": 1250,
+        "KH depth": 112,
+        "KH area": 112
+      }
+    },
+    {
+      "trackid": "0555_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0555_04.hdf5",
+      "samples": {
+        "PD1": 1222,
+        "PD2": 1222,
+        "KH depth": 101,
+        "KH area": 101
+      }
+    },
+    {
+      "trackid": "0555_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0555_05.hdf5",
+      "samples": {
+        "PD1": 1400,
+        "PD2": 1400,
+        "KH depth": 172,
+        "KH area": 172
+      }
+    },
+    {
+      "trackid": "0555_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0555_06.hdf5",
+      "samples": {
+        "PD1": 1400,
+        "PD2": 1400,
+        "KH depth": 172,
+        "KH area": 172
+      }
+    },
+    {
+      "trackid": "0556_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0556_01.hdf5",
+      "samples": {
+        "PD1": 1300,
+        "PD2": 1300,
+        "KH depth": 132,
+        "KH area": 132
+      }
+    },
+    {
+      "trackid": "0556_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0556_02.hdf5",
+      "samples": {
+        "PD1": 1300,
+        "PD2": 1300,
+        "KH depth": 132,
+        "KH area": 132
+      }
+    },
+    {
+      "trackid": "0556_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0556_03.hdf5",
+      "samples": {
+        "PD1": 1300,
+        "PD2": 1300,
+        "KH depth": 132,
+        "KH area": 132
+      }
+    },
+    {
+      "trackid": "0556_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0556_04.hdf5",
+      "samples": {
+        "PD1": 1300,
+        "PD2": 1300,
+        "KH depth": 132,
+        "KH area": 132
+      }
+    },
+    {
+      "trackid": "0556_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0556_05.hdf5",
+      "samples": {
+        "PD1": 1225,
+        "PD2": 1225,
+        "KH depth": 102,
+        "KH area": 102
+      }
+    },
+    {
+      "trackid": "0556_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0556_06.hdf5",
+      "samples": {
+        "PD1": 1225,
+        "PD2": 1225,
+        "KH depth": 102,
+        "KH area": 102
+      }
+    },
+    {
+      "trackid": "0557_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0557_01.hdf5",
+      "samples": {
+        "PD1": 1466,
+        "PD2": 1466,
+        "KH depth": 199,
+        "KH area": 199
+      }
+    },
+    {
+      "trackid": "0557_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0557_02.hdf5",
+      "samples": {
+        "PD1": 1311,
+        "PD2": 1311,
+        "KH depth": 137,
+        "KH area": 137
+      }
+    },
+    {
+      "trackid": "0557_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0557_03.hdf5",
+      "samples": {
+        "PD1": 1466,
+        "PD2": 1466,
+        "KH depth": 199,
+        "KH area": 199
+      }
+    },
+    {
+      "trackid": "0557_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0557_04.hdf5",
+      "samples": {
+        "PD1": 1311,
+        "PD2": 1311,
+        "KH depth": 137,
+        "KH area": 137
+      }
+    },
+    {
+      "trackid": "0557_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0557_05.hdf5",
+      "samples": {
+        "PD1": 1466,
+        "PD2": 1466,
+        "KH depth": 199,
+        "KH area": 199
+      }
+    },
+    {
+      "trackid": "0557_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0557_06.hdf5",
+      "samples": {
+        "PD1": 1466,
+        "PD2": 1466,
+        "KH depth": 199,
+        "KH area": 199
+      }
+    },
+    {
+      "trackid": "0558_01",
+      "path": "F:\\AlSi10Mg single layer ffc\\0558_01.hdf5",
+      "samples": {
+        "PD1": 1311,
+        "PD2": 1311,
+        "KH depth": 137,
+        "KH area": 137
+      }
+    },
+    {
+      "trackid": "0558_02",
+      "path": "F:\\AlSi10Mg single layer ffc\\0558_02.hdf5",
+      "samples": {
+        "PD1": 1466,
+        "PD2": 1466,
+        "KH depth": 199,
+        "KH area": 199
+      }
+    },
+    {
+      "trackid": "0558_03",
+      "path": "F:\\AlSi10Mg single layer ffc\\0558_03.hdf5",
+      "samples": {
+        "PD1": 1934,
+        "PD2": 1934,
+        "KH depth": 386,
+        "KH area": 386
+      }
+    },
+    {
+      "trackid": "0558_04",
+      "path": "F:\\AlSi10Mg single layer ffc\\0558_04.hdf5",
+      "samples": {
+        "PD1": 1934,
+        "PD2": 1934,
+        "KH depth": 386,
+        "KH area": 386
+      }
+    },
+    {
+      "trackid": "0558_05",
+      "path": "F:\\AlSi10Mg single layer ffc\\0558_05.hdf5",
+      "samples": {
+        "PD1": 1934,
+        "PD2": 1934,
+        "KH depth": 386,
+        "KH area": 386
+      }
+    },
+    {
+      "trackid": "0558_06",
+      "path": "F:\\AlSi10Mg single layer ffc\\0558_06.hdf5",
+      "samples": {
+        "PD1": 1233,
+        "PD2": 1233,
+        "KH depth": 105,
+        "KH area": 105
+      }
+    }
+  ],
+  "concatenated_data": {
+    "PD1": {
+      "total_samples": 153124,
+      "num_files": 100,
+      "boundaries": [
+        0,
+        2000,
+        4000,
+        5500,
+        6833,
+        8166,
+        10166,
+        12166,
+        14166,
+        16166,
+        18166,
+        20166,
+        21666,
+        23166,
+        24666,
+        26166,
+        27666,
+        29566,
+        31466,
+        33366,
+        35266,
+        37166,
+        39066,
+        40516,
+        41966,
+        43416,
+        44866,
+        46316,
+        47766,
+        49766,
+        51766,
+        53766,
+        55766,
+        57766,
+        59766,
+        61266,
+        62766,
+        64266,
+        65766,
+        67266,
+        68766,
+        70099,
+        71543,
+        73209,
+        74709,
+        76209,
+        77709,
+        79209,
+        80709,
+        82042,
+        83375,
+        84708,
+        86041,
+        87291,
+        88541,
+        89791,
+        91041,
+        92291,
+        93791,
+        95291,
+        96624,
+        98624,
+        100290,
+        101956,
+        103356,
+        104756,
+        106156,
+        107556,
+        108956,
+        110241,
+        111526,
+        112811,
+        114011,
+        115233,
+        116455,
+        117655,
+        119321,
+        120571,
+        121904,
+        123154,
+        124376,
+        125776,
+        127176,
+        128476,
+        129776,
+        131076,
+        132376,
+        133601,
+        134826,
+        136292,
+        137603,
+        139069,
+        140380,
+        141846,
+        143312,
+        144623,
+        146089,
+        148023,
+        149957,
+        151891,
+        153124
+      ]
+    },
+    "PD2": {
+      "total_samples": 153124,
+      "num_files": 100,
+      "boundaries": [
+        0,
+        2000,
+        4000,
+        5500,
+        6833,
+        8166,
+        10166,
+        12166,
+        14166,
+        16166,
+        18166,
+        20166,
+        21666,
+        23166,
+        24666,
+        26166,
+        27666,
+        29566,
+        31466,
+        33366,
+        35266,
+        37166,
+        39066,
+        40516,
+        41966,
+        43416,
+        44866,
+        46316,
+        47766,
+        49766,
+        51766,
+        53766,
+        55766,
+        57766,
+        59766,
+        61266,
+        62766,
+        64266,
+        65766,
+        67266,
+        68766,
+        70099,
+        71543,
+        73209,
+        74709,
+        76209,
+        77709,
+        79209,
+        80709,
+        82042,
+        83375,
+        84708,
+        86041,
+        87291,
+        88541,
+        89791,
+        91041,
+        92291,
+        93791,
+        95291,
+        96624,
+        98624,
+        100290,
+        101956,
+        103356,
+        104756,
+        106156,
+        107556,
+        108956,
+        110241,
+        111526,
+        112811,
+        114011,
+        115233,
+        116455,
+        117655,
+        119321,
+        120571,
+        121904,
+        123154,
+        124376,
+        125776,
+        127176,
+        128476,
+        129776,
+        131076,
+        132376,
+        133601,
+        134826,
+        136292,
+        137603,
+        139069,
+        140380,
+        141846,
+        143312,
+        144623,
+        146089,
+        148023,
+        149957,
+        151891,
+        153124
+      ]
+    },
+    "KH depth": {
+      "total_samples": 22466,
+      "num_files": 100,
+      "boundaries": [
+        0,
+        412,
+        824,
+        1036,
+        1181,
+        1326,
+        1738,
+        2150,
+        2562,
+        2974,
+        3386,
+        3798,
+        4010,
+        4222,
+        4434,
+        4646,
+        4858,
+        5230,
+        5602,
+        5974,
+        6346,
+        6718,
+        7090,
+        7282,
+        7474,
+        7666,
+        7858,
+        8050,
+        8242,
+        8654,
+        9066,
+        9478,
+        9890,
+        10302,
+        10714,
+        10926,
+        11138,
+        11350,
+        11562,
+        11774,
+        11986,
+        12131,
+        12321,
+        12600,
+        12812,
+        13024,
+        13236,
+        13448,
+        13660,
+        13805,
+        13950,
+        14095,
+        14240,
+        14352,
+        14464,
+        14576,
+        14688,
+        14800,
+        15012,
+        15224,
+        15369,
+        15781,
+        16060,
+        16339,
+        16511,
+        16683,
+        16855,
+        17027,
+        17199,
+        17325,
+        17451,
+        17577,
+        17669,
+        17770,
+        17871,
+        17972,
+        18251,
+        18363,
+        18508,
+        18620,
+        18721,
+        18893,
+        19065,
+        19197,
+        19329,
+        19461,
+        19593,
+        19695,
+        19797,
+        19996,
+        20133,
+        20332,
+        20469,
+        20668,
+        20867,
+        21004,
+        21203,
+        21589,
+        21975,
+        22361,
+        22466
+      ]
+    },
+    "KH area": {
+      "total_samples": 22466,
+      "num_files": 100,
+      "boundaries": [
+        0,
+        412,
+        824,
+        1036,
+        1181,
+        1326,
+        1738,
+        2150,
+        2562,
+        2974,
+        3386,
+        3798,
+        4010,
+        4222,
+        4434,
+        4646,
+        4858,
+        5230,
+        5602,
+        5974,
+        6346,
+        6718,
+        7090,
+        7282,
+        7474,
+        7666,
+        7858,
+        8050,
+        8242,
+        8654,
+        9066,
+        9478,
+        9890,
+        10302,
+        10714,
+        10926,
+        11138,
+        11350,
+        11562,
+        11774,
+        11986,
+        12131,
+        12321,
+        12600,
+        12812,
+        13024,
+        13236,
+        13448,
+        13660,
+        13805,
+        13950,
+        14095,
+        14240,
+        14352,
+        14464,
+        14576,
+        14688,
+        14800,
+        15012,
+        15224,
+        15369,
+        15781,
+        16060,
+        16339,
+        16511,
+        16683,
+        16855,
+        17027,
+        17199,
+        17325,
+        17451,
+        17577,
+        17669,
+        17770,
+        17871,
+        17972,
+        18251,
+        18363,
+        18508,
+        18620,
+        18721,
+        18893,
+        19065,
+        19197,
+        19329,
+        19461,
+        19593,
+        19695,
+        19797,
+        19996,
+        20133,
+        20332,
+        20469,
+        20668,
+        20867,
+        21004,
+        21203,
+        21589,
+        21975,
+        22361,
+        22466
+      ]
+    }
+  },
+  "statistics": {
+    "PD1": {
+      "mean": 0.10830099959647606,
+      "median": 0.019023136246786632,
+      "std": 0.22063871686083839,
+      "var": 0.048681443377997215,
+      "min": 0.0,
+      "max": 0.9999999999999999,
+      "range": 0.9999999999999999,
+      "skewness": 3.085554926229082,
+      "kurtosis": 8.436316728811272,
+      "rms": 0.24578557706178186,
+      "energy": 9250.305041600304,
+      "zero_crossings": 0
+    },
+    "PD2": {
+      "mean": 0.05827816798990489,
+      "median": 0.04461279461279461,
+      "std": 0.03504229786409816,
+      "var": 0.0012279626395961785,
+      "min": 0.0,
+      "max": 1.0,
+      "range": 1.0,
+      "skewness": 5.676910469185227,
+      "kurtosis": 57.154270117528654,
+      "rms": 0.06800226102017308,
+      "energy": 708.0924622204082,
+      "zero_crossings": 0
+    },
+    "KH depth": {
+      "mean": 0.2744853444889054,
+      "median": 0.2505087505087505,
+      "std": 0.20354333887996898,
+      "var": 0.041429890802405896,
+      "min": 0.0,
+      "max": 1.0,
+      "range": 1.0,
+      "skewness": 0.6507473807520038,
+      "kurtosis": -0.06398187996942051,
+      "rms": 0.34171932216601236,
+      "energy": 2623.401889451162,
+      "zero_crossings": 0
+    },
+    "KH area": {
+      "mean": 0.1184896865800895,
+      "median": 0.07699210337401291,
+      "std": 0.12023199127844673,
+      "var": 0.014455731726780491,
+      "min": 0.0,
+      "max": 1.0,
+      "range": 1.0,
+      "skewness": 1.7210928002236527,
+      "kurtosis": 4.116886525236516,
+      "rms": 0.16880621301548213,
+      "energy": 640.1807466573481,
+      "zero_crossings": 0
+    }
+  },
+  "correlations": {
+    "PD1 vs PD2": {
+      "pearson": 0.6715478157539112,
+      "pearson_p_uncorrected": 0.0,
+      "pearson_p_corrected": 0.0,
+      "spearman": 0.8288937303647312,
+      "spearman_p_uncorrected": 0.0,
+      "spearman_p_corrected": 0.0,
+      "n_actual": 153124,
+      "n_effective": 4294.469870361377,
+      "autocorr_lag1_series1": 0.9454388055747461,
+      "autocorr_lag1_series2": 0.47839093161059826
+    },
+    "PD1 vs KH depth": {
+      "pearson": 0.003711735943956681,
+      "pearson_p_uncorrected": 0.5779985899754176,
+      "pearson_p_corrected": 0.9468796050887323,
+      "spearman": 0.027944497176333113,
+      "spearman_p_uncorrected": 2.8007373065077834e-05,
+      "spearman_p_corrected": 0.6158778268660894,
+      "n_actual": 22466,
+      "n_effective": 324.70125459943523,
+      "autocorr_lag1_series1": 0.9640878351598211,
+      "autocorr_lag1_series2": 0.971505812745985
+    },
+    "PD1 vs KH area": {
+      "pearson": -0.02397537708559156,
+      "pearson_p_uncorrected": 0.00032575874768502104,
+      "pearson_p_corrected": 0.6280216590053309,
+      "spearman": 0.02756540617942164,
+      "spearman_p_uncorrected": 3.592435801142598e-05,
+      "spearman_p_corrected": 0.5774665044048348,
+      "n_actual": 22466,
+      "n_effective": 410.77729868115,
+      "autocorr_lag1_series1": 0.9640878351598211,
+      "autocorr_lag1_series2": 0.962463323736615
+    },
+    "PD2 vs KH depth": {
+      "pearson": 0.016192474866233028,
+      "pearson_p_uncorrected": 0.015221761289975407,
+      "pearson_p_corrected": 0.7713009667355532,
+      "spearman": 0.045111867176103174,
+      "spearman_p_uncorrected": 1.3355527316384114e-11,
+      "spearman_p_corrected": 0.41784277588237617,
+      "n_actual": 22466,
+      "n_effective": 324.70125459943523,
+      "autocorr_lag1_series1": 0.6868674599353759,
+      "autocorr_lag1_series2": 0.971505812745985
+    },
+    "PD2 vs KH area": {
+      "pearson": -0.01459292078812606,
+      "pearson_p_uncorrected": 0.02872220799527914,
+      "pearson_p_corrected": 0.7629267407949135,
+      "spearman": 0.037078169889830134,
+      "spearman_p_uncorrected": 2.711321669764346e-08,
+      "spearman_p_corrected": 0.44329627640404645,
+      "n_actual": 22466,
+      "n_effective": 429.71451172271037,
+      "autocorr_lag1_series1": 0.6868674599353759,
+      "autocorr_lag1_series2": 0.962463323736615
+    },
+    "KH depth vs KH area": {
+      "pearson": 0.771165364628065,
+      "pearson_p_uncorrected": 0.0,
+      "pearson_p_corrected": 2.9808907435004105e-65,
+      "spearman": 0.8391684040080386,
+      "spearman_p_uncorrected": 0.0,
+      "spearman_p_corrected": 2.328958236917342e-87,
+      "n_actual": 22466,
+      "n_effective": 324.70125459943523,
+      "autocorr_lag1_series1": 0.971505812745985,
+      "autocorr_lag1_series2": 0.962463323736615
+    }
+  },
+  "silhouette_scores": {},
+  "processing_config": {
+    "apply_normalization": true,
+    "normalization_method": "minmax",
+    "remove_outliers": true,
+    "outlier_method": [
+      "second_derivative",
+      "second_derivative"
+    ],
+    "outlier_threshold": [
+      4.5,
+      4.5
+    ]
+  }
+}
