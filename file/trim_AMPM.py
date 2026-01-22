@@ -1,4 +1,4 @@
-import glob, read_AMPM, functools, h5py
+import glob, read_AMPM, functools, h5py, sys, os
 from pathlib import Path
 import numpy as np
 from matplotlib import pyplot as plt
@@ -11,6 +11,8 @@ from tools import get_paths, get_logbook, get_logbook_data
 AMPM_path = get_paths()['AMPM']
 hdf5_path = get_paths()['hdf5']
 
+sample_rate = '2M' # '2M' or '100K'
+
 mode = 'append' # 'append' or 'overwrite'
 
 # Safety check before overwriting data
@@ -21,15 +23,15 @@ if mode == 'overwrite':
 
 logbook = get_logbook()
 
-for file in sorted(glob.glob(f'{AMPM_path}/0109*AMPM*L4_100K*.dat')):
-    print()
+for file in sorted(glob.glob(f'{AMPM_path}/*{sample_rate}*.dat')):
+    print(file)
     AMPM_df = read_AMPM.readAMPMdat(file)
     fname = Path(file).name
     trackid = fname[:4] + '_0' + fname[fname.find('AMPM_') + 5]
     print('trackid: ' + trackid)
     
     try:
-        hdf5_fpath = glob.glob(f'{hdf5_path}\{trackid}.hdf5')[0]
+        hdf5_fpath = glob.glob(f'{hdf5_path}/{trackid}.hdf5')[0]
         print('hdf5 file: ', hdf5_fpath)
     except IndexError:
         print(f'No hdf5 found for {trackid}')
@@ -38,7 +40,12 @@ for file in sorted(glob.glob(f'{AMPM_path}/0109*AMPM*L4_100K*.dat')):
     track_data = get_logbook_data(logbook, trackid)
     scan_speed = track_data['scan_speed']
     scan_duration = 4/scan_speed
-    npoints = int(100000*scan_duration)
+    if sample_rate == '2M':
+        npoints = int(2000000*scan_duration)
+    elif sample_rate == '100K':
+        npoints = int(100000*scan_duration)
+    else:
+        print(f'Invalid sample rate: {sample_rate}')
     
     t = AMPM_df['Time']
     PD = AMPM_df['Photodiode1Bits']
@@ -85,13 +92,13 @@ for file in sorted(glob.glob(f'{AMPM_path}/0109*AMPM*L4_100K*.dat')):
         for dset in AMPM_df:
             try:
                 if mode == 'overwrite':
-                    del hdf5_file[f'AMPM/{dset}']
+                    del hdf5_file[f'AMPM_{sample_rate}K/{dset}']
             except KeyError:
                 pass
             try:
-                hdf5_file[f'AMPM/{dset}'] = AMPM_df[dset][a:b]
+                hdf5_file[f'AMPM_{sample_rate}K/{dset}'] = AMPM_df[dset][a:b]
             except OSError:
                 print(f'Error: \'{dset}\' HDF5 dataset already exists')
-        # plt.plot(np.array(hdf5_file[f'AMPM/Time']), np.array(hdf5_file[f'AMPM/Photodiode1Bits']), lw=0.5)
-        # plt.show()
+        plt.plot(np.array(hdf5_file[f'AMPM/Time']), np.array(hdf5_file[f'AMPM/Photodiode1Bits']), lw=0.5)
+        plt.show()
         
