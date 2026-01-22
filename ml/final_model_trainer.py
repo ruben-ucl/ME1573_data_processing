@@ -38,7 +38,17 @@ from config import (
     PD_HYPEROPT_RESULTS_DIR, CWT_HYPEROPT_RESULTS_DIR, ensure_directories, ensure_cwt_directories,
     load_dataset_variant_info
 )
+from gradcam_utils import generate_comprehensive_gradcam_analysis
 from data_utils import normalize_image, split_dual_branch_image, estimate_memory_usage_gb
+
+# ============================================================================
+# COLOR SCHEME CONFIGURATION FOR TRACK PREDICTION VISUALIZATIONS
+# ============================================================================
+# Centralized color definitions for easy customization
+COLOR_NO_POROSITY = '#3498db'      # Blue for no porosity (class 0)
+COLOR_POROSITY = '#e74c3c'         # Red for porosity (class 1)
+COLOR_SKIPPED_WINDOW = '#95a5a6'   # Grey for skipped first window
+# ============================================================================
 
 class FinalModelTrainer:
     """Trains final production model using best hyperparameters."""
@@ -485,7 +495,7 @@ class FinalModelTrainer:
         if self.classifier_type == 'cwt_image':
             X_test, y_test_filtered, test_files_filtered = self._load_cwt_test_images(test_files, test_labels, img_width, img_height, img_channels)
         else:  # pd_signal
-            X_test, y_test_filtered = self._load_pd_test_images(test_files, test_labels, img_width)
+            X_test, y_test_filtered, test_files_filtered = self._load_pd_test_images(test_files, test_labels, img_width)
         
         # Create comprehensive test set metadata
         test_data = {
@@ -496,7 +506,7 @@ class FinalModelTrainer:
             'img_width': img_width,
             'img_height': img_height if self.classifier_type == 'cwt_image' else None,
             'img_channels': img_channels if self.classifier_type == 'cwt_image' else None,
-            'test_files': [str(f) for f in test_files],  # Save file list for reference
+            'test_files': test_files_filtered,  # Save file list for reference
             'train_test_split_params': {
                 'test_size': 0.2,
                 'stratify': True,
@@ -633,7 +643,7 @@ class FinalModelTrainer:
         if self.classifier_type == 'cwt_image':
             X_test, y_test_filtered, test_files_filtered = self._load_cwt_test_images(test_files, test_labels, img_width, img_height, img_channels)
         else:  # pd_signal
-            X_test, y_test_filtered = self._load_pd_test_images(test_files, test_labels, img_width)
+            X_test, y_test_filtered, test_files_filtered = self._load_pd_test_images(test_files, test_labels, img_width)
         
         # Create test data file
         test_data_file = output_dir / 'test_set_data.pkl'
@@ -645,7 +655,7 @@ class FinalModelTrainer:
             'img_width': img_width,
             'img_height': img_height if self.classifier_type == 'cwt_image' else None,
             'img_channels': img_channels if self.classifier_type == 'cwt_image' else None,
-            'test_files': [str(f) for f in test_files],
+            'test_files': test_files_filtered,
             'holdout_method': 'trackid_based',
             'holdout_trackids': list(holdout_trackids),
             'holdout_file_source': str(self.test_holdout_file)
@@ -753,7 +763,11 @@ class FinalModelTrainer:
         
         print(f"\n🎯 COMPREHENSIVE TEST EVALUATION")
         print(f"{'='*60}")
-        
+
+        # Create test_evaluation subdirectory for all test outputs
+        test_eval_dir = Path(output_dir) / 'test_evaluation'
+        test_eval_dir.mkdir(exist_ok=True)
+
         X_test = test_data['X_test']
         y_test = test_data['y_test']
         classifier_type = test_data['classifier_type']
@@ -811,9 +825,24 @@ class FinalModelTrainer:
         
         # Save threshold optimization results
         threshold_df = pd.DataFrame(threshold_results)
-        threshold_csv = Path(output_dir) / f'threshold_optimization_{version}.csv'
+        threshold_csv = test_eval_dir / f'threshold_optimization_{version}.csv'
         threshold_df.to_csv(threshold_csv, index=False, encoding='utf-8')
-        
+
+        # Save test predictions for standalone visualization script
+        test_files = test_data.get('test_files', None)
+        predictions_data = {
+            'y_pred': y_pred_best,
+            'y_proba': y_proba_flat,
+            'y_true': y_test,
+            'best_threshold': best_threshold,
+            'test_files': test_files,
+            'classifier_type': classifier_type
+        }
+        predictions_file = test_eval_dir / f'test_predictions_{version}.pkl'
+        with open(predictions_file, 'wb') as f:
+            pickle.dump(predictions_data, f)
+        print(f"💾 Saved predictions to: {predictions_file}")
+
         # Plot threshold optimization
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         axes = axes.flatten()
@@ -828,27 +857,27 @@ class FinalModelTrainer:
             axes[i].set_ylim(0, 1)
         
         plt.tight_layout()
-        plt.savefig(Path(output_dir) / f'threshold_optimization_{version}.png', dpi=300, bbox_inches='tight')
+        plt.savefig(test_eval_dir / f'threshold_optimization_{version}.png', dpi=300, bbox_inches='tight')
         plt.close()
-        
+
         # Generate confusion matrix
         cm = confusion_matrix(y_test, y_pred_best)
         plt.figure(figsize=(8, 6))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                   xticklabels=['Class 0', 'Class 1'], 
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                   xticklabels=['Class 0', 'Class 1'],
                    yticklabels=['Class 0', 'Class 1'])
         plt.title(f'Confusion Matrix (Threshold: {best_threshold:.3f})')
         plt.ylabel('True Label')
         plt.xlabel('Predicted Label')
-        plt.savefig(Path(output_dir) / f'confusion_matrix_{version}.png', dpi=300, bbox_inches='tight')
+        plt.savefig(test_eval_dir / f'confusion_matrix_{version}.png', dpi=300, bbox_inches='tight')
         plt.close()
-        
+
         # Generate classification report
         class_report = classification_report(y_test, y_pred_best, output_dict=True)
         class_report_str = classification_report(y_test, y_pred_best)
-        
+
         # Save classification report
-        with open(Path(output_dir) / f'classification_report_{version}.txt', 'w') as f:
+        with open(test_eval_dir / f'classification_report_{version}.txt', 'w') as f:
             f.write(f"Classification Report - Threshold: {best_threshold:.3f}\n")
             f.write("="*50 + "\n")
             f.write(class_report_str)
@@ -858,23 +887,23 @@ class FinalModelTrainer:
         gradcam_results = None
         if classifier_type == 'cwt_image':
             test_files = test_data.get('test_files', None)
-            gradcam_results = self._generate_comprehensive_gradcam(
+            gradcam_results = generate_comprehensive_gradcam_analysis(
                 model, X_test, y_test, y_pred_best, y_proba_flat,
-                best_threshold, output_dir, version, test_files
+                best_threshold, test_eval_dir, version, test_files
             )
 
         # Generate track-level prediction visualizations if we have filenames
         track_vis_results = None
         if 'test_files' in test_data:
             track_vis_results = self._generate_track_predictions_viz(
-                test_data['test_files'], y_test, y_pred_best, output_dir, version
+                test_data['test_files'], y_test, y_pred_best, test_eval_dir, version
             )
 
         # Generate P-V map showing test set track locations
         pv_map_results = None
         if 'test_files' in test_data:
             pv_map_results = self._generate_pv_map_for_test_set(
-                test_data['test_files'], output_dir, version
+                test_data['test_files'], test_eval_dir, version
             )
 
         # Compile comprehensive results
@@ -894,16 +923,16 @@ class FinalModelTrainer:
             'pv_map': pv_map_results,
             'output_files': {
                 'threshold_csv': str(threshold_csv),
-                'threshold_plot': str(Path(output_dir) / f'threshold_optimization_{version}.png'),
-                'confusion_matrix': str(Path(output_dir) / f'confusion_matrix_{version}.png'),
-                'classification_report': str(Path(output_dir) / f'classification_report_{version}.txt')
+                'threshold_plot': str(test_eval_dir / f'threshold_optimization_{version}.png'),
+                'confusion_matrix': str(test_eval_dir / f'confusion_matrix_{version}.png'),
+                'classification_report': str(test_eval_dir / f'classification_report_{version}.txt')
             }
         }
-        
+
         # Save comprehensive results as JSON
         # Convert numpy types to Python native types for JSON serialization
         evaluation_results_converted = convert_numpy_types(evaluation_results)
-        results_json = Path(output_dir) / f'comprehensive_evaluation_{version}.json'
+        results_json = test_eval_dir / f'comprehensive_evaluation_{version}.json'
         with open(results_json, 'w') as f:
             json.dump(evaluation_results_converted, f, indent=2, default=str)
         
@@ -918,399 +947,17 @@ class FinalModelTrainer:
         
         return evaluation_results
 
-    def _generate_comprehensive_gradcam(self, model, X_test, y_test, y_pred, y_proba, threshold, output_dir, version, test_files=None):
-        """Generate comprehensive Grad-CAM analysis with class-specific folders and averages."""
-        import tensorflow as tf
-        from tensorflow.keras.models import Model
-        import re
-
-        print(f"🔥 Generating comprehensive Grad-CAM analysis...")
-
-        gradcam_dir = Path(output_dir) / f'gradcam_analysis_{version}'
-
-        # Create class-specific directories
-        class_dirs = {}
-        for class_label in [0, 1]:
-            class_dirs[class_label] = {
-                'correct': gradcam_dir / f'class_{class_label}' / 'correct_predictions',
-                'incorrect': gradcam_dir / f'class_{class_label}' / 'incorrect_predictions',
-                'all': gradcam_dir / f'class_{class_label}' / 'all_samples'
-            }
-            for dir_path in class_dirs[class_label].values():
-                dir_path.mkdir(parents=True, exist_ok=True)
-
-        # Create summary directory
-        summary_dir = gradcam_dir / 'class_averages'
-        summary_dir.mkdir(parents=True, exist_ok=True)
-
-        # Find the best layer for Grad-CAM (last convolutional layer)
-        conv_layers = [layer for layer in model.layers if 'conv' in layer.name.lower()]
-        if not conv_layers:
-            print("Warning: No convolutional layers found for Grad-CAM")
-            return None
-
-        target_layer = conv_layers[-1]
-        print(f"Using layer '{target_layer.name}' for Grad-CAM analysis")
-
-        # Create Grad-CAM model
-        gradcam_model = Model(inputs=model.input, outputs=[target_layer.output, model.output])
-
-        # Store heatmaps for averaging
-        class_heatmaps = {0: [], 1: []}
-        gradcam_results = {
-            'target_layer': target_layer.name,
-            'threshold': threshold,
-            'total_images': len(X_test),
-            'class_analysis': {0: {'correct': 0, 'incorrect': 0}, 1: {'correct': 0, 'incorrect': 0}},
-            'saved_images': 0
-        }
-
-        for i in range(len(X_test)):
-            true_label = int(y_test[i])
-            pred_label = int(y_pred[i])
-            confidence = float(y_proba[i])
-            is_correct = (true_label == pred_label)
-
-            # Generate Grad-CAM heatmap
-            heatmap = self._generate_gradcam_heatmap(
-                gradcam_model, X_test[i:i+1], target_layer_idx=-2
-            )
-
-            if heatmap is not None:
-                # Store for class averaging
-                class_heatmaps[true_label].append(heatmap)
-
-                # Create filename with track ID and window if available
-                prediction_type = 'correct' if is_correct else 'incorrect'
-
-                if test_files is not None and i < len(test_files):
-                    # Extract track ID and window from filename
-                    # Example: 0105_01_0.2-1.2ms.png -> track_id = "0105_01", window = "0.2-1.2ms"
-                    original_filename = Path(test_files[i]).name
-                    parts = original_filename.split('_')
-
-                    if len(parts) >= 2:
-                        track_id = f"{parts[0]}_{parts[1]}"  # e.g., "0105_01"
-                        # Extract window info (everything after second underscore, before extension)
-                        window_info = '_'.join(parts[2:]).replace('.png', '')  # e.g., "0.2-1.2ms"
-                        filename = f'{track_id}_{window_info}_true_{true_label}_pred_{pred_label}_conf_{confidence:.3f}.png'
-                    else:
-                        # Fallback if filename doesn't match expected pattern
-                        filename = f'{original_filename.replace(".png", "")}_true_{true_label}_pred_{pred_label}_conf_{confidence:.3f}.png'
-                else:
-                    # Fallback if no test_files provided
-                    filename = f'sample_{i:04d}_true_{true_label}_pred_{pred_label}_conf_{confidence:.3f}.png'
-                
-                # Save to class-specific directories
-                self._save_gradcam_image(
-                    X_test[i], heatmap, 
-                    class_dirs[true_label][prediction_type] / filename,
-                    title=f'True: {true_label}, Pred: {pred_label}, Conf: {confidence:.3f}'
-                )
-                
-                self._save_gradcam_image(
-                    X_test[i], heatmap, 
-                    class_dirs[true_label]['all'] / filename,
-                    title=f'True: {true_label}, Pred: {pred_label}, Conf: {confidence:.3f}'
-                )
-                
-                gradcam_results['saved_images'] += 1
-                gradcam_results['class_analysis'][true_label][prediction_type] += 1
-        
-        # Generate class average heatmaps
-        for class_label in [0, 1]:
-            if class_heatmaps[class_label]:
-                avg_heatmap = np.mean(class_heatmaps[class_label], axis=0)
-
-                # Create a representative image (mean of class images)
-                class_indices = np.where(y_test == class_label)[0]
-                representative_img = np.mean(X_test[class_indices], axis=0)
-
-                self._save_gradcam_image(
-                    representative_img, avg_heatmap,
-                    summary_dir / f'class_{class_label}_average_gradcam.png',
-                    title=f'Class {class_label} Average Grad-CAM (n={len(class_heatmaps[class_label])})',
-                    enhance_contrast=True  # Enhance contrast for class averages
-                )
-        
-        # Generate difference heatmap (Class 1 - Class 0)
-        if class_heatmaps[0] and class_heatmaps[1]:
-            avg_heatmap_0 = np.mean(class_heatmaps[0], axis=0)
-            avg_heatmap_1 = np.mean(class_heatmaps[1], axis=0)
-
-            # Enhance contrast by stretching to full range (for class averages)
-            avg_heatmap_0_enhanced = avg_heatmap_0.copy()
-            avg_heatmap_1_enhanced = avg_heatmap_1.copy()
-
-            if avg_heatmap_0_enhanced.max() > 0:
-                avg_heatmap_0_enhanced = (avg_heatmap_0_enhanced - avg_heatmap_0_enhanced.min()) / (avg_heatmap_0_enhanced.max() - avg_heatmap_0_enhanced.min())
-            if avg_heatmap_1_enhanced.max() > 0:
-                avg_heatmap_1_enhanced = (avg_heatmap_1_enhanced - avg_heatmap_1_enhanced.min()) / (avg_heatmap_1_enhanced.max() - avg_heatmap_1_enhanced.min())
-
-            diff_heatmap = avg_heatmap_1_enhanced - avg_heatmap_0_enhanced
-
-            # Get image dimensions
-            img_height = avg_heatmap_0.shape[0]
-            img_width = avg_heatmap_0.shape[1]
-
-            # CWT frequency range: 1 kHz to 50 kHz (logarithmic)
-            freq_min_khz = 1
-            freq_max_khz = 50
-            freq_ticks_khz = [1, 2, 4, 8, 16, 32, 50]
-
-            freq_ticks_pos = []
-            for f in freq_ticks_khz:
-                log_pos = (np.log(f) - np.log(freq_min_khz)) / (np.log(freq_max_khz) - np.log(freq_min_khz))
-                pixel_pos = img_height * (1 - log_pos)
-                freq_ticks_pos.append(pixel_pos)
-
-            # Time axis: 0 to 1 ms
-            time_ticks_ms = [0, 0.25, 0.5, 0.75, 1.0]
-
-            # Calculate figure size for half A4 width at 600 dpi
-            # A4 width = 210 mm = 8.27 inches
-            # Half A4 width = 4.135 inches at 600 dpi
-            # Aspect ratio of CWT images: 256/100 = 2.56
-            half_a4_width = 4.135  # inches
-            aspect_ratio = img_height / img_width  # 256/100 = 2.56
-
-            # Each subplot width (3 subplots with small spacing)
-            subplot_width = half_a4_width / 3.3  # ~1.25 inches per subplot
-            subplot_height = subplot_width * aspect_ratio  # ~3.2 inches
-
-            # Total figure size
-            fig_width = half_a4_width
-            fig_height = subplot_height + 0.4  # Add space for labels
-
-            # Font sizes for 600 dpi display
-            title_fontsize = 7
-            label_fontsize = 6
-            tick_fontsize = 5
-
-            # Create difference visualization with frequency and time axes
-            fig, axes = plt.subplots(1, 3, figsize=(fig_width, fig_height))
-
-            # Saturate values above 0.8 for better contrast
-            saturation_threshold = 0.8
-
-            # Class 0 average with saturation
-            im0 = axes[0].imshow(avg_heatmap_0_enhanced, cmap='viridis',
-                                extent=[0, 1, 0, img_height], vmin=0, vmax=saturation_threshold)
-            axes[0].set_title('Class 0 (No Porosity)', fontsize=title_fontsize, fontweight='bold', pad=3)
-            axes[0].set_xlabel('Time (ms)', fontsize=label_fontsize)
-            axes[0].set_ylabel('Frequency (kHz)', fontsize=label_fontsize)
-            axes[0].set_xticks(time_ticks_ms)
-            axes[0].set_yticks(freq_ticks_pos)
-            axes[0].set_yticklabels(freq_ticks_khz[::-1], fontsize=tick_fontsize)  # Reverse order for image coordinates
-            axes[0].tick_params(axis='x', labelsize=tick_fontsize)
-            axes[0].set_aspect('auto')
-            axes[0].grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
-
-            # Class 1 average with saturation
-            im1 = axes[1].imshow(avg_heatmap_1_enhanced, cmap='viridis',
-                                extent=[0, 1, 0, img_height], vmin=0, vmax=saturation_threshold)
-            axes[1].set_title('Class 1 (Porosity)', fontsize=title_fontsize, fontweight='bold', pad=3)
-            axes[1].set_xlabel('Time (ms)', fontsize=label_fontsize)
-            axes[1].set_ylabel('Frequency (kHz)', fontsize=label_fontsize)
-            axes[1].set_xticks(time_ticks_ms)
-            axes[1].set_yticks(freq_ticks_pos)
-            axes[1].set_yticklabels(freq_ticks_khz[::-1], fontsize=tick_fontsize)  # Reverse order for image coordinates
-            axes[1].tick_params(axis='x', labelsize=tick_fontsize)
-            axes[1].set_aspect('auto')
-            axes[1].grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
-
-            # Shared colorbar for class 0 and 1 with extend arrow
-            # Position: right of axes[1]
-            from mpl_toolkits.axes_grid1 import make_axes_locatable
-            divider = make_axes_locatable(axes[1])
-            cax = divider.append_axes("right", size="5%", pad=0.03)
-            cbar_shared = plt.colorbar(im1, cax=cax, extend='max')
-            cbar_shared.set_label('Activation', fontsize=label_fontsize)
-            cbar_shared.ax.tick_params(labelsize=tick_fontsize)
-
-            # Difference with separate colorbar
-            max_abs_diff = np.max(np.abs(diff_heatmap))
-            im_diff = axes[2].imshow(diff_heatmap, cmap='RdBu_r',
-                                    vmin=-max_abs_diff, vmax=max_abs_diff,
-                                    extent=[0, 1, 0, img_height])
-            axes[2].set_title('Difference (1 - 0)', fontsize=title_fontsize, fontweight='bold', pad=3)
-            axes[2].set_xlabel('Time (ms)', fontsize=label_fontsize)
-            axes[2].set_ylabel('Frequency (kHz)', fontsize=label_fontsize)
-            axes[2].set_xticks(time_ticks_ms)
-            axes[2].set_yticks(freq_ticks_pos)
-            axes[2].set_yticklabels(freq_ticks_khz[::-1], fontsize=tick_fontsize)  # Reverse order for image coordinates
-            axes[2].tick_params(axis='x', labelsize=tick_fontsize)
-            axes[2].set_aspect('auto')
-            axes[2].grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
-
-            # Colorbar for difference
-            divider_diff = make_axes_locatable(axes[2])
-            cax_diff = divider_diff.append_axes("right", size="5%", pad=0.03)
-            cbar_diff = plt.colorbar(im_diff, cax=cax_diff)
-            cbar_diff.set_label('Difference', fontsize=label_fontsize)
-            cbar_diff.ax.tick_params(labelsize=tick_fontsize)
-
-            plt.tight_layout()
-            plt.savefig(summary_dir / 'class_difference_analysis.png', dpi=600, bbox_inches='tight')
-            plt.close()
-        
-        print(f"   Grad-CAM images saved to: {gradcam_dir}")
-        print(f"   Generated {gradcam_results['saved_images']} individual heatmaps")
-        print(f"   Class 0: {gradcam_results['class_analysis'][0]} samples")
-        print(f"   Class 1: {gradcam_results['class_analysis'][1]} samples")
-        
-        return gradcam_results
-
-    def _generate_gradcam_heatmap(self, gradcam_model, img_array, target_layer_idx=-2):
-        """Generate Grad-CAM heatmap for a single image."""
-        import tensorflow as tf
-        
-        try:
-            with tf.GradientTape() as tape:
-                conv_outputs, predictions = gradcam_model(img_array)
-                loss = predictions[:, 0]  # Binary classification
-            
-            # Calculate gradients
-            grads = tape.gradient(loss, conv_outputs)
-            
-            # Global average pooling of gradients
-            pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-            
-            # Weight the feature maps by the gradients
-            conv_outputs = conv_outputs[0]
-            heatmap = tf.reduce_mean(tf.multiply(pooled_grads, conv_outputs), axis=-1)
-            
-            # Normalize heatmap
-            heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
-            
-            return heatmap.numpy()
-            
-        except Exception as e:
-            print(f"Warning: Could not generate Grad-CAM for image: {e}")
-            return None
-
-    def _save_gradcam_image(self, original_img, heatmap, filepath, title=None, enhance_contrast=False):
-        """Save Grad-CAM visualization combining original image and heatmap with frequency axis.
-
-        Args:
-            original_img: Original CWT image
-            heatmap: Grad-CAM heatmap
-            filepath: Output file path
-            title: Optional title for the figure
-            enhance_contrast: If True, enhance contrast by stretching values to full range
-        """
-        import matplotlib.pyplot as plt
-        import cv2
-
-        try:
-            # Prepare original image for display
-            if len(original_img.shape) == 3 and original_img.shape[-1] == 1:
-                display_img = original_img.squeeze()
-            else:
-                display_img = original_img
-
-            # Apply optional contrast enhancement
-            heatmap_processed = heatmap.copy()
-
-            # Enhance contrast if requested (for class averages)
-            if enhance_contrast and heatmap_processed.max() > 0:
-                # Stretch values to full 0-1 range
-                heatmap_processed = (heatmap_processed - heatmap_processed.min()) / (heatmap_processed.max() - heatmap_processed.min())
-
-            # Resize heatmap to match image dimensions
-            heatmap_resized = cv2.resize(heatmap_processed, (display_img.shape[1], display_img.shape[0]))
-
-            # Get image dimensions
-            img_height = display_img.shape[0]
-            img_width = display_img.shape[1]
-
-            # CWT frequency range: 1 kHz to 50 kHz (logarithmic)
-            # Create logarithmic frequency labels
-            freq_min_khz = 1    # 1 kHz
-            freq_max_khz = 50   # 50 kHz
-
-            # Logarithmic tick positions (powers of 2: 1, 2, 4, 8, 16, 32, 50)
-            freq_ticks_khz = [1, 2, 4, 8, 16, 32, 50]
-
-            # Convert to pixel positions (inverted - high freq at top)
-            # Frequency increases from bottom to top, so we need to invert
-            import numpy as np
-            freq_ticks_pos = []
-            for f in freq_ticks_khz:
-                # Logarithmic mapping: log scale from 1 to 50
-                log_pos = (np.log(f) - np.log(freq_min_khz)) / (np.log(freq_max_khz) - np.log(freq_min_khz))
-                # Invert (0 at top, 1 at bottom for image coordinates)
-                pixel_pos = img_height * (1 - log_pos)
-                freq_ticks_pos.append(pixel_pos)
-
-            # Time axis: 0 to 1 ms
-            # Create time tick positions and labels
-            time_ticks_ms = [0, 0.25, 0.5, 0.75, 1.0]
-            time_ticks_pos = [t * img_width for t in time_ticks_ms]
-
-            # Calculate figure size to maintain aspect ratio
-            # Image is img_width x img_height (100 x 256)
-            # Each subplot should maintain this aspect ratio
-            aspect_ratio = img_height / img_width  # 256/100 = 2.56
-            subplot_width = 3.5  # Width per subplot in inches
-            subplot_height = subplot_width * aspect_ratio
-            total_width = subplot_width * 3 + 2  # 3 subplots plus spacing
-
-            # Create visualization with narrower figure
-            fig, axes = plt.subplots(1, 3, figsize=(total_width, subplot_height + 1))
-
-            # Original image with frequency and time axes
-            axes[0].imshow(display_img, cmap='gray', extent=[0, 1, 0, img_height])
-            axes[0].set_title('Original CWT Image')
-            axes[0].set_xlabel('Time (ms)')
-            axes[0].set_ylabel('Frequency (kHz)')
-            axes[0].set_xticks(time_ticks_ms)
-            axes[0].set_yticks(freq_ticks_pos)
-            axes[0].set_yticklabels(freq_ticks_khz[::-1])  # Reverse order for image coordinates
-            axes[0].set_aspect('auto')
-            axes[0].grid(True, alpha=0.3, linestyle='--')
-
-            # Heatmap with frequency and time axes
-            im1 = axes[1].imshow(heatmap_resized, cmap='viridis', extent=[0, 1, 0, img_height])
-            axes[1].set_title('Grad-CAM Heatmap')
-            axes[1].set_xlabel('Time (ms)')
-            axes[1].set_ylabel('Frequency (kHz)')
-            axes[1].set_xticks(time_ticks_ms)
-            axes[1].set_yticks(freq_ticks_pos)
-            axes[1].set_yticklabels(freq_ticks_khz[::-1])  # Reverse order for image coordinates
-            axes[1].set_aspect('auto')
-            axes[1].grid(True, alpha=0.3, linestyle='--')
-            plt.colorbar(im1, ax=axes[1], label='Activation')
-
-            # Overlay with frequency and time axes
-            axes[2].imshow(display_img, cmap='gray', alpha=0.7, extent=[0, 1, 0, img_height])
-            axes[2].imshow(heatmap_resized, cmap='viridis', alpha=0.3, extent=[0, 1, 0, img_height])
-            axes[2].set_title('Overlay')
-            axes[2].set_xlabel('Time (ms)')
-            axes[2].set_ylabel('Frequency (kHz)')
-            axes[2].set_xticks(time_ticks_ms)
-            axes[2].set_yticks(freq_ticks_pos)
-            axes[2].set_yticklabels(freq_ticks_khz[::-1])  # Reverse order for image coordinates
-            axes[2].set_aspect('auto')
-            axes[2].grid(True, alpha=0.3, linestyle='--')
-
-            if title:
-                fig.suptitle(title, fontsize=12, y=1.02)
-
-            plt.tight_layout()
-            plt.savefig(filepath, dpi=150, bbox_inches='tight')
-            plt.close()
-            
-        except Exception as e:
-            print(f"Warning: Could not save Grad-CAM image to {filepath}: {e}")
-
     def _generate_track_predictions_viz(self, test_files, y_true, y_pred, output_dir, version):
         """
         Generate track-level prediction visualizations.
 
-        Creates one figure per track showing:
-        - Top row: actual labels (colored boxes, 1=porosity, 0=no porosity)
-        - Bottom row: predicted labels (colored boxes)
+        Creates one figure per track showing a single row of colored boxes:
+        - Blue (solid): True Negative (correctly predicted no porosity)
+        - Red (solid): True Positive (correctly predicted porosity)
+        - Blue (hatched): False Negative (missed porosity)
+        - Red (hatched): False Positive (incorrectly predicted porosity)
+        - Grey: Skipped first window (not included in predictions)
+
         Each column represents a time window.
 
         Args:
@@ -1370,51 +1017,85 @@ class FinalModelTrainer:
 
                 n_windows = len(true_labels)
 
-                # Create figure
-                fig, (ax_true, ax_pred) = plt.subplots(2, 1, figsize=(max(12, n_windows * 0.3), 3))
+                # Create figure - single row with extra cell for skipped window
+                fig, ax = plt.subplots(1, 1, figsize=(4.13, 2))
 
-                # Color mapping: 0=blue (no porosity), 1=red (porosity)
-                colors = {0: '#3498db', 1: '#e74c3c'}  # blue, red
+                # Add skipped first window (greyed out cell at position 0)
+                ax.add_patch(plt.Rectangle((0, 0), 1, 1,
+                                          facecolor=COLOR_SKIPPED_WINDOW,
+                                          edgecolor='black',
+                                          linewidth=0.5))
+                ax.text(0.5, 0.5, 'Skip', ha='center', va='center',
+                       fontsize=8, color='white', fontweight='bold')
 
-                # Plot actual labels (top row)
+                # Plot prediction results for each window (starting at position 1)
                 for i in range(n_windows):
-                    color = colors[true_labels[i]]
-                    ax_true.add_patch(plt.Rectangle((i, 0), 1, 1, facecolor=color, edgecolor='black', linewidth=0.5))
+                    y_t = true_labels[i]
+                    y_p = pred_labels[i]
 
-                ax_true.set_xlim(0, n_windows)
-                ax_true.set_ylim(0, 1)
-                ax_true.set_ylabel('Actual', fontsize=10, fontweight='bold')
-                ax_true.set_yticks([])
-                ax_true.set_xticks([])
-                ax_true.set_title(f'Track: {track_id} - Prediction Comparison', fontsize=12, fontweight='bold')
+                    # Determine color and hatching based on true vs predicted
+                    if y_t == 0 and y_p == 0:
+                        # True Negative - blue solid
+                        color = COLOR_NO_POROSITY
+                        hatch = None
+                    elif y_t == 1 and y_p == 1:
+                        # True Positive - red solid
+                        color = COLOR_POROSITY
+                        hatch = None
+                    elif y_t == 1 and y_p == 0:
+                        # False Negative - blue hatched (missed porosity)
+                        color = COLOR_NO_POROSITY
+                        hatch = '///'
+                    else:  # y_t == 0 and y_p == 1
+                        # False Positive - red hatched (false alarm)
+                        color = COLOR_POROSITY
+                        hatch = '///'
 
-                # Plot predicted labels (bottom row)
-                for i in range(n_windows):
-                    color = colors[pred_labels[i]]
-                    ax_pred.add_patch(plt.Rectangle((i, 0), 1, 1, facecolor=color, edgecolor='black', linewidth=0.5))
+                    # Draw rectangle at position i+1 (shifted by 1 for skipped window)
+                    rect = plt.Rectangle((i + 1, 0), 1, 1,
+                                        facecolor=color,
+                                        edgecolor='black',
+                                        linewidth=0.5,
+                                        hatch=hatch)
+                    ax.add_patch(rect)
 
-                ax_pred.set_xlim(0, n_windows)
-                ax_pred.set_ylim(0, 1)
-                ax_pred.set_ylabel('Predicted', fontsize=10, fontweight='bold')
-                ax_pred.set_yticks([])
-                ax_pred.set_xlabel('Time Window Index', fontsize=10)
-                ax_pred.set_xticks(np.arange(0.5, n_windows, 1))
-                ax_pred.set_xticklabels(range(n_windows), fontsize=8)
+                # Configure axes
+                ax.set_xlim(0, n_windows + 1)
+                ax.set_ylim(0, 1)
+                ax.set_yticks([])
+                ax.set_xlabel('Time Window Index', fontsize=10)
+                ax.set_xticks(np.arange(0.5, n_windows + 1, 1))
+                ax.set_xticklabels(['0'] + list(range(1, n_windows + 1)), fontsize=8)
+                ax.set_title(f'Track: {track_id} - Prediction Results', fontsize=12, fontweight='bold')
+                
+                # Shrink plot to make space for legend below
+                box = ax.get_position()
+                ax.set_position([box.x0, box.y0 + box.height * 0.1,
+                                 box.width, box.height * 0.9])
 
-                # Add legend
+                # Create legend
                 from matplotlib.patches import Patch
                 legend_elements = [
-                    Patch(facecolor=colors[0], edgecolor='black', label='No Porosity (0)'),
-                    Patch(facecolor=colors[1], edgecolor='black', label='Porosity (1)')
+                    Patch(facecolor=COLOR_NO_POROSITY, edgecolor='black', label='True Negative'),
+                    Patch(facecolor=COLOR_POROSITY, edgecolor='black', label='True Positive'),
+                    Patch(facecolor=COLOR_NO_POROSITY, edgecolor='black', hatch='///', label='False Negative'),
+                    Patch(facecolor=COLOR_POROSITY, edgecolor='black', hatch='///', label='False Positive'),
+                    Patch(facecolor=COLOR_SKIPPED_WINDOW, edgecolor='black', label='Skipped Window')
                 ]
-                fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98), fontsize=9)
+
+                # Place legend below the plot
+                ax.legend(handles=legend_elements, loc='upper center',
+                         bbox_to_anchor=(0.5, -0.05), ncol=5, fontsize=9, frameon=True)
 
                 # Add accuracy info
                 accuracy = np.mean(true_labels == pred_labels)
-                fig.text(0.02, 0.98, f'Accuracy: {accuracy:.1%}', fontsize=9,
-                        verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+                correct = np.sum(true_labels == pred_labels)
+                total = len(true_labels)
+                ax.text(0.02, 0.98, f'Accuracy: {accuracy:.1%} ({correct}/{total})',
+                       transform=ax.transAxes, fontsize=9,
+                       verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
-                plt.tight_layout()
+                # plt.tight_layout()
 
                 # Save figure
                 output_file = track_viz_dir / f'track_{track_id}_predictions.png'
@@ -1567,34 +1248,155 @@ class FinalModelTrainer:
         # Step 3: Run test evaluation if test data available
         if test_data_file is not None:
             # Random sampling mode - test data pre-loaded into pickle
-            return self.run_test_evaluation(source_version, test_data_file)
+            # Pass None to use just-trained model, not base config version
+            return self.run_test_evaluation(None, test_data_file)
         elif self.dataset_variant:
             # Dataset variant mode - load test data from CSV
-            return self.run_test_evaluation_from_variant(source_version)
+            # Pass None to use just-trained model, not base config version
+            return self.run_test_evaluation_from_variant(None)
         else:
             print(f"\n✅ Final model training completed successfully!")
             print(f"Note: No test evaluation configured")
             return True
     
+
+    def _fix_legacy_test_data_order(self, test_data):
+        """
+        Fix file order mismatch in legacy pickled test data.
+        
+        Old test data has files in CSV order but images/labels in class-grouped order
+        (all class 0 samples first, then all class 1 samples).
+        
+        This method re-loads and re-orders the data correctly.
+        """
+        import cv2
+        import numpy as np
+        from pathlib import Path
+        
+        if self.verbose:
+            print("Detecting file order mismatch in legacy test data...")
+        
+        # Check if this is legacy data with mismatch
+        # Legacy data will have all class 0 labels first
+        y_test = test_data['y_test']
+        test_files = test_data['test_files']
+        
+        # Count consecutive zeros at start
+        consecutive_zeros = 0
+        for label in y_test:
+            if label == 0:
+                consecutive_zeros += 1
+            else:
+                break
+        
+        # If more than 10 consecutive zeros and there are class 1 samples,
+        # this is likely legacy class-grouped data
+        has_class_1 = any(label == 1 for label in y_test)
+        is_legacy = consecutive_zeros > 10 and has_class_1
+        
+        if not is_legacy:
+            if self.verbose:
+                print("  Data appears to be in correct order already")
+            return test_data
+        
+        print(f"⚠️  Detected legacy file order mismatch ({consecutive_zeros} consecutive class 0 samples)")
+        print("   Re-loading images in correct order to match filenames...")
+        
+        # Re-load images in the correct order (matching test_files order)
+        X_test_reordered = []
+        y_test_reordered = []
+        files_reordered = []
+        
+        data_dir = test_data.get('data_dir', '')
+        img_width = test_data['img_width']
+        img_height = test_data.get('img_height', img_width)
+        img_channels = test_data.get('img_channels', 1)
+        classifier_type = test_data.get('classifier_type', 'cwt_image')
+        
+        for file_path in test_files:
+            try:
+                # Determine label from filename (need to load from CSV or infer)
+                # For now, we'll load the image and match it with existing X_test
+                img_path = Path(file_path) if Path(file_path).exists() else Path(data_dir) / Path(file_path).name
+                
+                if not img_path.exists():
+                    print(f"Warning: Cannot find image {img_path}, skipping")
+                    continue
+                
+                # Load image
+                img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
+                if img is None:
+                    print(f"Warning: Cannot load image {img_path}, skipping")
+                    continue
+                
+                # Resize and normalize
+                img = cv2.resize(img, (img_width, img_height))
+                if img_channels == 1:
+                    img = np.expand_dims(img, axis=-1)
+                img = img.astype(np.float32) / 255.0
+                
+                # Find matching image in original X_test to get label
+                original_X = test_data['X_test']
+                found_match = False
+                for i, orig_img in enumerate(original_X):
+                    if np.allclose(img, orig_img, atol=1e-6):
+                        X_test_reordered.append(img)
+                        y_test_reordered.append(y_test[i])
+                        files_reordered.append(file_path)
+                        found_match = True
+                        break
+                
+                if not found_match:
+                    print(f"Warning: Could not match image {img_path} with original data")
+                    
+            except Exception as e:
+                print(f"Warning: Error processing {file_path}: {e}")
+                continue
+        
+        import numpy as np
+        test_data['X_test'] = np.array(X_test_reordered)
+        test_data['y_test'] = np.array(y_test_reordered)
+        test_data['test_files'] = files_reordered
+        
+        print(f"✅ Reordered {len(files_reordered)} samples to match filename order")
+        
+        return test_data
+
+
     def run_test_evaluation(self, source_version, test_data_file):
         """Run comprehensive test evaluation with threshold optimization and Grad-CAM analysis."""
         from config import get_next_version_from_log, format_version
         from tensorflow.keras.models import load_model
-        
+
         print(f"\n🧪 Running comprehensive test evaluation...")
-        
-        # Get the version that was just created
-        current_version = get_next_version_from_log(classifier_type=self.classifier_type) - 1  # Just created version
-        version_str = format_version(current_version)
-        
+
+        # Use the specified version (from --version parameter or just-trained model)
+        if source_version:
+            # User specified a version explicitly (eval_only mode)
+            version_str = format_version(source_version)
+            print(f"Using specified model version: {version_str}")
+        else:
+            # Get the version that was just created (post-training evaluation)
+            current_version = get_next_version_from_log(classifier_type=self.classifier_type) - 1
+            version_str = format_version(current_version)
+            print(f"Using just-trained model version: {version_str}")
+
         # Use proper output directory based on classifier type
         if self.classifier_type == 'cwt_image':
             output_base_dir = CWT_OUTPUTS_DIR
         else:
             output_base_dir = PD_OUTPUTS_DIR
-        
+
         model_dir = output_base_dir / version_str
-        
+
+        # Check if model directory exists
+        if not model_dir.exists():
+            raise FileNotFoundError(
+                f"❌ Model directory not found: {model_dir}\n"
+                f"   Version {version_str} does not exist.\n"
+                f"   Available versions: {sorted([d.name for d in output_base_dir.iterdir() if d.is_dir() and d.name.startswith('v')])}"
+            )
+
         # Find the best model file
         if self.classifier_type == 'cwt_image':
             # For CWT, look for best_model from 5-fold CV
@@ -1605,9 +1407,13 @@ class FinalModelTrainer:
         else:
             # For PD, look in models directory
             model_files = list(model_dir.glob('models/*.h5')) + list(model_dir.glob('models/*.keras'))
-        
+
         if not model_files:
-            print(f"❌ No trained model found in {model_dir}")
+            raise FileNotFoundError(
+                f"❌ No trained model found in {model_dir}\n"
+                f"   Expected: best_model*.h5 or models/*.h5 or models/*.keras\n"
+                f"   The model directory exists but contains no model files."
+            )
             return False
         
         # Use the most recent model file
@@ -1623,7 +1429,12 @@ class FinalModelTrainer:
             # Load test data
             with open(test_data_file, 'rb') as f:
                 test_data = pickle.load(f)
-            
+
+            # Fix file order mismatch in old pickled data
+            # Old data has files in CSV order but images/labels in class-grouped order
+            if 'test_files' in test_data and 'y_test' in test_data:
+                test_data = self._fix_legacy_test_data_order(test_data)
+
             # Run comprehensive evaluation
             evaluation_results = self.evaluate_with_threshold_optimization(
                 model, test_data, model_dir, version_str
@@ -1650,9 +1461,16 @@ class FinalModelTrainer:
 
         print(f"\n🧪 Running test evaluation from dataset variant...")
 
-        # Get the version that was just created
-        current_version = get_next_version_from_log(classifier_type=self.classifier_type) - 1
-        version_str = format_version(current_version)
+        # Use the specified version (from --version parameter or just-trained model)
+        if source_version:
+            # User specified a version explicitly (eval_only mode)
+            version_str = format_version(source_version)
+            print(f"Using specified model version: {version_str}")
+        else:
+            # Get the version that was just created (post-training evaluation)
+            current_version = get_next_version_from_log(classifier_type=self.classifier_type) - 1
+            version_str = format_version(current_version)
+            print(f"Using just-trained model version: {version_str}")
 
         # Use proper output directory based on classifier type
         if self.classifier_type == 'cwt_image':
@@ -1661,6 +1479,14 @@ class FinalModelTrainer:
             output_base_dir = PD_OUTPUTS_DIR
 
         model_dir = output_base_dir / version_str
+
+        # Check if model directory exists
+        if not model_dir.exists():
+            raise FileNotFoundError(
+                f"❌ Model directory not found: {model_dir}\n"
+                f"   Version {version_str} does not exist.\n"
+                f"   Available versions: {sorted([d.name for d in output_base_dir.iterdir() if d.is_dir() and d.name.startswith('v')])}"
+            )
 
         # Find the best model file
         if self.classifier_type == 'cwt_image':
@@ -1671,7 +1497,11 @@ class FinalModelTrainer:
             model_files = list(model_dir.glob('models/*.h5')) + list(model_dir.glob('models/*.keras'))
 
         if not model_files:
-            print(f"❌ No trained model found in {model_dir}")
+            raise FileNotFoundError(
+                f"❌ No trained model found in {model_dir}\n"
+                f"   Expected: best_model*.h5 or models/*.h5 or models/*.keras\n"
+                f"   The model directory exists but contains no model files."
+            )
             return False
 
         model_file = sorted(model_files)[-1]

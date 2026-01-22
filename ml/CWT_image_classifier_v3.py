@@ -305,6 +305,130 @@ def load_and_preprocess_image(img_path, img_size):
     
     return image
 
+def load_cwt_image_data_from_csv(channel_paths, label_file, img_size, verbose=False, exclude_files=None):
+    """
+    Load CWT image data from flat directory structure with CSV labels.
+
+    This function supports dataset variants where:
+    - All images are in a single directory (flat structure)
+    - Labels are provided in a CSV file with columns: image_filename, has_porosity
+    - Multiple channels can be loaded from different directories
+
+    Args:
+        channel_paths: list of str - Directories containing images (one per channel)
+        label_file: str or Path - Path to CSV file with image_filename and has_porosity columns
+        img_size: Tuple (width, height) for image resizing
+        verbose: Print progress information
+        exclude_files: Set of filenames to exclude
+
+    Returns:
+        tuple: (images_array, labels_array, class_counts, label_encoder)
+
+    Images array shape: (N, H, W, C) where C = len(channel_paths)
+    """
+    import pandas as pd
+
+    exclude_files = exclude_files or set()
+    num_channels = len(channel_paths)
+
+    if verbose:
+        print(f"Loading {num_channels}-channel CWT image data from CSV labels")
+        print(f"Root directories: {channel_paths}")
+
+    # Load label CSV
+    label_df = pd.read_csv(label_file, encoding='utf-8')
+    if verbose:
+        print(f"Loaded {len(label_df)} labels from {label_file}")
+
+    # Support both 'filename' and 'image_filename' column names
+    filename_col = 'filename' if 'filename' in label_df.columns else 'image_filename'
+
+    # Filter out excluded files
+    if exclude_files:
+        label_df = label_df[~label_df[filename_col].isin(exclude_files)]
+        if verbose:
+            print(f"After exclusion: {len(label_df)} images remain")
+
+    # Load images
+    images, labels = [], []
+    failed_count = 0
+
+    for idx, row in label_df.iterrows():
+        img_filename = row[filename_col]
+        label = int(row['has_porosity'])
+
+        try:
+            # Load corresponding image from each channel
+            channels = []
+            for channel_path in channel_paths:
+                img_path = Path(channel_path) / img_filename
+
+                if not img_path.exists():
+                    raise FileNotFoundError(f"Image not found: {img_path}")
+
+                # Load and preprocess single channel
+                channel_image = load_and_preprocess_image(str(img_path), img_size)
+
+                # Remove channel dimension to get (H, W)
+                if len(channel_image.shape) == 3:
+                    channel_image = channel_image[:, :, 0]
+
+                channels.append(channel_image)
+
+            # Stack channels: (H, W, C)
+            multichannel_image = np.stack(channels, axis=-1)
+            images.append(multichannel_image)
+            labels.append(label)
+
+        except Exception as e:
+            failed_count += 1
+            if verbose:
+                print(f"Warning: Failed to load {img_filename}: {e}")
+            continue
+
+    if verbose and failed_count > 0:
+        print(f"Failed to load {failed_count} images")
+
+    if not images:
+        # Provide detailed debug info when no images are loaded
+        print(f"\nDEBUG: Failed to load any images!")
+        print(f"  Root directories checked: {channel_paths}")
+        if len(label_df) > 0:
+            sample_file = label_df.iloc[0][filename_col]
+            print(f"  Sample filename from CSV: {sample_file}")
+            if len(channel_paths) > 0:
+                sample_path = Path(channel_paths[0]) / sample_file
+                print(f"  Sample constructed path: {sample_path}")
+                print(f"  Sample path exists: {sample_path.exists()}")
+                if not sample_path.exists():
+                    parent_dir = Path(channel_paths[0])
+                    if parent_dir.exists():
+                        print(f"  Parent directory exists: True")
+                        files_in_parent = list(parent_dir.iterdir())[:5]
+                        print(f"  First 5 files in parent: {[f.name for f in files_in_parent]}")
+                    else:
+                        print(f"  Parent directory exists: False")
+        raise ValueError(f"No valid images could be loaded from {len(label_df)} labeled files")
+
+    # Convert to arrays
+    images_array = np.array(images)  # Shape: (N, H, W, C)
+    labels_array = np.array(labels)
+
+    # Create label encoder for consistency
+    label_encoder = LabelEncoder()
+    labels_encoded = label_encoder.fit_transform(labels_array)
+
+    # Count samples per class
+    unique_labels, counts = np.unique(labels_encoded, return_counts=True)
+    class_counts = dict(zip(unique_labels, counts))
+
+    if verbose:
+        print(f"Final dataset: {images_array.shape}")
+        print(f"Class distribution: {class_counts}")
+        print(f"Label mapping: {dict(zip(label_encoder.classes_, range(len(label_encoder.classes_))))}")
+
+    return images_array, labels_encoded, class_counts, label_encoder
+
 # -------------------------
 # 2. Data Augmentation
 # -------------------------
@@ -859,7 +983,13 @@ def main():
     parser.add_argument('--config_file', type=str, help='Config file path used for this experiment')
     parser.add_argument('--config_number_in_run', type=str, help='Config number within hyperopt run')
     parser.add_argument('--exclude_files', type=str, help='Path to file containing list of filenames to exclude from training')
-    
+    parser.add_argument('--dataset_variant', type=str, help='Dataset variant name for CSV-based labeling with flat directory structure')
+
+    # Label configuration arguments (for CSV-based labeling)
+    parser.add_argument('--label_file', type=str, help='Path to CSV file containing labels for flat directory structure')
+    parser.add_argument('--label_column', type=str, default='has_porosity', help='Column name in label file to use for classification')
+    parser.add_argument('--label_type', type=str, default='binary', choices=['binary', 'continuous'], help='Type of labels: binary or continuous')
+
     args = parser.parse_args()
     
     # Ensure CWT directories exist
@@ -925,25 +1055,101 @@ def main():
                 print(f"Warning: Could not load exclusion file {args.exclude_files}: {e}")
         
         img_size = (config['img_width'], config['img_height'])
-        
-        # Resolve data directories for multi-channel support
-        from config import resolve_cwt_data_channels
-        try:
-            channels_dict, channel_labels, channel_paths = resolve_cwt_data_channels(config)
-            if args.verbose:
-                print(f"Loading data with channels: {channel_labels}")
-        except:
-            # Fallback for backward compatibility
-            channel_paths = [config['cwt_data_dir']]
-            if args.verbose:
-                print(f"Loading single-channel data from: {config['cwt_data_dir']}")
-        
-        X, y, class_counts, label_encoder = load_cwt_image_data(
-            channel_paths, 
-            img_size, 
-            verbose=args.verbose,
-            exclude_files=exclude_files
-        )
+
+        # Check if using CSV-based labeling (either dataset variant or direct label_file)
+        if args.dataset_variant or config.get('label_file'):
+            # Handle dataset variant configuration
+            if args.dataset_variant:
+                from config import load_dataset_variant_info
+
+                dataset_info = load_dataset_variant_info(args.dataset_variant)
+                dataset_dir = dataset_info['dataset_dir']
+                dataset_config = dataset_info['config']
+
+                # Override config data_dir with variant's data_dir
+                config['cwt_data_dir'] = dataset_config['data_dir']
+
+                # Also update cwt_data_channels if it exists (multi-channel configs)
+                # to ensure resolve_cwt_data_channels returns the correct path
+                if 'cwt_data_channels' in config and config['cwt_data_channels']:
+                    # Update all channels to point to the dataset variant's path
+                    for channel_key in config['cwt_data_channels'].keys():
+                        config['cwt_data_channels'][channel_key] = dataset_config['data_dir']
+
+                # DEBUG: Verify the override worked
+                if args.verbose:
+                    print(f"DEBUG: Overrode config['cwt_data_dir'] = {config['cwt_data_dir']}")
+                    if 'cwt_data_channels' in config:
+                        print(f"DEBUG: Overrode config['cwt_data_channels'] = {config['cwt_data_channels']}")
+
+                # Get label file path
+                label_file = dataset_dir / dataset_config['label_file']
+
+                # Load test exclusion if exists
+                test_exclusion_file = dataset_dir / 'test.csv'
+                if test_exclusion_file.exists():
+                    import pandas as pd
+                    test_df = pd.read_csv(test_exclusion_file, encoding='utf-8')
+                    # Support both 'filename' and 'image_filename' column names
+                    filename_col = 'filename' if 'filename' in test_df.columns else 'image_filename'
+                    test_files = set(test_df[filename_col].tolist())
+                    exclude_files.update(test_files)
+                    if args.verbose:
+                        print(f"Excluding {len(test_files)} test files from training")
+
+                if args.verbose:
+                    print(f"Using dataset variant: {args.dataset_variant}")
+                    print(f"Data directory: {config['cwt_data_dir']}")
+                    print(f"Label file: {label_file}")
+            else:
+                # Using direct label_file without dataset variant
+                label_file = Path(config['label_file'])
+                if args.verbose:
+                    print(f"Using direct label file: {label_file}")
+                    print(f"Data directory: {config.get('cwt_data_dir', 'multi-channel')}")
+
+            # Resolve data directories for multi-channel support
+            from config import resolve_cwt_data_channels
+            try:
+                channels_dict, channel_labels, channel_paths = resolve_cwt_data_channels(config)
+                if args.verbose:
+                    print(f"Loading data with channels: {channel_labels}")
+                    print(f"DEBUG: Channel paths resolved: {channel_paths}")
+            except:
+                # Fallback for backward compatibility
+                channel_paths = [config['cwt_data_dir']]
+                if args.verbose:
+                    print(f"Loading single-channel data from: {config['cwt_data_dir']}")
+                    print(f"DEBUG: Using fallback channel path: {channel_paths}")
+
+            # Load using CSV-based flat directory loader
+            X, y, class_counts, label_encoder = load_cwt_image_data_from_csv(
+                channel_paths,
+                label_file,
+                img_size,
+                verbose=args.verbose,
+                exclude_files=exclude_files
+            )
+        else:
+            # Standard class-based directory structure loading
+            # Resolve data directories for multi-channel support
+            from config import resolve_cwt_data_channels
+            try:
+                channels_dict, channel_labels, channel_paths = resolve_cwt_data_channels(config)
+                if args.verbose:
+                    print(f"Loading data with channels: {channel_labels}")
+            except:
+                # Fallback for backward compatibility
+                channel_paths = [config['cwt_data_dir']]
+                if args.verbose:
+                    print(f"Loading single-channel data from: {config['cwt_data_dir']}")
+
+            X, y, class_counts, label_encoder = load_cwt_image_data(
+                channel_paths,
+                img_size,
+                verbose=args.verbose,
+                exclude_files=exclude_files
+            )
         
         if not args.concise:
             print(f"Dataset loaded: {X.shape} images, {len(np.unique(y))} classes")

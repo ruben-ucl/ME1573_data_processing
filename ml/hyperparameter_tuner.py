@@ -368,7 +368,17 @@ class HyperparameterTuner:
         else:
             # Use default template
             self.base_config = self.strategy.get_config_template()
-        
+
+        # Override channel configuration if multi-channel mode is explicitly enabled
+        # This allows using single-channel base configs with --multi-channel flag
+        if multi_channel and classifier_type == 'cwt_image':
+            from config import CWT_DATA_DIR_DICT
+            self.base_config['cwt_data_channels'] = CWT_DATA_DIR_DICT
+            self.base_config['img_channels'] = len(CWT_DATA_DIR_DICT)
+            self.base_config['cwt_data_dir'] = None  # Clear single-channel path
+            if verbose:
+                print(f"Multi-channel mode enabled: overriding base config to use {len(CWT_DATA_DIR_DICT)} channels")
+
         # Use centralized configuration for output directory
         if output_root:
             self.base_output_root = Path(output_root)

@@ -23,7 +23,7 @@ from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 
-debug = True
+debug = False  # Set to True for detailed CWT debugging output
 
 class Window(QMainWindow):
     def __init__(self):
@@ -81,6 +81,10 @@ class Window(QMainWindow):
         self.coiMaskingCheckbox = QCheckBox('COI Masking')
         self.coiMaskingCheckbox.setToolTip('Set Cone of Influence edge artifacts to 0')
 
+        # Global vmax calculation checkbox
+        self.globalVmaxCheckbox = QCheckBox('Auto vmax')
+        self.globalVmaxCheckbox.setToolTip('Calculate vmax automatically from dataset')
+
         # Setup Row 1: Load data + basic window parameters
         inputsRow1 = QGroupBox('Setup - Basic')
         inputsLayout1 = QHBoxLayout()
@@ -110,6 +114,7 @@ class Window(QMainWindow):
         inputsLayout2.addWidget(self.cwtModePerWindow, stretch=2)
         inputsLayout2.addStretch(1)
         inputsLayout2.addWidget(self.coiMaskingCheckbox, stretch=2)
+        inputsLayout2.addWidget(self.globalVmaxCheckbox, stretch=2)
         inputsRow2.setLayout(inputsLayout2)
         
         # Auto labelling inputs
@@ -442,6 +447,11 @@ class Controller(QObject):
         self.cwtMode = 'full'  # Default to full signal
         # COI masking setting
         self.coiMasking = False  # Default to no masking
+        # Global vmax calculation setting
+        self.useGlobalVmax = False  # Default to hardcoded vmax
+        self.calculatedVmax = None  # Store calculated value
+        # Percentile-based vmax (set to None for absolute max, or 99.5 for 99.5th percentile)
+        self.vmaxPercentile = 99.9  # Saturate top 0.1% for better contrast
         # Initialise sampling rate variable
         self.samplingRate = 0 # Hz
         # Define file locations
@@ -491,6 +501,8 @@ class Controller(QObject):
         self.view.cwtModePerWindow.toggled.connect(lambda: self.update_cwt_mode('per-window') if self.view.cwtModePerWindow.isChecked() else None)
         # COI masking checkbox
         self.view.coiMaskingCheckbox.stateChanged.connect(lambda: self.update_coi_masking(self.view.coiMaskingCheckbox.isChecked()))
+        # Global vmax checkbox
+        self.view.globalVmaxCheckbox.stateChanged.connect(lambda: self.update_global_vmax_setting(self.view.globalVmaxCheckbox.isChecked()))
         self.updateReadout.connect(self.view.set_readout_text)
         self.view.buttons['Next'].clicked.connect(lambda: self.navigate(fileDirection='+'))
         self.view.buttons['Previous'].clicked.connect(lambda: self.navigate(fileDirection='-'))
@@ -512,6 +524,7 @@ class Controller(QObject):
         print(f'window offset = {self.windowOffset}')
         print(f'CWT mode = {self.cwtMode}')
         print(f'COI masking = {self.coiMasking}')
+        print(f'Use global vmax = {self.useGlobalVmax}')
 
     def update_pd_channel(self, value):
         """Update PD channel when selector text changes."""
@@ -558,6 +571,11 @@ class Controller(QObject):
 
     def update_coi_masking(self, enabled):
         self.coiMasking = enabled
+        self.print_settings()
+
+    def update_global_vmax_setting(self, enabled):
+        """Update global vmax calculation setting."""
+        self.useGlobalVmax = enabled
         self.print_settings()
         
     def show_viewer_windows(self):
@@ -758,6 +776,191 @@ class Controller(QObject):
         self.view.btnCancelAuto.setEnabled(False)
         print('AUTO-LABELLING CANCELLED BY USER')
 
+    def calculate_global_vmax(self, window_definitions):
+        """
+        Calculate global vmax by processing all CWTs.
+
+        Returns the maximum CWT coefficient value across all windows
+        in the dataset for consistent normalization. Can use either absolute
+        maximum or percentile-based maximum for better contrast.
+
+        Args:
+            window_definitions: DataFrame with trackid, window_n, window_start_ms, window_end_ms
+
+        Returns:
+            float: Maximum CWT coefficient value (absolute or percentile-based)
+        """
+        print(f'\n{"="*60}')
+        print(f'CALCULATING GLOBAL VMAX: Pass 1/2')
+        print(f'Processing {len(window_definitions)} windows to find maximum...')
+        if self.vmaxPercentile is not None:
+            print(f'Using {self.vmaxPercentile}th percentile (saturates top {100-self.vmaxPercentile:.1f}%)')
+        else:
+            print(f'Using absolute maximum (no saturation)')
+        print(f'{"="*60}\n')
+
+        window_max_values = []  # Store all window max values for percentile calculation
+        windows_by_track = window_definitions.groupby('trackid')
+        processed = 0
+        start_time = pd.Timestamp.now()
+
+        for trackid, track_windows in windows_by_track:
+            # Check for cancellation
+            if self.cancel_auto_labelling:
+                return None
+
+            # Skip excluded tracks
+            if trackid in self.exclude:
+                processed += len(track_windows)
+                continue
+
+            # Get track data
+            try:
+                data_row = self.data.loc[trackid]
+            except KeyError:
+                print(f'{trackid} not found, skipping')
+                processed += len(track_windows)
+                continue
+
+            # Compute CWT for this track (same logic as auto_label)
+            if self.cwtMode == 'full':
+                # Compute full CWT once
+                cwt_spec = self.cwt(data=data_row, wavelet=self.wavelet, n_freqs=self.n_freqs)
+
+                # Process all windows from cached CWT
+                for row in track_windows.itertuples():
+                    # Extract window
+                    t = cwt_spec['t']
+                    t_ms = t * 1000
+                    window_start_idx = np.argmin(np.abs(t_ms - row.window_start_ms))
+                    window_end_idx = np.argmin(np.abs(t_ms - row.window_end_ms))
+                    cwt_windowed = cwt_spec['cwtmatr'][:, window_start_idx:window_end_idx]
+
+                    # Track maximum for this window
+                    window_max = cwt_windowed.max()
+                    window_max_values.append(window_max)
+
+                    processed += 1
+
+                    # Progress update
+                    if processed % 100 == 0:
+                        elapsed = (pd.Timestamp.now() - start_time).total_seconds()
+                        rate = processed / elapsed if elapsed > 0 else 0
+                        current_max = max(window_max_values)
+                        pct = 100 * processed / len(window_definitions)
+                        self.view.update_progress(
+                            int(pct),
+                            f'Pass 1: {trackid} | {processed}/{len(window_definitions)} ({pct:.1f}%) | Max={current_max:.1f}'
+                        )
+            else:
+                # Per-window mode: compute each separately
+                for row in track_windows.itertuples():
+                    # Set window parameters for per-window CWT
+                    self.wStart = round(row.window_start_ms, 3)
+                    self.wEnd = round(row.window_end_ms, 3)
+
+                    # Compute CWT for this window
+                    cwt_spec = self.cwt(data=data_row, wavelet=self.wavelet, n_freqs=self.n_freqs)
+
+                    # Track maximum for this window (CWT already windowed in per-window mode)
+                    window_max = cwt_spec['cwtmatr'].max()
+                    window_max_values.append(window_max)
+
+                    processed += 1
+
+                    # Progress update
+                    if processed % 100 == 0:
+                        elapsed = (pd.Timestamp.now() - start_time).total_seconds()
+                        rate = processed / elapsed if elapsed > 0 else 0
+                        current_max = max(window_max_values)
+                        pct = 100 * processed / len(window_definitions)
+                        self.view.update_progress(
+                            int(pct),
+                            f'Pass 1: {trackid} | {processed}/{len(window_definitions)} ({pct:.1f}%) | Max={current_max:.1f}'
+                        )
+
+        # Calculate vmax from collected values
+        if not window_max_values:
+            print('ERROR: No valid windows processed')
+            return None
+
+        window_max_array = np.array(window_max_values)
+        absolute_max = window_max_array.max()
+
+        # Calculate percentiles for comprehensive report
+        percentiles = [95.0, 96.0, 97.0, 98.0, 98.5, 99.0, 99.5, 99.9, 100.0]
+        percentile_values = {p: np.percentile(window_max_array, p) if p < 100 else absolute_max
+                            for p in percentiles}
+
+        # Use percentile or absolute max
+        if self.vmaxPercentile is not None:
+            vmax = np.percentile(window_max_array, self.vmaxPercentile)
+            n_saturated = np.sum(window_max_array > vmax)
+            saturation_pct = 100 * n_saturated / len(window_max_array)
+        else:
+            vmax = absolute_max
+            n_saturated = 0
+            saturation_pct = 0.0
+
+        # Final console report (concise)
+        elapsed_total = (pd.Timestamp.now() - start_time).total_seconds()
+        print(f'\n{"="*60}')
+        print(f'GLOBAL VMAX CALCULATION COMPLETE')
+        print(f'Processed: {processed} windows | Time: {elapsed_total:.1f}s')
+        print(f'')
+        if self.vmaxPercentile is not None:
+            print(f'CALCULATED VMAX ({self.vmaxPercentile}th percentile): {vmax:.6f}')
+            print(f'Saturated: {n_saturated}/{len(window_max_array)} ({saturation_pct:.2f}%)')
+        else:
+            print(f'CALCULATED VMAX (absolute max): {vmax:.6f}')
+        print(f'{"="*60}\n')
+
+        # Save comprehensive percentile report to file
+        output_folder = self.get_output_folder()
+        report_path = Path(output_folder, 'vmax_percentile_report.txt')
+
+        with open(report_path, 'w') as f:
+            f.write('='*60 + '\n')
+            f.write('GLOBAL VMAX PERCENTILE REPORT\n')
+            f.write('='*60 + '\n\n')
+            f.write(f'Dataset: {len(window_max_array)} windows processed\n')
+            f.write(f'Wavelet: {self.wavelet}\n')
+            f.write(f'CWT Mode: {self.cwtMode}\n')
+            f.write(f'COI Masking: {self.coiMasking}\n')
+            f.write(f'Calculation time: {elapsed_total:.1f}s ({elapsed_total/60:.1f} min)\n')
+            f.write(f'Date: {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
+            f.write('\n' + '-'*60 + '\n')
+            f.write('VMAX VALUES BY PERCENTILE\n')
+            f.write('-'*60 + '\n\n')
+
+            for p in percentiles:
+                val = percentile_values[p]
+                if p < 100:
+                    n_sat = np.sum(window_max_array > val)
+                    sat_pct = 100 * n_sat / len(window_max_array)
+                    f.write(f'{p:5.1f}th percentile: {val:12.6f}  (saturates {sat_pct:5.2f}%)\n')
+                else:
+                    f.write(f'Absolute maximum: {val:12.6f}  (saturates  0.00%)\n')
+
+            f.write('\n' + '-'*60 + '\n')
+            f.write('USAGE NOTES\n')
+            f.write('-'*60 + '\n\n')
+            f.write('To use a specific percentile for future runs:\n')
+            f.write('1. Choose a percentile from the table above\n')
+            f.write('2. Update tools.py vmax_dict with the value, e.g.:\n')
+            f.write(f"   '{self.wavelet}': {percentile_values[99.5]:.6f}\n")
+            f.write('\n')
+            f.write('Or adjust self.vmaxPercentile in dataset_labeller.py\n')
+            f.write('to automatically use a different percentile.\n')
+            f.write('\n')
+            f.write(f'Current setting: {self.vmaxPercentile}th percentile\n' if self.vmaxPercentile else 'Current setting: absolute maximum\n')
+            f.write(f'Current vmax used: {vmax:.6f}\n')
+
+        print(f'Percentile report saved: {report_path}')
+        print()
+
+        return vmax
+
     def auto_label(self):
         """
         Auto-labelling mode: Process all windows from CSV without GUI interaction.
@@ -796,6 +999,24 @@ class Controller(QObject):
         # Group windows by trackid for efficient processing
         windows_by_track = window_definitions.groupby('trackid')
 
+        # PASS 1: Calculate global vmax if enabled
+        if self.useGlobalVmax:
+            self.calculatedVmax = self.calculate_global_vmax(window_definitions)
+
+            if self.calculatedVmax is None:
+                # Cancelled during vmax calculation
+                self.view.set_readout_text('Cancelled during vmax calculation')
+                self.view.progressBar.reset()
+                self.view.btnCancelAuto.setEnabled(False)
+                self.view.enable_controls()
+                return
+
+            print(f'Using calculated vmax: {self.calculatedVmax:.6f}')
+            print(f'\nStarting Pass 2/2: Saving images...\n')
+        else:
+            print(f'Using hardcoded vmax from tools.py')
+
+        # PASS 2: Now process and save images
         completed = 0
         start_time = pd.Timestamp.now()
 
@@ -833,17 +1054,19 @@ class Controller(QObject):
                     self.label = str(row.has_porosity)
 
                     # Save directly using cached CWT (no worker thread needed)
-                    self._save_cwt_from_cached(cwt_full)
+                    # Use calculated vmax if available, else use hardcoded from cwt_spec
+                    vmax_to_use = self.calculatedVmax if self.useGlobalVmax else None
+                    self._save_cwt_from_cached(cwt_full, override_vmax=vmax_to_use)
                     completed += 1
 
                     # Update progress every 100 windows
                     if completed % 100 == 0:
                         elapsed = (pd.Timestamp.now() - start_time).total_seconds()
                         rate = completed / elapsed if elapsed > 0 else 0
-                        eta = (n_windows - completed) / rate if rate > 0 else 0
+                        pct = 100 * completed / n_windows
                         self.view.update_progress(
-                            int(100*completed/n_windows),
-                            f'{completed}/{n_windows} | {rate:.1f} win/s | ETA: {eta:.0f}s'
+                            int(pct),
+                            f'{trackid} win {row.window_n} | {completed}/{n_windows} ({pct:.1f}%) | {rate:.1f} win/s'
                         )
             else:
                 # Per-window mode: must compute each separately (smart padding)
@@ -862,17 +1085,19 @@ class Controller(QObject):
                     cwt_result = self.cwt(data=data_row, wavelet=self.wavelet, n_freqs=self.n_freqs)
 
                     # Save directly (no worker thread)
-                    self._save_cwt_from_cached(cwt_result)
+                    # Use calculated vmax if available, else use hardcoded from cwt_spec
+                    vmax_to_use = self.calculatedVmax if self.useGlobalVmax else None
+                    self._save_cwt_from_cached(cwt_result, override_vmax=vmax_to_use)
                     completed += 1
 
                     # Update progress every 100 windows
                     if completed % 100 == 0:
                         elapsed = (pd.Timestamp.now() - start_time).total_seconds()
                         rate = completed / elapsed if elapsed > 0 else 0
-                        eta = (n_windows - completed) / rate if rate > 0 else 0
+                        pct = 100 * completed / n_windows
                         self.view.update_progress(
-                            int(100*completed/n_windows),
-                            f'{completed}/{n_windows} | {rate:.1f} win/s | ETA: {eta:.0f}s'
+                            int(pct),
+                            f'{trackid} win {row.window_n} | {completed}/{n_windows} ({pct:.1f}%) | {rate:.1f} win/s'
                         )
 
         # Final update
@@ -883,20 +1108,14 @@ class Controller(QObject):
         if self.cancel_auto_labelling:
             print(f'\n{"="*60}')
             print(f'AUTO-LABELLING CANCELLED')
-            print(f'Processed: {completed} of {n_windows} windows ({100*completed/n_windows:.1f}%)')
-            print(f'Time: {elapsed_total:.1f}s ({elapsed_total/60:.1f} min)')
-            print(f'Rate: {final_rate:.2f} windows/sec')
+            print(f'{completed}/{n_windows} windows ({100*completed/n_windows:.1f}%) | {elapsed_total:.1f}s | {final_rate:.2f} win/s')
             print(f'{"="*60}\n')
-
-            self.view.set_readout_text(f'Cancelled - {completed} of {n_windows} windows in {elapsed_total:.1f}s')
+            self.view.set_readout_text(f'Cancelled - {completed}/{n_windows} windows')
         else:
             print(f'\n{"="*60}')
             print(f'AUTO-LABELLING COMPLETE')
-            print(f'Processed: {completed} windows')
-            print(f'Time: {elapsed_total:.1f}s ({elapsed_total/60:.1f} min)')
-            print(f'Rate: {final_rate:.2f} windows/sec')
+            print(f'{completed} windows | {elapsed_total:.1f}s ({elapsed_total/60:.1f} min) | {final_rate:.2f} win/s')
             print(f'{"="*60}\n')
-
             self.view.set_readout_text(f'Done - {completed} windows in {elapsed_total:.1f}s')
 
         self.view.progressBar.reset()
@@ -1242,7 +1461,7 @@ class Controller(QObject):
             
             plt.close()
                  
-    def _save_cwt_from_cached(self, cwt_spec):
+    def _save_cwt_from_cached(self, cwt_spec, override_vmax=None):
         """
         OPTIMIZED: Save CWT image directly from cached cwt_spec without matplotlib overhead.
 
@@ -1251,6 +1470,7 @@ class Controller(QObject):
 
         Args:
             cwt_spec: CWT result dict from cwt() function
+            override_vmax: Optional override for vmax (used for global normalization)
         """
         from PIL import Image
         import matplotlib.cm as cm
@@ -1273,11 +1493,12 @@ class Controller(QObject):
             cwt_windowed = self._apply_coi_masking(cwt_windowed, cwt_spec['freqs'])
 
         # Normalize to 0-1 range using vmax
-        vmax = cwt_spec['vmax']
+        # Use override_vmax if provided (global calculation), else use per-wavelet hardcoded
+        vmax = override_vmax if override_vmax is not None else cwt_spec['vmax']
         cwt_normalized = np.clip(cwt_windowed / vmax, 0, 1)
 
         # Apply colormap
-        cmap_func = cm.get_cmap(self.cmap)
+        cmap_func = mpl.colormaps.get_cmap(self.cmap)
         cwt_colored = cmap_func(cwt_normalized)  # Returns RGBA (0-1)
 
         # Convert to RGB uint8 and flip vertically (matplotlib convention)

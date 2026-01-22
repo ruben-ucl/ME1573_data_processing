@@ -16,33 +16,9 @@ ML_ROOT = Path(__file__).parent  # Current ml/ directory
 PD_DATA_DIR = r"F:\AlSi10Mg single layer ffc\Photodiode_1ms_window_plots\window_plots_16bit"
 
 # Multi-channel CWT data configuration
-#
-# Usage Examples:
-#   - Multi-channel studies use ALL uncommented channels below
-#   - Channel ablation mode tests all combinations of uncommented channels
-#   - Single-channel mode: use --channel flag (e.g., --channel PD1_cmor2.5-0.5)
-#   - Comment out any channels you want to exclude from multi-channel studies
-#
-# Example: To run PD1 vs PD2 comparison with cmor1.5-1.0 only:
-#   Keep only: PD1_cmor1.5-1.0, PD2_cmor1.5-1.0
-#   Comment out all others
-#
-# Example: To compare wavelets on PD1:
-#   Keep only: PD1_cmor1.5-1.0, PD1_cmor2.5-0.5, PD1_mexh
-#   Comment out all PD2 channels
-#
 CWT_DATA_DIR_DICT = {
-    # ===== PD1 Channels =====
     "PD1_cmor1.5-1.0": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD1\cmor1_5-1_0\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
-    # "PD1_cmor2.5-0.5": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD1\cmor2_5-0_5\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
-    # "PD1_fbsp1-1.5-1.0": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD1\fbsp1-1_5-1_0\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
-    "PD1_mexh": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD1\mexh\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
-
-    # ===== PD2 Channels =====
-    "PD2_cmor1.5-1.0": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\cmor1_5-1_0\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
-    # "PD2_cmor2.5-0.5": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\cmor2_5-0_5\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
-    # "PD2_fbsp1-1.5-1.0": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\fbsp1-1_5-1_0\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
-    "PD2_mexh": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\mexh\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
+    "PD1_mexh": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\mexh\PD1\1.0_ms\1000-50000_Hz_256_steps\grey\full_signal'
 }
 default_channel = "PD1_cmor1.5-1.0"
 
@@ -94,24 +70,6 @@ def ensure_cwt_directories():
     """Create CWT-specific directories if they don't exist."""
     for directory in [CWT_OUTPUTS_DIR, CWT_LOGS_DIR, CWT_HYPEROPT_RESULTS_DIR]:
         directory.mkdir(parents=True, exist_ok=True)
-
-def get_model_dir(classifier_type='cwt_image', dataset_variant=None):
-    """
-    Get the model directory for a specific classifier and optional dataset variant.
-
-    Args:
-        classifier_type: 'cwt_image' or 'pd_signal'
-        dataset_variant: Optional dataset variant name
-
-    Returns:
-        Path: Model directory path
-    """
-    if classifier_type == 'cwt_image':
-        base_dir = CWT_OUTPUTS_DIR
-    else:
-        base_dir = PD_OUTPUTS_DIR
-
-    return base_dir
 
 # !TODO remove this deprecated helper function
 def get_data_dir():
@@ -206,7 +164,8 @@ def get_cwt_config_template(multi_channel=False, channel=None):
         'gradcam_threshold': 0.5,
         'label_file': default_labels['label_file'],
         'label_column': default_labels['label_column'],
-        'label_type': default_labels['label_type']
+        'label_type': default_labels['label_type'],
+        'skip_time_ms': 0.0,  # No time filtering by default
     })
 
     return config
@@ -236,9 +195,6 @@ def load_config(config_path=None, classifier_type='pd_signal', **overrides):
         try:
             with open(config_path, 'r') as f:
                 file_config = json.load(f)
-                # Filter out deprecated parameters
-                deprecated_params = {'skip_time_ms'}
-                file_config = {k: v for k, v in file_config.items() if k not in deprecated_params}
                 config.update(file_config)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in config file {config_path}: {e}")
@@ -246,10 +202,9 @@ def load_config(config_path=None, classifier_type='pd_signal', **overrides):
             raise IOError(f"Could not read config file {config_path}: {e}")
     elif config_path:
         raise FileNotFoundError(f"Config file not found: {config_path}")
-
-    # Apply command line overrides (filter out None values and deprecated parameters)
-    deprecated_params = {'skip_time_ms'}
-    overrides = {k: v for k, v in overrides.items() if v is not None and k not in deprecated_params}
+    
+    # Apply command line overrides (filter out None values)
+    overrides = {k: v for k, v in overrides.items() if v is not None}
     config.update(overrides)
     
     return config
@@ -332,94 +287,24 @@ def get_next_version_from_log(log_path=None, classifier_type='pd_signal'):
 def get_next_version_from_directory(directory, pattern='v*'):
     """Get next version number based on versioned directories."""
     from glob import glob
-
+    
     if not Path(directory).exists():
         return 1
-
+    
     try:
         version_dirs = glob(str(Path(directory) / pattern))
         existing_versions = []
-
+        
         for dir_path in version_dirs:
             dir_name = Path(dir_path).name
             version_num = parse_version(dir_name)
             if version_num is not None:
                 existing_versions.append(version_num)
-
+        
         return max(existing_versions) + 1 if existing_versions else 1
-
+        
     except Exception:
         return 1
-
-def get_config_by_version(version, classifier_type='cwt_image'):
-    """
-    Retrieve configuration for a specific experiment version.
-
-    Args:
-        version: Version string (e.g., 'v042', '42', 42) or config number
-        classifier_type: Type of classifier ('cwt_image' or 'pd_signal')
-
-    Returns:
-        dict: Configuration dictionary loaded from experiment log
-
-    Raises:
-        FileNotFoundError: If version not found in experiment log
-        ValueError: If config data is invalid
-    """
-    import pandas as pd
-    import json
-
-    # Format version consistently
-    version_str = format_version(version)
-
-    # Get experiment log path
-    if classifier_type == 'cwt_image':
-        log_path = get_cwt_experiment_log_path()
-    else:
-        log_path = get_pd_experiment_log_path()
-
-    if not log_path.exists():
-        raise FileNotFoundError(f"Experiment log not found: {log_path}")
-
-    # Load experiment log
-    try:
-        df = pd.read_csv(log_path, encoding='utf-8')
-    except Exception as e:
-        raise ValueError(f"Could not read experiment log: {e}")
-
-    # Find matching version
-    matching_rows = df[df['version'] == version_str]
-
-    if len(matching_rows) == 0:
-        raise FileNotFoundError(
-            f"Version {version_str} not found in experiment log.\n"
-            f"Available versions: {sorted(df['version'].dropna().unique())[:10]}..."
-        )
-
-    if len(matching_rows) > 1:
-        print(f"Warning: Multiple entries found for {version_str}, using the first one")
-
-    # Get the row
-    row = matching_rows.iloc[0]
-
-    # Extract config - check for config_json column first
-    if 'config_json' in row and pd.notna(row['config_json']):
-        try:
-            config = json.loads(row['config_json'])
-            return config
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in config for {version_str}: {e}")
-    else:
-        # Build config from individual columns
-        config = {}
-        for col in df.columns:
-            if col not in ['version', 'timestamp', 'source', 'config_json'] and pd.notna(row[col]):
-                config[col] = row[col]
-
-        if not config:
-            raise ValueError(f"No configuration data found for {version_str}")
-
-        return config
 
 def convert_numpy_types(obj):
     """Convert NumPy types to Python native types for JSON serialization."""
@@ -625,6 +510,7 @@ def log_experiment_results(classifier_type, version, start_time, end_time, confi
         'std_val_loss': float(np.std(val_losses)),
         
         # Training time
+        'duration_minutes': (end_time - start_time).total_seconds() / 60 if classifier_type == 'cwt_image' else None,
         'total_training_time_minutes': fold_results.get('training_time_minutes', (end_time - start_time).total_seconds() / 60) if classifier_type == 'pd_signal' else (end_time - start_time).total_seconds() / 60,
         
         # Hyperopt tracking
@@ -673,6 +559,7 @@ def log_experiment_results(classifier_type, version, start_time, end_time, confi
             'label_type': label_type,
             'label_column': config.get('label_column', ''),
             'label_file': config.get('label_file', ''),
+            'skip_time_ms': config.get('skip_time_ms', 0.0),
             'mean_epochs_trained': float(np.mean([r['total_epochs'] for r in fold_results])),
             'mean_best_epoch': float(np.mean([r['best_epoch'] for r in fold_results])),
 
@@ -896,7 +783,7 @@ def extract_experiment_result(classifier_type, version, config_number_in_run=Non
             'hyperopt_run_id': run_id,
             'mean_val_accuracy': latest_entry.get('mean_val_accuracy', 0.0),
             'std_val_accuracy': latest_entry.get('std_val_accuracy', 0.0),
-            'training_time_minutes': latest_entry.get('total_training_time_minutes', 0.0),
+            'training_time_minutes': latest_entry.get('duration_minutes', latest_entry.get('total_training_time_minutes', 0.0)),
             'learning_rate': latest_entry.get('learning_rate', 0.0),
             'batch_size': latest_entry.get('batch_size', 0),
             'epochs': latest_entry.get('epochs', 0),
@@ -1011,13 +898,10 @@ def create_experiment_summary_files(classifier_type, output_dir, version, config
 
     # Add classifier-specific content
     if classifier_type == 'cwt_image':
-        # Handle both old and new augmentation systems
-        aug_display = config.get('augment_fraction', config.get('augment_probability', 0.0))
-
         config_section += f"""
 - Dense Dropout: {config['dense_dropout']}
 - Use Batch Norm: {config.get('use_batch_norm', False)}
-- Augmentation Fraction: {aug_display}"""
+- Augmentation Fraction: {config['augment_fraction']}"""
         
         data_section += f"""
 - Image Size: {data_info.get('img_width', 'N/A')}x{data_info.get('img_height', 'N/A')}
@@ -1042,13 +926,10 @@ def create_experiment_summary_files(classifier_type, output_dir, version, config
                ))])}"""
         
     elif classifier_type == 'pd_signal':
-        # Handle both old and new augmentation systems
-        aug_display = config.get('augment_fraction', config.get('augment_probability', 0.0))
-
         config_section += f"""
 - Dense Dropout: {config['dense_dropout']}
 - Use Batch Norm: {config.get('use_batch_norm', True)}
-- Augmentation: {aug_display}"""
+- Augmentation: {config.get('augment_fraction', 0.0)}"""
     
     # Combine all sections
     readable_summary = f"""Experiment Version {version} Summary
@@ -1166,90 +1047,6 @@ def save_fold_plots(classifier_type, y_true, y_pred, history, fold, output_dir, 
         
         if not concise:
             print(f"Training history plot saved: {history_filename}")
-
-# -------------------------
-# Dataset Variant Support
-# -------------------------
-
-def load_dataset_variant_info(dataset_name):
-    """
-    Load dataset variant configuration and determine training mode.
-
-    Searches for dataset variant in dataset_definitions directories relative to
-    the CWT data directory structure.
-
-    Args:
-        dataset_name (str): Name of dataset variant in dataset_definitions/
-
-    Returns:
-        dict: Dataset configuration with keys:
-            - mode: 'k_fold_cv' or 'train_test_split'
-            - config: Full dataset config from JSON
-            - dataset_dir: Path to dataset directory
-
-    Raises:
-        FileNotFoundError: If dataset variant doesn't exist
-        ValueError: If dataset config is invalid
-    """
-    import json
-
-    # Search for dataset in dataset_definitions directories
-    search_paths = []
-
-    try:
-        cwt_data_path = Path(get_default_cwt_data_dir())
-
-        # Navigate up from deep CWT directory to find root
-        current = cwt_data_path
-        for _ in range(10):
-            if 'dataset_definitions' in [d.name for d in current.iterdir() if d.is_dir()]:
-                dataset_defs = current / 'dataset_definitions' / dataset_name
-                search_paths.append(dataset_defs)
-                break
-            current = current.parent
-            if current == current.parent:
-                break
-
-        # Fallback to CWT_labelled_windows level
-        if not search_paths:
-            current = cwt_data_path
-            while current.name not in ['', '/'] and not current.name.startswith('CWT'):
-                current = current.parent
-            if current.name.startswith('CWT'):
-                dataset_defs = current / 'dataset_definitions' / dataset_name
-                search_paths.append(dataset_defs)
-    except Exception:
-        pass
-
-    # Find the dataset
-    dataset_dir = None
-    for path in search_paths:
-        if path.exists() and (path / 'dataset_config.json').exists():
-            dataset_dir = path
-            break
-
-    if dataset_dir is None:
-        searched = '\n  '.join(str(p) for p in search_paths)
-        raise FileNotFoundError(
-            f"Dataset variant '{dataset_name}' not found. Searched:\n  {searched}\n"
-            f"Run: python ml/prepare_training_dataset.py --list-datasets"
-        )
-
-    config_file = dataset_dir / 'dataset_config.json'
-
-    with open(config_file, 'r', encoding='utf-8') as f:
-        config = json.load(f)
-
-    mode = config['statistics']['mode']
-
-    if mode not in ['k_fold_cv', 'train_test_split']:
-        raise ValueError(f"Invalid dataset mode: {mode}")
-
-    return {
-        'mode': mode,
-        'config': config,
-        'dataset_dir': dataset_dir
-    }
 
 # -------------------------
 # Multi-Channel CWT Support
