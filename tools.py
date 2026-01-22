@@ -474,7 +474,7 @@ def get_cwt_scales(wavelet, num=512, fmin=1000, fmax=50000, sampling_rate=100000
     
     # vmax values for visualization (wavelet-dependent)
     vmax_dict = {
-        'cmor1.5-1.0': 0.5, 'cmor2.5-0.5': 150 , 'cmor3.0-0.5': 150, 'cmor10.0-0.3': 150,
+        'cmor1.5-1.0': 150, 'cmor2.5-0.5': 150 , 'cmor3.0-0.5': 150, 'cmor10.0-0.3': 150,
         'mexh': 400, 'morl': 300, 'gaus1': 300, 'gaus2': 150,
         'fbsp2-1.0-1.0': 300, 'fbsp4-0.6-1.0': 300, 'fbsp1-1.5-1.0': 200,
         'shan1.5-1.0': 200, 'cgau8': 150
