@@ -1065,22 +1065,35 @@ def main():
                 dataset_info = load_dataset_variant_info(args.dataset_variant)
                 dataset_dir = dataset_info['dataset_dir']
                 dataset_config = dataset_info['config']
+                is_multi_channel = dataset_info['is_multi_channel']
+                num_channels = dataset_info['num_channels']
 
-                # Override config data_dir with variant's data_dir
-                config['cwt_data_dir'] = dataset_config['data_dir']
+                # Extract data_dir (can be string or dict)
+                data_dir = dataset_config['data_dir']
 
-                # Also update cwt_data_channels if it exists (multi-channel configs)
-                # to ensure resolve_cwt_data_channels returns the correct path
-                if 'cwt_data_channels' in config and config['cwt_data_channels']:
-                    # Update all channels to point to the dataset variant's path
-                    for channel_key in config['cwt_data_channels'].keys():
-                        config['cwt_data_channels'][channel_key] = dataset_config['data_dir']
+                # Handle multi-channel dataset variant
+                if is_multi_channel:
+                    # data_dir is a dict: use it to populate cwt_data_channels
+                    config['cwt_data_channels'] = data_dir  # Dict mapping labels to paths
+                    config['img_channels'] = num_channels
+                    config['cwt_data_dir'] = None  # Clear single-channel path
 
-                # DEBUG: Verify the override worked
-                if args.verbose:
-                    print(f"DEBUG: Overrode config['cwt_data_dir'] = {config['cwt_data_dir']}")
-                    if 'cwt_data_channels' in config:
-                        print(f"DEBUG: Overrode config['cwt_data_channels'] = {config['cwt_data_channels']}")
+                    if args.verbose:
+                        print(f"Using multi-channel dataset variant: {args.dataset_variant}")
+                        print(f"  Channels: {list(data_dir.keys())}")
+                        print(f"  img_channels: {num_channels}")
+                else:
+                    # data_dir is a string: single-channel mode
+                    config['cwt_data_dir'] = data_dir
+
+                    # Also update cwt_data_channels if it exists (for consistency)
+                    if 'cwt_data_channels' in config and config['cwt_data_channels']:
+                        for channel_key in config['cwt_data_channels'].keys():
+                            config['cwt_data_channels'][channel_key] = data_dir
+
+                    if args.verbose:
+                        print(f"Using single-channel dataset variant: {args.dataset_variant}")
+                        print(f"  Data directory: {data_dir}")
 
                 # Get label file path
                 label_file = dataset_dir / dataset_config['label_file']
@@ -1098,8 +1111,7 @@ def main():
                         print(f"Excluding {len(test_files)} test files from training")
 
                 if args.verbose:
-                    print(f"Using dataset variant: {args.dataset_variant}")
-                    print(f"Data directory: {config['cwt_data_dir']}")
+                    print(f"Data configuration: {config.get('cwt_data_channels', config.get('cwt_data_dir'))}")
                     print(f"Label file: {label_file}")
             else:
                 # Using direct label_file without dataset variant

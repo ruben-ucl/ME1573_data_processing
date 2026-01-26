@@ -39,10 +39,10 @@ CWT_DATA_DIR_DICT = {
     "PD1_mexh": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD1\mexh\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
 
     # ===== PD2 Channels =====
-    "PD2_cmor1.5-1.0": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\cmor1_5-1_0\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
+    # "PD2_cmor1.5-1.0": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\cmor1_5-1_0\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
     # "PD2_cmor2.5-0.5": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\cmor2_5-0_5\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
     # "PD2_fbsp1-1.5-1.0": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\fbsp1-1_5-1_0\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
-    "PD2_mexh": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\mexh\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
+    # "PD2_mexh": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\mexh\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
 }
 default_channel = "PD1_cmor1.5-1.0"
 
@@ -1178,6 +1178,10 @@ def load_dataset_variant_info(dataset_name):
     Searches for dataset variant in dataset_definitions directories relative to
     the CWT data directory structure.
 
+    Auto-detects single vs multi-channel from data_dir type:
+    - String: Single-channel (e.g., "F:\\path\\to\\data")
+    - Dict: Multi-channel (e.g., {"PD1": "F:\\path1", "PD2": "F:\\path2"})
+
     Args:
         dataset_name (str): Name of dataset variant in dataset_definitions/
 
@@ -1186,6 +1190,8 @@ def load_dataset_variant_info(dataset_name):
             - mode: 'k_fold_cv' or 'train_test_split'
             - config: Full dataset config from JSON
             - dataset_dir: Path to dataset directory
+            - is_multi_channel: Boolean flag (auto-detected from data_dir type)
+            - num_channels: Number of channels (auto-counted)
 
     Raises:
         FileNotFoundError: If dataset variant doesn't exist
@@ -1245,10 +1251,17 @@ def load_dataset_variant_info(dataset_name):
     if mode not in ['k_fold_cv', 'train_test_split']:
         raise ValueError(f"Invalid dataset mode: {mode}")
 
+    # Auto-detect format from data_dir type
+    data_dir = config.get('data_dir')
+    is_multi_channel = isinstance(data_dir, dict)
+    num_channels = len(data_dir) if is_multi_channel else 1
+
     return {
         'mode': mode,
         'config': config,
-        'dataset_dir': dataset_dir
+        'dataset_dir': dataset_dir,
+        'is_multi_channel': is_multi_channel,
+        'num_channels': num_channels
     }
 
 # -------------------------

@@ -370,14 +370,42 @@ class HyperparameterTuner:
             self.base_config = self.strategy.get_config_template()
 
         # Override channel configuration if multi-channel mode is explicitly enabled
-        # This allows using single-channel base configs with --multi-channel flag
-        if multi_channel and classifier_type == 'cwt_image':
+        # BUT: dataset variant takes precedence if specified
+        if multi_channel and classifier_type == 'cwt_image' and not dataset_variant:
             from config import CWT_DATA_DIR_DICT
             self.base_config['cwt_data_channels'] = CWT_DATA_DIR_DICT
             self.base_config['img_channels'] = len(CWT_DATA_DIR_DICT)
             self.base_config['cwt_data_dir'] = None  # Clear single-channel path
             if verbose:
                 print(f"Multi-channel mode enabled: overriding base config to use {len(CWT_DATA_DIR_DICT)} channels")
+        elif dataset_variant and classifier_type == 'cwt_image':
+            # Load dataset variant info and update base config with channel information
+            from config import load_dataset_variant_info
+            try:
+                dataset_info = load_dataset_variant_info(dataset_variant)
+                is_multi_channel = dataset_info['is_multi_channel']
+                num_channels = dataset_info['num_channels']
+                data_dir = dataset_info['config']['data_dir']
+
+                if is_multi_channel:
+                    # Update base config with multi-channel info from dataset
+                    self.base_config['cwt_data_channels'] = data_dir  # Dict mapping labels to paths
+                    self.base_config['img_channels'] = num_channels
+                    self.base_config['cwt_data_dir'] = None  # Clear single-channel path
+                    if verbose:
+                        print(f"Dataset variant '{dataset_variant}' configures {num_channels} channels")
+                        if multi_channel:
+                            print(f"Note: Dataset variant determines channel configuration (--multi-channel ignored)")
+                else:
+                    # Single-channel dataset variant
+                    self.base_config['cwt_data_dir'] = data_dir
+                    self.base_config['img_channels'] = 1
+                    if verbose:
+                        print(f"Dataset variant '{dataset_variant}' configures single-channel mode")
+            except Exception as e:
+                if verbose:
+                    print(f"Warning: Could not load dataset variant info: {e}")
+                    print(f"Dataset variant will be loaded by classifier during training")
 
         # Use centralized configuration for output directory
         if output_root:

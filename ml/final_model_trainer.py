@@ -423,21 +423,34 @@ class FinalModelTrainer:
         
         # Get classifier-specific parameters
         if self.classifier_type == 'cwt_image':
-            data_dir = config['cwt_data_dir']
+            # Handle both single-channel (string) and multi-channel (dict) cwt_data_dir
+            cwt_data = config.get('cwt_data_dir')
+            if isinstance(cwt_data, dict):
+                # Multi-channel: use first channel for file enumeration
+                data_dir = list(cwt_data.values())[0]
+                is_multi_channel = True
+                channel_paths = list(cwt_data.values())
+            else:
+                data_dir = cwt_data
+                is_multi_channel = False
+                channel_paths = None
+
             img_width = config['img_width']
             img_height = config['img_height']
             img_channels = config['img_channels']
             file_pattern = "*.png"
         else:  # pd_signal
             data_dir = config['data_dir']
+            is_multi_channel = False
+            channel_paths = None
             img_width = config['img_width']
             img_height = None  # PD doesn't use height
             img_channels = None
             file_pattern = "*.tiff"
-        
+
         # Get all file paths and labels
         file_paths, labels = [], []
-        
+
         for class_label in ['0', '1']:  # Assuming binary classification
             class_path = Path(data_dir) / class_label
             if class_path.exists():
@@ -490,10 +503,13 @@ class FinalModelTrainer:
         # Load and save test data to pickle for the tester
         print(f"Loading test set images...")
         test_data_file = output_dir / 'test_data.pkl'
-        
+
         # Load test images based on classifier type
         if self.classifier_type == 'cwt_image':
-            X_test, y_test_filtered, test_files_filtered = self._load_cwt_test_images(test_files, test_labels, img_width, img_height, img_channels)
+            X_test, y_test_filtered, test_files_filtered = self._load_cwt_test_images(
+                test_files, test_labels, img_width, img_height, img_channels,
+                channel_paths=channel_paths if is_multi_channel else None
+            )
         else:  # pd_signal
             X_test, y_test_filtered, test_files_filtered = self._load_pd_test_images(test_files, test_labels, img_width)
         
@@ -558,18 +574,31 @@ class FinalModelTrainer:
         
         # Get classifier-specific parameters
         if self.classifier_type == 'cwt_image':
-            data_dir = config['cwt_data_dir']
+            # Handle both single-channel (string) and multi-channel (dict) cwt_data_dir
+            cwt_data = config.get('cwt_data_dir')
+            if isinstance(cwt_data, dict):
+                # Multi-channel: use first channel for file enumeration
+                data_dir = list(cwt_data.values())[0]
+                is_multi_channel = True
+                channel_paths = list(cwt_data.values())
+            else:
+                data_dir = cwt_data
+                is_multi_channel = False
+                channel_paths = None
+
             img_width = config['img_width']
             img_height = config['img_height']
             img_channels = config['img_channels']
             file_pattern = "*.png"
         else:  # pd_signal
             data_dir = config['data_dir']
+            is_multi_channel = False
+            channel_paths = None
             img_width = config['img_width']
             img_height = None
             img_channels = None
             file_pattern = "*.tiff"
-        
+
         # Find all files and separate by trackid
         all_files = []
         test_files = []
@@ -641,10 +670,13 @@ class FinalModelTrainer:
         
         # Load test images based on classifier type
         if self.classifier_type == 'cwt_image':
-            X_test, y_test_filtered, test_files_filtered = self._load_cwt_test_images(test_files, test_labels, img_width, img_height, img_channels)
+            X_test, y_test_filtered, test_files_filtered = self._load_cwt_test_images(
+                test_files, test_labels, img_width, img_height, img_channels,
+                channel_paths=channel_paths if is_multi_channel else None
+            )
         else:  # pd_signal
             X_test, y_test_filtered, test_files_filtered = self._load_pd_test_images(test_files, test_labels, img_width)
-        
+
         # Create test data file
         test_data_file = output_dir / 'test_set_data.pkl'
         test_data = {
@@ -670,37 +702,88 @@ class FinalModelTrainer:
         
         return test_data_file, exclusion_file
 
-    def _load_cwt_test_images(self, test_files, test_labels, img_width, img_height, img_channels):
-        """Load CWT test images from file paths."""
+    def _load_cwt_test_images(self, test_files, test_labels, img_width, img_height, img_channels, channel_paths=None):
+        """
+        Load CWT test images from file paths.
+
+        Args:
+            test_files: Array of file paths (for single-channel) or filenames (for multi-channel)
+            test_labels: Array of labels
+            img_width: Target image width
+            img_height: Target image height
+            img_channels: Number of channels expected
+            channel_paths: List of channel directories (for multi-channel) or None (for single-channel)
+
+        Returns:
+            tuple: (X_test array, filtered labels list, filtered files list)
+        """
         X_test = []
         files_filtered = []
         y_test_filtered = []
-        
+
+        # Determine if multi-channel based on channel_paths
+        is_multi_channel = channel_paths is not None and len(channel_paths) > 1
+
         for class_label in [0, 1]:
             class_files = test_files[test_labels == class_label]
-            for file_path in class_files:
+            for file_path_or_name in class_files:
                 try:
-                    # Load CWT image (PNG format)
-                    img = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
-                    if img is not None:
+                    if is_multi_channel:
+                        # Multi-channel: test_files contains filenames, load from each channel directory
+                        filename = Path(file_path_or_name).name if isinstance(file_path_or_name, str) and ('/' in file_path_or_name or '\\' in file_path_or_name) else file_path_or_name
+
+                        channels = []
+                        for channel_path in channel_paths:
+                            img_path = Path(channel_path) / filename
+
+                            if not img_path.exists():
+                                raise FileNotFoundError(f"Image not found: {img_path}")
+
+                            # Load and preprocess single channel
+                            channel_img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
+                            if channel_img is None:
+                                raise ValueError(f"Failed to read image: {img_path}")
+
+                            # Resize to expected dimensions
+                            channel_img = cv2.resize(channel_img, (img_width, img_height))
+
+                            # Normalize to [0, 1]
+                            channel_img = channel_img.astype(np.float32) / 255.0
+
+                            channels.append(channel_img)
+
+                        # Stack channels: (H, W, C)
+                        img = np.stack(channels, axis=-1)
+                        files_filtered.append(filename)
+
+                    else:
+                        # Single-channel: test_files contains full paths
+                        file_path = file_path_or_name
+
+                        # Load CWT image (PNG format)
+                        img = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
+                        if img is None:
+                            raise ValueError(f"Failed to read image: {file_path}")
+
                         # Resize to expected dimensions
                         img = cv2.resize(img, (img_width, img_height))
-                        
+
                         # Add channel dimension if needed
                         if img_channels == 1:
                             img = np.expand_dims(img, axis=-1)
-                        
+
                         # Normalize to [0, 1]
                         img = img.astype(np.float32) / 255.0
-                        
-                        X_test.append(img)
-                        y_test_filtered.append(class_label)
                         files_filtered.append(file_path)
+
+                    X_test.append(img)
+                    y_test_filtered.append(class_label)
+
                 except Exception as e:
-                    self.logger.warning(f"Could not load CWT test image {file_path}: {e}")
+                    self.logger.warning(f"Could not load CWT test image {file_path_or_name}: {e}")
                     if self.verbose:
-                        print(f"Warning: Could not load CWT test image {file_path}: {e}")
-        
+                        print(f"Warning: Could not load CWT test image {file_path_or_name}: {e}")
+
         return np.array(X_test), y_test_filtered, files_filtered
 
     def _load_pd_test_images(self, test_files, test_labels, img_width):
@@ -1538,20 +1621,38 @@ class FinalModelTrainer:
                     print(f"❌ Cannot determine data directory")
                     return False
 
-            print(f"Loading test images from: {data_dir}")
+            # Determine if multi-channel from data_dir type
+            is_multi_channel = isinstance(data_dir, dict)
 
-            # Build file paths and load images
+            if is_multi_channel:
+                channel_paths = list(data_dir.values())
+                print(f"Loading test images from {len(channel_paths)} channels:")
+                for label, path in data_dir.items():
+                    print(f"  {label}: {path}")
+            else:
+                channel_paths = [data_dir]
+                print(f"Loading test images from: {data_dir}")
+
+            # Build file paths/filenames and load images
             test_files = []
             test_labels = []
 
             for _, row in df_test.iterrows():
                 filename = row['filename']
                 label = int(row['has_porosity'])
-                file_path = Path(data_dir) / filename
 
-                if file_path.exists():
-                    test_files.append(str(file_path))
-                    test_labels.append(label)
+                if is_multi_channel:
+                    # Multi-channel: verify file exists in first channel (will check all during loading)
+                    file_path = Path(channel_paths[0]) / filename
+                    if file_path.exists():
+                        test_files.append(filename)  # Store just filename for multi-channel
+                        test_labels.append(label)
+                else:
+                    # Single-channel: store full path
+                    file_path = Path(data_dir) / filename
+                    if file_path.exists():
+                        test_files.append(str(file_path))
+                        test_labels.append(label)
 
             if not test_files:
                 print(f"❌ No test files found matching CSV paths")
@@ -1569,7 +1670,8 @@ class FinalModelTrainer:
                 img_height, img_width = img_shape[1], img_shape[2]
                 img_channels = img_shape[3] if len(img_shape) > 3 else 1
                 X_test, y_test_filtered, test_files_filtered = self._load_cwt_test_images(
-                    test_files_arr, test_labels_arr, img_width, img_height, img_channels
+                    test_files_arr, test_labels_arr, img_width, img_height, img_channels,
+                    channel_paths=channel_paths if is_multi_channel else None
                 )
             else:
                 # PD signal

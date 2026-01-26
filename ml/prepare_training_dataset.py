@@ -96,6 +96,48 @@ def parse_filename(filename):
         return {'track_id': 'unknown', 'window_index': 0}
 
 
+def get_channel_paths_for_dataset(args):
+    """
+    Get channel paths for dataset preparation from arguments.
+
+    Args:
+        args: Parsed command-line arguments
+
+    Returns:
+        dict: {channel_label: path} mapping
+    """
+    from ml.config import CWT_DATA_DIR_DICT, default_channel
+    from pathlib import Path
+
+    # Option 1: --multi-channel flag (use all from config)
+    if args.multi_channel:
+        if args.data_paths:
+            raise ValueError("Cannot use both --multi-channel and --data-paths")
+        print(f"Using multi-channel mode: loading all channels from CWT_DATA_DIR_DICT")
+        return CWT_DATA_DIR_DICT.copy()
+
+    # Option 2: --data-paths (explicit paths)
+    elif args.data_paths:
+        paths = args.data_paths
+
+        # Auto-generate labels if not provided
+        if args.channel_labels:
+            if len(args.channel_labels) != len(paths):
+                raise ValueError(f"Number of labels ({len(args.channel_labels)}) must match paths ({len(paths)})")
+            labels = args.channel_labels
+        else:
+            # Auto-generate labels from paths (e.g., channel_1, channel_2)
+            labels = [f"channel_{i+1}" for i in range(len(paths))]
+
+        print(f"Using {len(paths)} explicit data path(s)")
+        return dict(zip(labels, paths))
+
+    # Option 3: Default (single channel from config)
+    else:
+        print(f"Using default single-channel mode: {default_channel}")
+        return {default_channel: CWT_DATA_DIR_DICT[default_channel]}
+
+
 def join_with_logbook(df, logbook):
     """
     Join dataset with logbook to get process parameters.
@@ -1728,7 +1770,7 @@ def generate_k_fold_temporal_splits(df, k_folds, base_seed=42, label_column='has
     return folds
 
 
-def prepare_dataset_variant(df_filtered, args, logbook, active_filters, label_path, image_dir):
+def prepare_dataset_variant(df_filtered, args, logbook, active_filters, label_path, image_dir, channel_paths_dict=None):
     """
     Prepare and save a dataset variant (k-fold CV or train/test split).
 
@@ -1738,6 +1780,7 @@ def prepare_dataset_variant(df_filtered, args, logbook, active_filters, label_pa
         logbook (pd.DataFrame): Logbook with track metadata
         active_filters (list): List of active filter names for documentation
         label_path (Path): Path to the label file (used to determine output location)
+        channel_paths_dict (dict): Optional dict mapping channel labels to paths for multi-channel support
 
     Returns:
         int: 0 on success, 1 on failure
@@ -1768,7 +1811,6 @@ def prepare_dataset_variant(df_filtered, args, logbook, active_filters, label_pa
     config = {
         'dataset_name': args.dataset_name,
         'created_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'data_dir': str(image_dir),  # Store the image directory for classifier to use
         'label_file': 'trainval.csv',  # Always trainval.csv now
         'split_type': 'temporal' if (hasattr(args, 'temporal_split') and args.temporal_split) else 'stratified',
         'preparation_params': {
@@ -1781,6 +1823,14 @@ def prepare_dataset_variant(df_filtered, args, logbook, active_filters, label_pa
         },
         'statistics': {}
     }
+
+    # Add unified data_dir field: string for single-channel, dict for multi-channel
+    if channel_paths_dict and len(channel_paths_dict) > 1:
+        # Multi-channel: data_dir is a dict
+        config['data_dir'] = channel_paths_dict
+    else:
+        # Single-channel: data_dir is a string
+        config['data_dir'] = str(image_dir)
 
     # Mode 1: K-Fold CV (for hyperparameter tuning)
     if args.k_folds > 1:
@@ -2364,6 +2414,25 @@ def main():
         help='Name for this dataset variant (required when using --k-folds or --test-holdout)'
     )
     parser.add_argument(
+        '--data-paths',
+        type=str,
+        nargs='+',
+        help='Data directory path(s). Single path for single-channel, multiple paths for multi-channel. '
+             'Use --multi-channel flag to auto-load all channels from CWT_DATA_DIR_DICT.'
+    )
+    parser.add_argument(
+        '--multi-channel',
+        action='store_true',
+        help='Auto-load all channels from CWT_DATA_DIR_DICT (alternative to --data-paths)'
+    )
+    parser.add_argument(
+        '--channel-labels',
+        type=str,
+        nargs='*',
+        help='Optional channel labels (e.g., PD1_cmor1.5-1.0 PD2_mexh). '
+             'If not provided, auto-generated from paths.'
+    )
+    parser.add_argument(
         '--k-folds',
         type=int,
         default=1,
@@ -2446,18 +2515,79 @@ def main():
 
     print(f"Label file: {label_path}")
 
-    # Determine image directory
+    # Determine channel paths (single or multi-channel)
     if args.image_dir:
-        image_dir = args.image_dir
+        # Single directory specified via --image-dir
+        channel_paths_dict = {'default': str(args.image_dir)}
+        print(f"Using specified image directory: {args.image_dir}")
     else:
-        # Derive from label file location
-        image_dir = label_path.parent / 'PD1' / 'cmor1_5-1_0' / '1.0_ms' / '1000-50000_Hz_256_steps' / 'grey' / 'per_window'
+        # Use get_channel_paths_for_dataset to determine paths
+        channel_paths_dict = get_channel_paths_for_dataset(args)
 
-    if not image_dir.exists():
-        print(f"❌ Image directory not found: {image_dir}")
-        return 1
+    # Validate all channel directories exist
+    for channel_label, channel_path in channel_paths_dict.items():
+        path_obj = Path(channel_path)
+        if not path_obj.exists():
+            print(f"❌ Channel directory not found: {channel_label} -> {channel_path}")
+            return 1
 
-    print(f"Image directory: {image_dir}")
+    # For multi-channel: validate that all channels have matching files
+    if len(channel_paths_dict) > 1:
+        print(f"\n{'='*80}")
+        print(f"MULTI-CHANNEL VALIDATION ({len(channel_paths_dict)} channels)")
+        print(f"{'='*80}")
+
+        # Load filenames from first channel as reference
+        reference_channel = list(channel_paths_dict.keys())[0]
+        reference_path = Path(channel_paths_dict[reference_channel])
+
+        # Get all image files from reference channel
+        reference_files = set()
+        for class_dir in ['0', '1']:
+            class_path = reference_path / class_dir
+            if class_path.exists():
+                reference_files.update([f.name for f in class_path.glob('*.png')])
+
+        print(f"Reference channel: {reference_channel}")
+        print(f"  Files found: {len(reference_files)}")
+
+        # Validate other channels
+        common_files = reference_files.copy()
+        for channel_label, channel_path in list(channel_paths_dict.items())[1:]:
+            channel_files = set()
+            path_obj = Path(channel_path)
+            for class_dir in ['0', '1']:
+                class_path = path_obj / class_dir
+                if class_path.exists():
+                    channel_files.update([f.name for f in class_path.glob('*.png')])
+
+            missing = reference_files - channel_files
+            extra = channel_files - reference_files
+
+            print(f"\nChannel: {channel_label}")
+            print(f"  Files found: {len(channel_files)}")
+
+            if missing or extra:
+                print(f"  ⚠️  File mismatch detected:")
+                if missing:
+                    print(f"     Missing {len(missing)} files from reference")
+                if extra:
+                    print(f"     Has {len(extra)} extra files not in reference")
+
+                # Use intersection for safety
+                common_files = common_files & channel_files
+            else:
+                print(f"  ✓ Perfect match with reference")
+
+        print(f"\n✓ Common files across all channels: {len(common_files)}")
+        print(f"{'='*80}\n")
+
+    # Use first channel as primary image directory (for backward compatibility)
+    image_dir = Path(list(channel_paths_dict.values())[0])
+
+    print(f"Primary image directory: {image_dir}")
+    if len(channel_paths_dict) > 1:
+        print(f"Multi-channel: {list(channel_paths_dict.keys())}")
     print(f"Signal threshold: {args.signal_threshold}")
     print(f"Target ratio: {args.target_ratio}:1")
 
@@ -2599,7 +2729,7 @@ def main():
         logbook = get_logbook()
 
         # Call dataset variant preparation function
-        result = prepare_dataset_variant(df_filtered, args, logbook, active_filters, label_path, image_dir)
+        result = prepare_dataset_variant(df_filtered, args, logbook, active_filters, label_path, image_dir, channel_paths_dict=channel_paths_dict)
         return result
 
     # Step 2: Temporal splitting OR stratified downsampling
