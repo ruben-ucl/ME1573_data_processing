@@ -970,9 +970,50 @@ class FinalModelTrainer:
         gradcam_results = None
         if classifier_type == 'cwt_image':
             test_files = test_data.get('test_files', None)
+
+            # Extract channel labels if multi-channel
+            channel_labels = None
+            num_channels = X_test.shape[-1] if len(X_test.shape) == 4 else 1
+
+            if num_channels > 1:
+                # Try to get from test_data
+                if 'channel_labels' in test_data:
+                    channel_labels = test_data['channel_labels']
+                else:
+                    # Try to load from dataset_config.json (if using dataset variant)
+                    try:
+                        if hasattr(self, 'dataset_variant') and self.dataset_variant:
+                            from config import load_dataset_variant_info
+                            dataset_info = load_dataset_variant_info(self.dataset_variant)
+                            dataset_dir = dataset_info['dataset_dir']
+                            dataset_config_path = Path(dataset_dir) / 'dataset_config.json'
+
+                            if dataset_config_path.exists():
+                                import json
+                                with open(dataset_config_path, 'r', encoding='utf-8') as f:
+                                    dataset_config = json.load(f)
+                                data_dir = dataset_config.get('data_dir')
+                                if isinstance(data_dir, dict):
+                                    channel_labels = list(data_dir.keys())
+                    except Exception as e:
+                        print(f"   Note: Could not load channel labels from dataset_config: {e}")
+
+                    # Fallback: try to load from config
+                    if channel_labels is None:
+                        try:
+                            from config import resolve_cwt_data_channels
+                            _, channel_labels, _ = resolve_cwt_data_channels(self.config)
+                        except Exception as e:
+                            print(f"   Note: Could not resolve channel labels from config: {e}")
+
+                    # Final fallback: auto-generate labels
+                    if channel_labels is None:
+                        channel_labels = [f'Channel_{i+1}' for i in range(num_channels)]
+
             gradcam_results = generate_comprehensive_gradcam_analysis(
                 model, X_test, y_test, y_pred_best, y_proba_flat,
-                best_threshold, test_eval_dir, version, test_files
+                best_threshold, test_eval_dir, version, test_files,
+                channel_labels=channel_labels
             )
 
         # Generate track-level prediction visualizations if we have filenames

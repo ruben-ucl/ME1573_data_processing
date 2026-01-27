@@ -43,7 +43,7 @@ COLOR_SKIPPED_WINDOW = '#95a5a6'   # Grey for skipped first window
 
 def load_saved_predictions(version, model_dir):
     """Load predictions from saved pickle file."""
-    predictions_file = model_dir / f'test_predictions_{version}.pkl'
+    predictions_file = model_dir / 'test_evaluation' / f'test_predictions_{version}.pkl'
 
     if not predictions_file.exists():
         return None
@@ -60,7 +60,7 @@ def regenerate_predictions(version, classifier_type, dataset_variant, model_dir)
     print(f"🔄 Regenerating predictions from saved model...")
 
     # Try loading from test_set_data.pkl first (random sampling mode)
-    test_data_file = model_dir / 'test_set_data.pkl'
+    test_data_file = model_dir / 'test_evaluation' / 'test_set_data.pkl'
 
     if test_data_file.exists():
         print(f"📂 Loading test data from: {test_data_file}")
@@ -154,7 +154,7 @@ def regenerate_predictions(version, classifier_type, dataset_variant, model_dir)
     model = keras.models.load_model(model_file, compile=False)
 
     # Load evaluation results to get best threshold
-    eval_file = model_dir / f'comprehensive_evaluation_{version}.json'
+    eval_file = model_dir / 'test_evaluation' / f'comprehensive_evaluation_{version}.json'
     if not eval_file.exists():
         raise FileNotFoundError(f"Evaluation file not found: {eval_file}")
 
@@ -219,7 +219,7 @@ def generate_track_predictions_viz(test_files, y_true, y_pred, output_dir, versi
     print(f"\n📊 Generating track-level prediction visualizations...")
 
     # Create output directory for track visualizations
-    track_viz_dir = Path(output_dir) / 'track_predictions'
+    track_viz_dir = Path(output_dir) / 'test_evaluation' / 'track_predictions'
     track_viz_dir.mkdir(exist_ok=True, parents=True)
 
     # Extract track IDs from filenames (format: TRACKID_layerinfo_timewindow.png)
@@ -538,7 +538,7 @@ def generate_confusion_matrix(y_true, y_pred, output_dir, version, threshold, te
     plt.tight_layout()
 
     # Save figure at 300 DPI
-    output_file = Path(output_dir) / f'confusion_matrix_{version}.png'
+    output_file = Path(output_dir) / 'test_evaluation' / f'confusion_matrix_{version}.png'
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()
 

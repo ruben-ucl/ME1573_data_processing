@@ -63,6 +63,73 @@ def generate_gradcam_heatmap(gradcam_model, img_array, target_layer_idx=-2):
         return None
 
 
+def compute_channel_attribution(model, img_array, method='gradient_magnitude'):
+    """
+    Compute channel-wise attribution scores showing which input channels
+    contribute most to the model's prediction.
+
+    Uses gradient magnitude method: computes gradients w.r.t. input image
+    and sums absolute gradients per channel across spatial dimensions.
+
+    Args:
+        model: Trained CNN model
+        img_array: Input image array (shape: 1, H, W, C)
+        method: Attribution method ('gradient_magnitude' is currently supported)
+
+    Returns:
+        dict: {
+            'channel_scores': numpy array of shape (C,) with normalized scores (sum=1.0),
+            'channel_ranks': numpy array of shape (C,) with rank indices (0=most important),
+            'raw_scores': numpy array of shape (C,) with unnormalized gradient magnitudes
+        }
+    """
+    num_channels = img_array.shape[-1]
+
+    if method == 'gradient_magnitude':
+        # Convert to tensor if needed
+        img_tensor = tf.constant(img_array, dtype=tf.float32)
+
+        with tf.GradientTape() as tape:
+            tape.watch(img_tensor)
+            predictions = model(img_tensor)
+            loss = predictions[:, 0]  # Binary classification
+
+        # Compute gradients w.r.t. input
+        input_grads = tape.gradient(loss, img_tensor)  # Shape: (1, H, W, C)
+
+        if input_grads is None:
+            # If gradients couldn't be computed, return uniform attribution
+            print("Warning: Could not compute gradients for channel attribution")
+            uniform_scores = np.ones(num_channels) / num_channels
+            return {
+                'channel_scores': uniform_scores,
+                'channel_ranks': np.arange(num_channels),
+                'raw_scores': uniform_scores
+            }
+
+        # Per-channel attribution: sum of absolute gradients across spatial dimensions
+        channel_scores = tf.reduce_sum(tf.abs(input_grads), axis=(0, 1, 2)).numpy()  # Shape: (C,)
+
+        # Normalize to sum to 1.0
+        if channel_scores.sum() > 0:
+            channel_scores_normalized = channel_scores / channel_scores.sum()
+        else:
+            # If all scores are 0, use uniform distribution
+            channel_scores_normalized = np.ones(num_channels) / num_channels
+
+        # Compute ranks (0 = most important)
+        channel_ranks = np.argsort(-channel_scores_normalized)
+
+        return {
+            'channel_scores': channel_scores_normalized,
+            'channel_ranks': channel_ranks,
+            'raw_scores': channel_scores
+        }
+
+    else:
+        raise ValueError(f"Unknown attribution method: {method}")
+
+
 def save_gradcam_image(original_img, heatmap, filepath, title=None, enhance_contrast=False):
     """Save Grad-CAM visualization combining original image and heatmap with frequency axis.
 
@@ -75,11 +142,16 @@ def save_gradcam_image(original_img, heatmap, filepath, title=None, enhance_cont
     """
     try:
         # Prepare original image for display
-        if len(original_img.shape) == 3 and original_img.shape[-1] == 1:
-            display_img = original_img.squeeze()
+        if len(original_img.shape) == 3:
+            if original_img.shape[-1] == 1:
+                # Single channel with explicit dimension
+                display_img = original_img.squeeze()
+            else:
+                # Multi-channel: average across channels for visualization
+                display_img = np.mean(original_img, axis=-1)
         else:
             display_img = original_img
-        
+
         # Flip data for plotting (low frequencies at the bottom)
         display_img = np.flipud(display_img)
         heatmap_processed = np.flipud(heatmap.copy())
@@ -318,7 +390,7 @@ def _create_frequency_curve_visualization(avg_heatmap_0_enhanced, avg_heatmap_1_
 
 
 def generate_comprehensive_gradcam_analysis(model, X_test, y_test, y_pred, y_proba, threshold,
-                                           output_dir, version, test_files=None):
+                                           output_dir, version, test_files=None, channel_labels=None):
     """Generate comprehensive Grad-CAM analysis with class-specific folders and averages.
 
     Args:
@@ -331,6 +403,7 @@ def generate_comprehensive_gradcam_analysis(model, X_test, y_test, y_pred, y_pro
         output_dir: Output directory path
         version: Version string for organizing outputs
         test_files: Optional list of test file paths for naming
+        channel_labels: Optional list of channel names for multi-channel attribution analysis
 
     Returns:
         dict: Analysis results including saved images count and class statistics
@@ -338,6 +411,24 @@ def generate_comprehensive_gradcam_analysis(model, X_test, y_test, y_pred, y_pro
     import re
 
     print(f"🔥 Generating comprehensive Grad-CAM analysis...")
+
+    # Determine if multi-channel
+    num_channels = X_test.shape[-1] if len(X_test.shape) == 4 else 1
+    is_multi_channel = num_channels > 1
+
+    if is_multi_channel and channel_labels is None:
+        # Auto-generate labels if not provided
+        channel_labels = [f'Channel_{i+1}' for i in range(num_channels)]
+
+    # Initialize channel attribution tracking
+    channel_attribution_stats = None
+    if is_multi_channel:
+        channel_attribution_stats = {
+            'per_sample': [],  # List of attribution dicts per sample
+            'by_class': {0: [], 1: []},  # Split by true class
+            'by_correctness': {'correct': [], 'incorrect': []},  # Split by prediction correctness
+        }
+        print(f"   Multi-channel analysis enabled for {num_channels} channels: {channel_labels}")
 
     gradcam_dir = Path(output_dir) / f'gradcam_analysis_{version}'
 
@@ -392,6 +483,27 @@ def generate_comprehensive_gradcam_analysis(model, X_test, y_test, y_pred, y_pro
         if heatmap is not None:
             # Store for class averaging
             class_heatmaps[true_label].append(heatmap)
+
+            # Compute channel attribution if multi-channel
+            if is_multi_channel:
+                attribution = compute_channel_attribution(model, X_test[i:i+1])
+
+                # Store attribution with metadata
+                attribution_record = {
+                    'sample_idx': i,
+                    'true_label': true_label,
+                    'pred_label': pred_label,
+                    'is_correct': is_correct,
+                    'channel_scores': attribution['channel_scores'],
+                    'dominant_channel': channel_labels[np.argmax(attribution['channel_scores'])],
+                    'dominant_score': np.max(attribution['channel_scores'])
+                }
+
+                channel_attribution_stats['per_sample'].append(attribution_record)
+                channel_attribution_stats['by_class'][true_label].append(attribution['channel_scores'])
+
+                correctness_key = 'correct' if is_correct else 'incorrect'
+                channel_attribution_stats['by_correctness'][correctness_key].append(attribution['channel_scores'])
 
             # Create filename with track ID and window if available
             prediction_type = 'correct' if is_correct else 'incorrect'
@@ -592,4 +704,191 @@ def generate_comprehensive_gradcam_analysis(model, X_test, y_test, y_pred, y_pro
     print(f"   Class 0: {gradcam_results['class_analysis'][0]} samples")
     print(f"   Class 1: {gradcam_results['class_analysis'][1]} samples")
 
+    # Generate channel attribution summary if multi-channel
+    if is_multi_channel and channel_attribution_stats['per_sample']:
+        print(f"\n📊 Generating channel attribution analysis...")
+
+        attribution_summary = generate_channel_attribution_summary(
+            channel_attribution_stats,
+            channel_labels,
+            gradcam_dir,
+            version
+        )
+
+        gradcam_results['channel_attribution'] = attribution_summary
+
     return gradcam_results
+
+
+def generate_channel_attribution_summary(attribution_stats, channel_labels, output_dir, version):
+    """
+    Generate summary statistics and visualizations for channel attribution analysis.
+
+    Args:
+        attribution_stats: Dict with per_sample, by_class, by_correctness channel scores
+        channel_labels: List of channel names
+        output_dir: Output directory for saving results
+        version: Version string for file naming
+
+    Returns:
+        dict: Summary statistics
+    """
+    import pandas as pd
+
+    output_dir = Path(output_dir)
+    num_channels = len(channel_labels)
+
+    # Compute aggregate statistics
+    all_scores = np.array([record['channel_scores'] for record in attribution_stats['per_sample']])  # Shape: (N, C)
+
+    # Overall statistics
+    mean_scores = np.mean(all_scores, axis=0)
+    std_scores = np.std(all_scores, axis=0)
+    median_scores = np.median(all_scores, axis=0)
+
+    # Statistics by class
+    class_0_scores = np.array(attribution_stats['by_class'][0])  # Shape: (N0, C)
+    class_1_scores = np.array(attribution_stats['by_class'][1])  # Shape: (N1, C)
+    mean_scores_class_0 = np.mean(class_0_scores, axis=0) if len(class_0_scores) > 0 else np.zeros(num_channels)
+    mean_scores_class_1 = np.mean(class_1_scores, axis=0) if len(class_1_scores) > 0 else np.zeros(num_channels)
+
+    # Statistics by correctness
+    correct_scores = np.array(attribution_stats['by_correctness']['correct'])
+    incorrect_scores = np.array(attribution_stats['by_correctness']['incorrect'])
+    mean_scores_correct = np.mean(correct_scores, axis=0) if len(correct_scores) > 0 else np.zeros(num_channels)
+    mean_scores_incorrect = np.mean(incorrect_scores, axis=0) if len(incorrect_scores) > 0 else np.zeros(num_channels)
+
+    # Create summary DataFrame
+    summary_df = pd.DataFrame({
+        'channel': channel_labels,
+        'mean_attribution': mean_scores,
+        'std_attribution': std_scores,
+        'median_attribution': median_scores,
+        'class_0_mean': mean_scores_class_0,
+        'class_1_mean': mean_scores_class_1,
+        'correct_pred_mean': mean_scores_correct,
+        'incorrect_pred_mean': mean_scores_incorrect,
+        'rank': np.argsort(-mean_scores) + 1  # 1 = most important
+    })
+
+    # Sort by mean attribution (descending)
+    summary_df = summary_df.sort_values('mean_attribution', ascending=False).reset_index(drop=True)
+
+    # Save to CSV
+    csv_path = output_dir / f'channel_attribution_summary_{version}.csv'
+    summary_df.to_csv(csv_path, index=False, float_format='%.4f', encoding='utf-8')
+    print(f"   Channel attribution summary saved to: {csv_path}")
+
+    # Create bar chart visualization
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle(f'Channel Attribution Analysis - {version}', fontsize=16, fontweight='bold')
+
+    # Plot 1: Overall mean attribution
+    ax1 = axes[0, 0]
+    x_pos = np.arange(num_channels)
+    bars = ax1.bar(x_pos, mean_scores, yerr=std_scores, capsize=5, alpha=0.7, color='steelblue')
+    ax1.set_xlabel('Channel', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Mean Attribution Score', fontsize=12, fontweight='bold')
+    ax1.set_title('Overall Channel Importance', fontsize=13, fontweight='bold')
+    ax1.set_xticks(x_pos)
+    ax1.set_xticklabels(channel_labels, rotation=45, ha='right')
+    ax1.axhline(1.0 / num_channels, color='red', linestyle='--', linewidth=1, label='Uniform baseline')
+    ax1.legend()
+    ax1.grid(axis='y', alpha=0.3)
+
+    # Add value labels on bars
+    for i, (bar, val) in enumerate(zip(bars, mean_scores)):
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height,
+                f'{val:.3f}', ha='center', va='bottom', fontsize=9)
+
+    # Plot 2: Attribution by class
+    ax2 = axes[0, 1]
+    x_pos = np.arange(num_channels)
+    width = 0.35
+    bars1 = ax2.bar(x_pos - width/2, mean_scores_class_0, width, label='Class 0 (No Porosity)', alpha=0.7, color='green')
+    bars2 = ax2.bar(x_pos + width/2, mean_scores_class_1, width, label='Class 1 (Porosity)', alpha=0.7, color='red')
+    ax2.set_xlabel('Channel', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('Mean Attribution Score', fontsize=12, fontweight='bold')
+    ax2.set_title('Channel Importance by True Class', fontsize=13, fontweight='bold')
+    ax2.set_xticks(x_pos)
+    ax2.set_xticklabels(channel_labels, rotation=45, ha='right')
+    ax2.legend()
+    ax2.grid(axis='y', alpha=0.3)
+
+    # Plot 3: Attribution by prediction correctness
+    ax3 = axes[1, 0]
+    bars1 = ax3.bar(x_pos - width/2, mean_scores_correct, width, label='Correct Predictions', alpha=0.7, color='blue')
+    bars2 = ax3.bar(x_pos + width/2, mean_scores_incorrect, width, label='Incorrect Predictions', alpha=0.7, color='orange')
+    ax3.set_xlabel('Channel', fontsize=12, fontweight='bold')
+    ax3.set_ylabel('Mean Attribution Score', fontsize=12, fontweight='bold')
+    ax3.set_title('Channel Importance by Prediction Correctness', fontsize=13, fontweight='bold')
+    ax3.set_xticks(x_pos)
+    ax3.set_xticklabels(channel_labels, rotation=45, ha='right')
+    ax3.legend()
+    ax3.grid(axis='y', alpha=0.3)
+
+    # Plot 4: Distribution of dominant channels
+    ax4 = axes[1, 1]
+    dominant_channels = [record['dominant_channel'] for record in attribution_stats['per_sample']]
+    channel_counts = pd.Series(dominant_channels).value_counts()
+
+    # Reindex to ensure all channels appear
+    channel_counts = channel_counts.reindex(channel_labels, fill_value=0)
+
+    bars = ax4.bar(range(num_channels), channel_counts.values, alpha=0.7, color='purple')
+    ax4.set_xlabel('Channel', fontsize=12, fontweight='bold')
+    ax4.set_ylabel('Count (# samples where dominant)', fontsize=12, fontweight='bold')
+    ax4.set_title('Distribution of Dominant Channels', fontsize=13, fontweight='bold')
+    ax4.set_xticks(range(num_channels))
+    ax4.set_xticklabels(channel_labels, rotation=45, ha='right')
+    ax4.grid(axis='y', alpha=0.3)
+
+    # Add count labels on bars
+    for bar, count in zip(bars, channel_counts.values):
+        if count > 0:
+            height = bar.get_height()
+            ax4.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{int(count)}', ha='center', va='bottom', fontsize=9)
+
+    plt.tight_layout()
+
+    # Save figure
+    fig_path = output_dir / f'channel_attribution_analysis_{version}.png'
+    plt.savefig(fig_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"   Channel attribution visualization saved to: {fig_path}")
+
+    # Create per-sample attribution CSV
+    per_sample_df = pd.DataFrame([
+        {
+            'sample_idx': rec['sample_idx'],
+            'true_label': rec['true_label'],
+            'pred_label': rec['pred_label'],
+            'is_correct': rec['is_correct'],
+            'dominant_channel': rec['dominant_channel'],
+            'dominant_score': rec['dominant_score'],
+            **{f'{ch}_attribution': score for ch, score in zip(channel_labels, rec['channel_scores'])}
+        }
+        for rec in attribution_stats['per_sample']
+    ])
+
+    per_sample_csv_path = output_dir / f'channel_attribution_per_sample_{version}.csv'
+    per_sample_df.to_csv(per_sample_csv_path, index=False, float_format='%.4f', encoding='utf-8')
+    print(f"   Per-sample attribution data saved to: {per_sample_csv_path}")
+
+    # Return summary dict
+    return {
+        'num_samples': len(attribution_stats['per_sample']),
+        'num_channels': num_channels,
+        'channel_labels': channel_labels,
+        'mean_attributions': mean_scores.tolist(),
+        'channel_ranking': summary_df['channel'].tolist(),
+        'dominant_channel': summary_df.iloc[0]['channel'],
+        'dominant_channel_score': float(summary_df.iloc[0]['mean_attribution']),
+        'output_files': {
+            'summary_csv': str(csv_path),
+            'visualization': str(fig_path),
+            'per_sample_csv': str(per_sample_csv_path)
+        }
+    }

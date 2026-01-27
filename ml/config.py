@@ -36,10 +36,10 @@ CWT_DATA_DIR_DICT = {
     "PD1_cmor1.5-1.0": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD1\cmor1_5-1_0\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
     # "PD1_cmor2.5-0.5": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD1\cmor2_5-0_5\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
     # "PD1_fbsp1-1.5-1.0": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD1\fbsp1-1_5-1_0\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
-    "PD1_mexh": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD1\mexh\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
+    # "PD1_mexh": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD1\mexh\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
 
     # ===== PD2 Channels =====
-    # "PD2_cmor1.5-1.0": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\cmor1_5-1_0\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
+    "PD2_cmor1.5-1.0": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\cmor1_5-1_0\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
     # "PD2_cmor2.5-0.5": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\cmor2_5-0_5\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
     # "PD2_fbsp1-1.5-1.0": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\fbsp1-1_5-1_0\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',
     # "PD2_mexh": r'F:\AlSi10Mg single layer ffc\CWT_labelled_windows\PD2\mexh\1.0_ms\1000-50000_Hz_256_steps\grey\per_window',

@@ -23,7 +23,6 @@ import sys
 import warnings
 from glob import glob
 from pathlib import Path
-from scipy.stats import describe
 from matplotlib import pyplot as plt
 
 import cv2
@@ -326,8 +325,6 @@ def load_cwt_image_data_from_csv(channel_paths, label_file, img_size, verbose=Fa
 
     Images array shape: (N, H, W, C) where C = len(channel_paths)
     """
-    import pandas as pd
-
     exclude_files = exclude_files or set()
     num_channels = len(channel_paths)
 
@@ -685,10 +682,10 @@ def train_fold(fold, train_idx, val_idx, X, y, config, class_weights=None, best_
         ))
     
     # Apply CWT-suitable augmentation if specified
-    if config['augment_fraction'] > 0:
+    if config.get('augment_fraction', 0) > 0:
         # Determine how much data to augment
         num_original = len(X_train)
-        num_augmented = int(num_original * config['augment_fraction'])
+        num_augmented = int(num_original * config.get('augment_fraction', 0))
         
         if num_augmented > 0:
             # Select random subset for augmentation
@@ -882,11 +879,22 @@ def run_gradcam_analysis(model, X_sample, y_sample, config, output_dir, concise=
                     
                     # Prepare original image for overlay (convert to 3-channel if needed)
                     if len(original_img.shape) == 2:
+                        # 2D grayscale image
                         original_3ch = cv2.cvtColor((original_img * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+                    elif len(original_img.shape) == 3:
+                        if original_img.shape[2] == 1:
+                            # Single channel with dimension
+                            original_3ch = cv2.cvtColor((original_img.squeeze() * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+                        elif original_img.shape[2] > 1:
+                            # Multi-channel: average across channels then convert to BGR
+                            grayscale = np.mean(original_img, axis=-1)
+                            original_3ch = cv2.cvtColor((grayscale * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+                        else:
+                            # Shouldn't happen, but fallback
+                            original_3ch = (original_img * 255).astype(np.uint8)
                     else:
+                        # Fallback for unexpected shapes
                         original_3ch = (original_img * 255).astype(np.uint8)
-                        if original_3ch.shape[2] == 1:
-                            original_3ch = cv2.cvtColor(original_3ch.squeeze(), cv2.COLOR_GRAY2BGR)
                     
                     # Create overlay with heatmap
                     overlay = cv2.addWeighted(original_3ch, 0.7, heatmap_colored, 0.3, 0)
@@ -1101,7 +1109,6 @@ def main():
                 # Load test exclusion if exists
                 test_exclusion_file = dataset_dir / 'test.csv'
                 if test_exclusion_file.exists():
-                    import pandas as pd
                     test_df = pd.read_csv(test_exclusion_file, encoding='utf-8')
                     # Support both 'filename' and 'image_filename' column names
                     filename_col = 'filename' if 'filename' in test_df.columns else 'image_filename'
