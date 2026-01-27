@@ -1,0 +1,5 @@
+channel,mean_attribution,std_attribution,median_attribution,class_0_mean,class_1_mean,correct_pred_mean,incorrect_pred_mean,rank
+PD1_cmor1.5-1.0,0.2500,0.0000,0.2500,0.2500,0.2500,0.2500,0.2500,1
+PD1_mexh,0.2500,0.0000,0.2500,0.2500,0.2500,0.2500,0.2500,2
+PD2_cmor1.5-1.0,0.2500,0.0000,0.2500,0.2500,0.2500,0.2500,0.2500,3
+PD2_mexh,0.2500,0.0000,0.2500,0.2500,0.2500,0.2500,0.2500,4
