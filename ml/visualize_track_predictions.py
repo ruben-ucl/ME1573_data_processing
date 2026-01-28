@@ -434,7 +434,7 @@ def generate_track_predictions_viz(test_files, y_true, y_pred, output_dir, versi
     }
 
 
-def generate_confusion_matrix(y_true, y_pred, output_dir, version, threshold, test_files=None, exclude_final_window=False):
+def generate_confusion_matrix(y_true, y_pred, output_dir, version, threshold, test_files=None, exclude_final_window=False, class_labels=None, subdir='test_evaluation'):
     """
     Generate a normalized confusion matrix with percentage values.
 
@@ -448,12 +448,18 @@ def generate_confusion_matrix(y_true, y_pred, output_dir, version, threshold, te
         threshold: Classification threshold used
         test_files: List of test file paths (for identifying final windows per track)
         exclude_final_window: If True, exclude final window of each track
+        class_labels: List of class label strings (default: ['No Porosity', 'Porosity'])
+        subdir: Subdirectory name within output_dir (default: 'test_evaluation')
 
     Returns:
         str: Path to saved confusion matrix file
     """
     from sklearn.metrics import confusion_matrix
     import seaborn as sns
+
+    # Default class labels if not provided
+    if class_labels is None:
+        class_labels = ['No Porosity', 'Porosity']
 
     print(f"\n📊 Generating confusion matrix...")
 
@@ -508,19 +514,23 @@ def generate_confusion_matrix(y_true, y_pred, output_dir, version, threshold, te
     # Create heatmap without annotations first
     sns.heatmap(cm_normalized, annot=False, fmt='', cmap='Blues',
                 cbar_kws={'label': 'Percentage (%)'},
-                xticklabels=['No Porosity', 'Porosity'],
-                yticklabels=['No Porosity', 'Porosity'],
+                xticklabels=class_labels,
+                yticklabels=class_labels,
                 ax=ax, square=True, vmin=0, vmax=100)
 
-    # Manually add annotations with custom font sizes
+    # Manually add annotations with custom font sizes and adaptive text color
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
+            # Determine text color based on background intensity (>50% = white, <=50% = black)
+            percentage = cm_normalized[i, j]
+            text_color = 'white' if percentage > 50 else 'black'
+
             # Percentage text (9pt, regular weight)
-            ax.text(j + 0.5, i + 0.42, f'{cm_normalized[i, j]:.1f}%',
-                   ha='center', va='center', fontsize=9, color='black')
+            ax.text(j + 0.5, i + 0.42, f'{percentage:.1f}%',
+                   ha='center', va='center', fontsize=9, color=text_color)
             # Small count text (7pt, closer to percentage)
             ax.text(j + 0.5, i + 0.60, f'n={cm[i, j]}',
-                   ha='center', va='center', fontsize=7, color='black')
+                   ha='center', va='center', fontsize=7, color=text_color)
 
     # Set labels with 9pt font
     ax.set_xlabel('Predicted Label', fontsize=9)
@@ -538,7 +548,8 @@ def generate_confusion_matrix(y_true, y_pred, output_dir, version, threshold, te
     plt.tight_layout()
 
     # Save figure at 300 DPI
-    output_file = Path(output_dir) / 'test_evaluation' / f'confusion_matrix_{version}.png'
+    output_file = Path(output_dir) / subdir / f'confusion_matrix_{version}.png'
+    output_file.parent.mkdir(parents=True, exist_ok=True)  # Ensure subdirectory exists
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()
 

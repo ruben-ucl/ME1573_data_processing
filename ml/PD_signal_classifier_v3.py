@@ -758,39 +758,21 @@ def save_fold_results(model, X_val, y_val, history, fold, experiment_dir, concis
 
 def _save_fold_plots(val_true_classes, val_pred_classes, history, fold, experiment_dir):
     """Save confusion matrix and training history plots."""
-    from sklearn.metrics import confusion_matrix
+    from visualize_track_predictions import generate_confusion_matrix
     import matplotlib
     matplotlib.use('Agg')  # Use non-interactive backend
     import matplotlib.pyplot as plt
-    
-    # Save confusion matrix plot
-    cm = confusion_matrix(val_true_classes, val_pred_classes)
-    fig, ax = plt.subplots(figsize=(8, 6))
-    im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
-    
-    # Add colorbar
-    plt.colorbar(im)
-    
-    # Add text annotations
-    thresh = cm.max() / 2.
-    for i in range(cm.shape[0]):
-        for j in range(cm.shape[1]):
-            ax.text(j, i, format(cm[i, j], 'd'),
-                   ha="center", va="center",
-                   color="white" if cm[i, j] > thresh else "black")
-    
-    # Labels and title
-    ax.set_title(f'Confusion Matrix - Fold {fold}')
-    ax.set_ylabel('True Label')
-    ax.set_xlabel('Predicted Label')
-    ax.set_xticks([0, 1])
-    ax.set_yticks([0, 1])
-    ax.set_xticklabels(['Conduct', 'Keyhole'])
-    ax.set_yticklabels(['Conduct', 'Keyhole'])
-    
-    cm_filename = str(Path(experiment_dir) / 'plots' / f'confusion_matrix_fold_{fold}.png')
-    plt.savefig(cm_filename, dpi=300, bbox_inches='tight')
-    plt.close()
+
+    # Save confusion matrix plot using consolidated function
+    generate_confusion_matrix(
+        y_true=val_true_classes,
+        y_pred=val_pred_classes,
+        output_dir=experiment_dir,
+        version=f'fold_{fold}',
+        threshold=0.5,  # Default threshold for fold plots
+        class_labels=['Conduct', 'Keyhole'],  # PD signal specific labels
+        subdir='plots'  # Save to plots/ subdirectory
+    )
     
     # Save training history plot
     if history:

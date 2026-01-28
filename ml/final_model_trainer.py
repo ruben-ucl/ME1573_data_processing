@@ -943,17 +943,27 @@ class FinalModelTrainer:
         plt.savefig(test_eval_dir / f'threshold_optimization_{version}.png', dpi=300, bbox_inches='tight')
         plt.close()
 
-        # Generate confusion matrix
-        cm = confusion_matrix(y_test, y_pred_best)
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                   xticklabels=['Class 0', 'Class 1'],
-                   yticklabels=['Class 0', 'Class 1'])
-        plt.title(f'Confusion Matrix (Threshold: {best_threshold:.3f})')
-        plt.ylabel('True Label')
-        plt.xlabel('Predicted Label')
-        plt.savefig(test_eval_dir / f'confusion_matrix_{version}.png', dpi=300, bbox_inches='tight')
-        plt.close()
+        # Generate confusion matrix using consolidated function
+        from visualize_track_predictions import generate_confusion_matrix
+
+        # Determine class labels based on classifier type
+        if classifier_type == 'pd_signal':
+            class_labels = ['Conduct', 'Keyhole']
+        elif classifier_type == 'cwt_image':
+            class_labels = ['No Porosity', 'Porosity']
+        else:
+            class_labels = None
+
+        generate_confusion_matrix(
+            y_true=y_test,
+            y_pred=y_pred_best,
+            output_dir=test_eval_dir.parent,  # Parent since function adds subdirectory
+            version=version,
+            threshold=best_threshold,
+            test_files=test_data.get('test_files', None),
+            class_labels=class_labels,
+            subdir='test_evaluation'  # Explicit subdirectory for test evaluation
+        )
 
         # Generate classification report
         class_report = classification_report(y_test, y_pred_best, output_dict=True)

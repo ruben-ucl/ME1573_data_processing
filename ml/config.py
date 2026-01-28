@@ -1085,52 +1085,37 @@ def save_fold_plots(classifier_type, y_true, y_pred, history, fold, output_dir, 
         output_dir: Output directory path
         concise: Whether to use concise output
     """
-    from sklearn.metrics import confusion_matrix
+    from visualize_track_predictions import generate_confusion_matrix
     import matplotlib
     matplotlib.use('Agg')  # Use non-interactive backend
     import matplotlib.pyplot as plt
     from pathlib import Path
-    
+
     output_dir = Path(output_dir)
-    
+
     # Create plots subdirectory
     plots_dir = output_dir / 'plots'
     plots_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Save confusion matrix plot
-    cm = confusion_matrix(y_true, y_pred)
-    fig, ax = plt.subplots(figsize=(8, 6))
-    im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
-    
-    # Add colorbar
-    plt.colorbar(im)
-    
-    # Add text annotations
-    thresh = cm.max() / 2.
-    for i in range(cm.shape[0]):
-        for j in range(cm.shape[1]):
-            ax.text(j, i, format(cm[i, j], 'd'),
-                   ha="center", va="center",
-                   color="white" if cm[i, j] > thresh else "black")
-    
-    ax.set_xlabel('Predicted Label')
-    ax.set_ylabel('True Label')
-    ax.set_title(f'Confusion Matrix - Fold {fold}')
-    
-    # Set class labels based on classifier type
-    ax.set_xticks([0, 1])
-    ax.set_yticks([0, 1])
+
+    # Save confusion matrix plot using consolidated function
+    # Determine class labels based on classifier type
     if classifier_type == 'pd_signal':
-        ax.set_xticklabels(['Conduct', 'Keyhole'])
-        ax.set_yticklabels(['Conduct', 'Keyhole'])
-    else:  # cwt_image
-        ax.set_xticklabels(['Class 0', 'Class 1'])
-        ax.set_yticklabels(['Class 0', 'Class 1'])
-    
-    cm_filename = plots_dir / f'confusion_matrix_fold_{fold}.png'
-    plt.savefig(cm_filename, dpi=300, bbox_inches='tight')
-    plt.close()
-    
+        class_labels = ['Conduct', 'Keyhole']
+    elif classifier_type == 'cwt_image':
+        class_labels = ['Class 0', 'Class 1']
+    else:
+        class_labels = None  # Use defaults
+
+    cm_filename = generate_confusion_matrix(
+        y_true=y_true,
+        y_pred=y_pred,
+        output_dir=output_dir,
+        version=f'fold_{fold}',
+        threshold=0.5,  # Default threshold for fold plots
+        class_labels=class_labels,
+        subdir='plots'  # Save to plots/ subdirectory for fold results
+    )
+
     if not concise:
         print(f"Confusion matrix plot saved: {cm_filename}")
     
