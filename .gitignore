@@ -13,3 +13,5 @@ ml/models/
 sim/raytracer_results/
 sim/perimeter_extraction_test_results/
 sim/perimeter_extraction_config.json
+dirs/FKW_meas.txt
+/old
