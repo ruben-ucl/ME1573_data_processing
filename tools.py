@@ -84,10 +84,10 @@ def define_collumn_labels():
                                      'Exposure time [μs]'
                                      ],
         'scan_speed':               ['Scan speed [mm/s]',
-                                     'Scan speed [mm/s]'
+                                     'Scan speed [mm s$^{-1}$]'
                                      ],
         'LED':                      ['LED [J/m]',
-                                     'LED [J/m]'
+                                     'LED [J m$^{-1}$]'
                                      ],
         'regime':                   ['Melting regime',
                                      'Melting regime'
@@ -108,10 +108,10 @@ def define_collumn_labels():
                                      'Keyhole pore count'
                                      ],
         'pore_density':              ['pore_density [/mm3]',
-                                      'Keyhole porosity [/mm\u00b3]'
+                                      'Keyhole porosity [/mm$^3$]'
                                       ],
         'pore_vol':                 ['pore_vol_mean [um^3]',
-                                     'Mean pore volume [μm\u00b3]'
+                                     'Mean pore volume [μm$^3$]'
                                      ],
         'pore_angle':               ['pore_angle_mean [°]',
                                      r'Mean pore angle [$\degree$]'
@@ -141,10 +141,10 @@ def define_collumn_labels():
                                      'Track height [μm]'
                                      ],
         'MP_vol':                   ['total_melt_volume [mm^3]',
-                                     r'Melt pool volume, $\it{V}$ [mm\u00b3]'
+                                     r'Melt pool volume, $\it{V}$ [mm$^3$]'
                                      ],
         'MP_vol_err':               ['melt_pool_volume_error [mm^3]',
-                                     'Melt pool volume error [mm\u00b3]'
+                                     'Melt pool volume error [mm$^3$]'
                                      ],
         'MP_rear_wall_angle':       ['rear_melt_pool_wall_angle [deg]',
                                      r'Melt pool rear wall angle [$\degree$]'
@@ -153,31 +153,31 @@ def define_collumn_labels():
                                      r'Melting efficiency, $\it{η}$'
                                      ],
         'R':                        ['R [mm/s]',
-                                     'Solidification rate, R [mm/s]'
+                                     'Solidification rate, R [mm s$^{-1}$]'
                                      ],
         'G1':                       ['G1 [K/mm]',
-                                     'Temperature gradient @ D1 [K/mm]'
+                                     'Temperature gradient @ D1 [K mm$^{-1}$]'
                                      ],
         'G2':                       ['G2 [K/mm]',
-                                     'Temperature gradient @ D2 [K/mm]'
+                                     'Temperature gradient @ D2 [K mm$^{-1}$]'
                                      ],
         'G3':                       ['G3 [K/mm]',
-                                     'Temperature gradient @ D3 [K/mm]'
+                                     'Temperature gradient @ D3 [K mm$^{-1}$]'
                                      ],
         'G_rear':                   ['G_rear [K/mm]',
-                                     'Temperature gradient @ rear tip [K/mm]'
+                                     'Temperature gradient @ rear tip [K mm$^{-1}$]'
                                      ],
         'dT/dt1':                   ['dT/dt1 [K/s]',
-                                     'Cooling rate @ D1 [K/s]'
+                                     'Cooling rate @ D1 [K s$^{-1}$]'
                                      ],
         'dT/dt2':                   ['dT/dt2 [K/s]',
-                                     'Cooling rate @ D2 [K/s]'
+                                     'Cooling rate @ D2 [K s$^{-1}$]'
                                      ],                             
         'dT/dt3':                   ['dT/dt3 [K/s]',
-                                     'Cooling rate @ D3 [K/s]'
+                                     'Cooling rate @ D3 [K s$^{-1}$]'
                                      ],   
         'dT/dt_rear':               ['dT/dt_rear [K/s]',
-                                     'Cooling rate @ rear tip [K/s]'
+                                     'Cooling rate @ rear tip [K s$^{-1}$]'
                                      ],
         'KH_depth':                 ['keyhole_max_depth_mean [um]',
                                      'Keyhole depth [μm]'
@@ -195,10 +195,10 @@ def define_collumn_labels():
                                      'Keyhole length [μm]'
                                      ],
         'KH_area':                  ['keyhole_area_mean [um^2]',
-                                     'Keyhole area [μm\u00b2]'
+                                     'Keyhole area [μm$^2$]'
                                      ],
         'area':                     ['keyhole_area_mean [um^2]',
-                                     'Keyhole area [μm\u00b2]'
+                                     'Keyhole area [μm$^2$]'
                                      ],
         'KH_depth_at_max_length':   ['keyhole_depth_at_max_length_mean [um]',
                                      'Keyhole depth at max. length [μm]'
@@ -526,6 +526,26 @@ def get_cwt_scales(wavelet, num=512, fmin=1000, fmax=50000, sampling_rate=100000
 
         return scales, vmax
 
+def get_excluded_trackids():
+    """
+    Return the list of trackids excluded from all analyses due to corrupted
+    photodiode signal data (sessions 0514–0516).
+
+    Import and use this in any script that iterates over HDF5 files or
+    photodiode signals, e.g.:
+
+        from tools import get_excluded_trackids
+        excluded = get_excluded_trackids()
+        if trackid in excluded:
+            continue
+    """
+    return [
+        '0514_02', '0514_04', '0514_05',
+        '0515_01', '0515_02', '0515_03', '0515_04', '0515_05', '0515_06',
+        '0516_01', '0516_02', '0516_03', '0516_04', '0516_05', '0516_06',
+    ]
+
+
 def interpolate_low_quality_data(fkw_angle: np.ndarray, 
                                 n_points_fit: np.ndarray | None, 
                                 min_score: int = 3,
@@ -785,6 +805,15 @@ def validate_timeseries_quality(fkw_angle: np.ndarray,
         'percentage_modified': (total_modified / total_points * 100) if total_points > 0 else 0
     }
 
+DEFAULT_LOGBOOK_FILTERS = {
+    'layer': 1,
+    'base_type': 'powder',
+    'regime': 'not_cond',
+    'material': 'AlSi10Mg',
+    'laser_mode': 'cw',
+    'beamtime': 3,
+}
+
 def filter_logbook_tracks(logbook, filters_dict=None):
     """
     Filter logbook tracks based on specified criteria.
@@ -940,7 +969,7 @@ def filter_logbook_tracks(logbook, filters_dict=None):
 
     return filtered_logbook, active_filters
 
-def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '|', printEnd = "\r"):
+def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 80, fill = '|', printEnd = "\r"):
     """
     Call in a loop to create terminal progress bar
     @params:
@@ -1084,7 +1113,7 @@ def generate_pv_map(trackids, output_path=None, highlight_trackids=None,
                   s=20,
                   alpha=0.5,
                   zorder=1,
-                  label='All tracks')
+                  label='_nolegend_')
 
     # Plot requested trackids
     plotted_regimes = set()
@@ -1115,7 +1144,7 @@ def generate_pv_map(trackids, output_path=None, highlight_trackids=None,
                   c=marker_dict[regime]['c'],
                   marker=marker_dict[regime]['m'],
                   edgecolors='k',
-                  linewidths=1.5 if is_highlighted else 0.5,
+                  linewidths=0.5,
                   s=60 if is_highlighted else 30,
                   zorder=10 if is_highlighted else 5,
                   alpha=1.0 if is_highlighted else 0.8)
@@ -1133,8 +1162,16 @@ def generate_pv_map(trackids, output_path=None, highlight_trackids=None,
 
         plotted_regimes.add(regime)
 
-    # Add legend
-    ax.legend(fontsize=font_size-1, loc='best', framealpha=0.9)
+    # Add legend — ensure 'Test set' appears last
+    handles, labels = ax.get_legend_handles_labels()
+    if 'Test set' in labels:
+        i = labels.index('Test set')
+        handles.append(handles.pop(i))
+        labels.append(labels.pop(i))
+    ncols = min(len(handles), 3)
+    ax.legend(handles, labels, fontsize=font_size - 1,
+              loc='upper center', bbox_to_anchor=(0.5, -0.15),
+              ncol=ncols, framealpha=0.9)
 
     plt.tight_layout()
 
@@ -1276,6 +1313,28 @@ def get_hdf5_statistics(dataset_name=None, statistic='mean', use_overall=True, h
             return df_filtered[stat_cols]
         else:
             return df_filtered[['trackid'] + stat_cols]
+
+
+def mad_interpolate(s, threshold=4.0):
+    """Replace MAD outliers with linear interpolation from neighbouring clean samples.
+
+    Parameters
+    ----------
+    s         : 1-D ndarray
+    threshold : float — outlier if |s - median(s)| > threshold × MAD
+    """
+    med = np.median(s)
+    mad = np.median(np.abs(s - med))
+    if mad == 0:
+        return s.copy()
+    outliers = np.abs(s - med) > threshold * mad
+    if not np.any(outliers):
+        return s.copy()
+    clean = s.copy()
+    x_all = np.arange(len(s))
+    x_good = x_all[~outliers]
+    clean[outliers] = np.interp(x_all[outliers], x_good, s[x_good])
+    return clean
 
 
 def get_dataset_normalization_params(dataset_name, method='minmax', hdf5_dir=None):
