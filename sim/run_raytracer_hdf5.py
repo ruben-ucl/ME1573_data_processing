@@ -11,7 +11,7 @@ This script:
 
 Usage:
     python run_raytracer_hdf5.py track.hdf5
-    python run_raytracer_hdf5.py track.hdf5 --opening-width 150 --eta 0.2
+    python run_raytracer_hdf5.py track.hdf5 --opening_width 150 --eta 0.2
 
 Author: Claude
 Date: 2025-11-20
@@ -243,11 +243,11 @@ def main():
         description='Run RayTracer analysis on HDF5 keyhole data'
     )
     parser.add_argument('hdf5_files', nargs='+', help='HDF5 file(s) to process')
-    parser.add_argument('--output-dir', help='Output directory (default: sim/raytracer_results/{trackname}/)')
+    parser.add_argument('--output_dir', help='Output directory (default: sim/raytracer_results/{trackname}/)')
     parser.add_argument('--dataset', default='keyhole_bin', help='HDF5 dataset name (default: keyhole_bin)')
 
     # Extraction parameters
-    parser.add_argument('--opening-width', type=float, default=120.0,
+    parser.add_argument('--opening_width', type=float, default=120.0,
                        help='Opening width in microns (default: 120.0)')
     parser.add_argument('--smoothing', type=float, default=0.5,
                        help='Smoothing factor (default: 0.5)')
@@ -255,21 +255,21 @@ def main():
                        help='Resolution in μm/pixel (default: 4.3)')
 
     # Frame range
-    parser.add_argument('--frame-start', type=int, help='Start frame index (optional)')
-    parser.add_argument('--frame-end', type=int, help='End frame index (optional)')
+    parser.add_argument('--frame_start', type=int, help='Start frame index (optional)')
+    parser.add_argument('--frame_end', type=int, help='End frame index (optional)')
 
     # RayTracer parameters
     parser.add_argument('--eta', type=float, default=0.175,
                        help='Absorptivity coefficient (default: 0.175)')
-    parser.add_argument('--n-rays', type=int, default=200,
+    parser.add_argument('--n_rays', type=int, default=200,
                        help='Number of rays per slice (default: 200)')
-    parser.add_argument('--max-bounces', type=int, default=10,
+    parser.add_argument('--max_bounces', type=int, default=10,
                        help='Maximum reflections (default: 10)')
     parser.add_argument('--distribution', choices=['gaussian', 'uniform'], default='gaussian',
                        help='Ray distribution (default: gaussian)')
-    parser.add_argument('--ray-radius', type=float, default=200.0,
+    parser.add_argument('--ray_radius', type=float, default=200.0,
                        help='Ray radius in microns (default: 200)')
-    parser.add_argument('--no-curved', action='store_true',
+    parser.add_argument('--no_curved', action='store_true',
                        help='Use piecewise linear surface instead of cubic spline')
 
     args = parser.parse_args()

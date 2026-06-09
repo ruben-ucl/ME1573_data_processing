@@ -7,7 +7,7 @@ for quick visual feedback without running full ray tracing.
 
 Usage:
     python test_perimeter_extraction.py --config test_config.json
-    python test_perimeter_extraction.py --config test_config.json --opening-width 150
+    python test_perimeter_extraction.py --config test_config.json --opening_width 150
 
 Author: Claude
 Date: 2025-11-20
@@ -338,7 +338,7 @@ def main():
     parser = argparse.ArgumentParser(description='Test perimeter extraction with visualization')
     parser.add_argument('--config', default='sim/perimeter_extraction_config.json',
                        help='Path to test configuration JSON file (default: sim/perimeter_extraction_config.json)')
-    parser.add_argument('--opening-width', type=float, help='Override opening width (μm)')
+    parser.add_argument('--opening_width', type=float, help='Override opening width (μm)')
     parser.add_argument('--smoothing', type=float, help='Override smoothing factor')
 
     args = parser.parse_args()
