@@ -7,7 +7,7 @@ into a test_evaluation/ subdirectory to separate them from training outputs.
 
 Usage:
     # Dry run (preview changes)
-    python ml/migrate_test_results_to_subdirectory.py --dry-run
+    python ml/migrate_test_results_to_subdirectory.py --dry_run
 
     # Execute migration
     python ml/migrate_test_results_to_subdirectory.py
@@ -202,7 +202,7 @@ def main():
         epilog="""
 Examples:
   # Preview changes without moving files
-  python ml/migrate_test_results_to_subdirectory.py --dry-run
+  python ml/migrate_test_results_to_subdirectory.py --dry_run
 
   # Execute migration for all classifiers
   python ml/migrate_test_results_to_subdirectory.py
@@ -212,7 +212,7 @@ Examples:
         """
     )
 
-    parser.add_argument('--dry-run', action='store_true',
+    parser.add_argument('--dry_run', action='store_true',
                        help='Preview changes without actually moving files')
     parser.add_argument('--classifier', choices=['cwt', 'pd_raw', 'all'], default='all',
                        help='Classifier type to migrate (default: all)')
@@ -251,7 +251,7 @@ Examples:
     print("="*70)
 
     if args.dry_run:
-        print("\n✓ Dry run complete. Run without --dry-run to execute migration.")
+        print("\n✓ Dry run complete. Run without --dry_run to execute migration.")
     else:
         print("\n✓ Migration complete!")
 

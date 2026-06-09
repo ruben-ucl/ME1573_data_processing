@@ -8,6 +8,7 @@ Created on Tue Apr  5 12:14:30 2022
 import sys, functools, os, glob, h5py, pywt, traceback
 import numpy as np
 import pandas as pd
+from ml.cwt_utils import cwt_full_signal, cwt_per_window, apply_coi_masking, save_cwt_image
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib import pyplot as plt, ticker as mticker
 import matplotlib as mpl
@@ -17,7 +18,7 @@ from time import strftime, sleep
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from tools import get_paths, printProgressBar, get_logbook, get_logbook_data, get_cwt_scales
+from tools import get_paths, printProgressBar, get_logbook, get_logbook_data, get_cwt_scales, get_excluded_trackids
 
 from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
@@ -467,22 +468,7 @@ class Controller(QObject):
         self.autoSave = False # Sets to True if using auto-labelling
         # Cancellation flag for auto labelling
         self.cancel_auto_labelling = False
-        # Tracks to exclude due to corrupted PD signal
-        self.exclude = ['0514_02',
-           '0514_04',
-           '0514_05',
-           '0515_01',
-           '0515_02',
-           '0515_03',
-           '0515_04',
-           '0515_05',
-           '0515_06',
-           '0516_01',
-           '0516_02',
-           '0516_03',
-           '0516_04',
-           '0516_05',
-           '0516_06']
+        self.exclude = get_excluded_trackids()
     
     def connect_signals(self):
         self.view.btnStart.clicked.connect(self.get_data)
@@ -1205,132 +1191,18 @@ class Controller(QObject):
         return {'t': t, 'freqs': freqs, 'cwtmatr': cwtmatr, 'vmax': vmax, 'n_samples_window': n_samples_window}
 
     def _cwt_full_signal(self, s, scales, wavelet, samplingPeriod):
-        """
-        Compute CWT on full signal with symmetric padding (improved from manual reversal).
-        Returns: (cwtmatr, freqs) with cwtmatr cropped to original signal length.
-        """
-        # Use symmetric padding for better edge continuity (C1 continuous)
-        s_pad = np.pad(s, len(s), mode='symmetric')
-
-        if debug:
-            print(f"Full signal mode: Padded signal length: {len(s_pad)} (3x original)")
-
-        # Perform CWT on padded signal
-        cwtmatr, freqs = pywt.cwt(s_pad, scales, wavelet, sampling_period=samplingPeriod)
-
-        # Crop out the padding (extract middle section = original signal)
-        cwtmatr = np.abs(cwtmatr[:, self.n_points:2*self.n_points])
-
-        return cwtmatr, freqs
+        return cwt_full_signal(s, self.n_points, scales, wavelet, samplingPeriod)
 
     def _cwt_per_window(self, s, t, scales, wavelet, samplingPeriod):
-        """
-        Compute CWT on windowed region with smart padding strategy.
-        Uses actual signal as padding where available, synthetic only at edges.
-        Returns: (cwtmatr, freqs) already extracted to window region.
-        """
-        t_ms = t * 1000  # Convert to milliseconds
-
-        # Find window indices
-        window_start_idx = np.argmin(np.abs(t_ms - self.wStart))
-        window_end_idx = np.argmin(np.abs(t_ms - self.wEnd))
-        window_length = window_end_idx - window_start_idx
-
-        if debug:
-            print(f"Per-window mode: Window [{window_start_idx}:{window_end_idx}] = {window_length} samples")
-
-        # Determine padding length (same as full signal mode for consistency)
-        pad_length = window_length
-
-        # LEFT PADDING: Use actual signal where available
-        if window_start_idx >= pad_length:
-            # Sufficient signal before window - use it directly
-            left_pad = s[window_start_idx - pad_length : window_start_idx]
-            if debug: print(f"Left padding: {pad_length} samples from actual signal")
-        else:
-            # Near signal start - need some synthetic padding
-            available_left = window_start_idx
-            left_signal = s[0:window_start_idx]
-            synthetic_needed = pad_length - available_left
-            synthetic_left = np.pad(left_signal, (synthetic_needed, 0), mode='symmetric')[:synthetic_needed]
-            left_pad = np.concatenate([synthetic_left, left_signal])
-            if debug: print(f"Left padding: {synthetic_needed} synthetic + {available_left} actual")
-
-        # WINDOW (actual data to analyze)
-        window = s[window_start_idx:window_end_idx]
-
-        # RIGHT PADDING: Use actual signal where available
-        if window_end_idx + pad_length <= len(s):
-            # Sufficient signal after window - use it directly
-            right_pad = s[window_end_idx : window_end_idx + pad_length]
-            if debug: print(f"Right padding: {pad_length} samples from actual signal")
-        else:
-            # Near signal end - need some synthetic padding
-            available_right = len(s) - window_end_idx
-            right_signal = s[window_end_idx : len(s)]
-            synthetic_needed = pad_length - available_right
-            synthetic_right = np.pad(right_signal, (0, synthetic_needed), mode='symmetric')[-synthetic_needed:]
-            right_pad = np.concatenate([right_signal, synthetic_right])
-            if debug: print(f"Right padding: {available_right} actual + {synthetic_needed} synthetic")
-
-        # Combine: [left_pad][window][right_pad]
-        s_pad = np.concatenate([left_pad, window, right_pad])
-
-        if debug:
-            print(f"Per-window padded signal length: {len(s_pad)} (window={window_length}, total_pad={2*pad_length})")
-
-        # Perform CWT on padded window
-        cwtmatr, freqs = pywt.cwt(s_pad, scales, wavelet, sampling_period=samplingPeriod)
-
-        # Extract only the window portion (middle section)
-        cwtmatr = np.abs(cwtmatr[:, pad_length : pad_length + window_length])
-
+        cwtmatr, freqs = cwt_per_window(s, t, self.wStart, self.wEnd, scales, wavelet, samplingPeriod)
         # Store window indices for use by _cwt_plot_internal
-        self._per_window_start_idx = window_start_idx
-        self._per_window_end_idx = window_end_idx
-
+        t_ms = t * 1000
+        self._per_window_start_idx = np.argmin(np.abs(t_ms - self.wStart))
+        self._per_window_end_idx   = np.argmin(np.abs(t_ms - self.wEnd))
         return cwtmatr, freqs
 
     def _apply_coi_masking(self, cwtmatr, freqs):
-        """
-        Apply Cone of Influence (COI) masking to CWT coefficients.
-        Sets edge artifact regions to 0 based on wavelet support width.
-
-        The COI represents the region where edge effects from padding are significant.
-        For CWT, larger scales (lower frequencies) require more samples and have wider COI.
-
-        Args:
-            cwtmatr: CWT coefficient matrix, shape (n_scales, n_samples)
-            freqs: Frequency array corresponding to scales
-
-        Returns:
-            Masked CWT matrix with COI regions set to 0
-        """
-        n_scales, n_samples = cwtmatr.shape
-        cwtmatr_masked = cwtmatr.copy()
-
-        # COI boundary calculation
-        # For most wavelets, the e-folding time (support width) is approximately sqrt(2)*scale
-        # At the edges, coefficients within e-folding distance are affected by boundary
-        for i, freq in enumerate(freqs):
-            # Convert frequency to scale (inverse relationship)
-            scale = self.samplingRate / freq
-
-            # e-folding distance in samples (approximate wavelet support width)
-            # This is wavelet-dependent; sqrt(2)*scale is a reasonable approximation
-            coi_width = int(np.ceil(np.sqrt(2) * scale))
-
-            # Mask left edge
-            cwtmatr_masked[i, :coi_width] = 0
-
-            # Mask right edge
-            cwtmatr_masked[i, -coi_width:] = 0
-
-        if debug:
-            n_masked = np.sum(cwtmatr_masked == 0) - np.sum(cwtmatr == 0)
-            print(f"COI masking: Set {n_masked} coefficients to 0 (edge artifacts)")
-
-        return cwtmatr_masked
+        return apply_coi_masking(cwtmatr, freqs, self.samplingRate)
 
     def cwt_plot(self, cwt_spec):
         """Process CWT result from worker thread - display or save based on mode."""
@@ -1462,54 +1334,10 @@ class Controller(QObject):
             plt.close()
                  
     def _save_cwt_from_cached(self, cwt_spec, override_vmax=None):
-        """
-        OPTIMIZED: Save CWT image directly from cached cwt_spec without matplotlib overhead.
-
-        This bypasses the cwt_plot → save_cwt pipeline used in manual mode.
-        Direct numpy → PIL conversion is ~5-10x faster than matplotlib rendering.
-
-        Args:
-            cwt_spec: CWT result dict from cwt() function
-            override_vmax: Optional override for vmax (used for global normalization)
-        """
-        from PIL import Image
-        import matplotlib.cm as cm
-
-        # Extract window from CWT based on mode
-        t = cwt_spec['t']
-        t_ms = t * 1000
-
-        if self.cwtMode == 'per-window':
-            # CWT already windowed
-            cwt_windowed = cwt_spec['cwtmatr']
-        else:
-            # Full signal mode: extract window
-            window_start_idx = np.argmin(np.abs(t_ms - self.wStart))
-            window_end_idx = np.argmin(np.abs(t_ms - self.wEnd))
-            cwt_windowed = cwt_spec['cwtmatr'][:, window_start_idx:window_end_idx]
-
-        # Apply COI masking if enabled
-        if self.coiMasking:
-            cwt_windowed = self._apply_coi_masking(cwt_windowed, cwt_spec['freqs'])
-
-        # Normalize to 0-1 range using vmax
-        # Use override_vmax if provided (global calculation), else use per-wavelet hardcoded
-        vmax = override_vmax if override_vmax is not None else cwt_spec['vmax']
-        cwt_normalized = np.clip(cwt_windowed / vmax, 0, 1)
-
-        # Apply colormap
-        cmap_func = mpl.colormaps.get_cmap(self.cmap)
-        cwt_colored = cmap_func(cwt_normalized)  # Returns RGBA (0-1)
-
-        # Convert to RGB uint8 and flip vertically (matplotlib convention)
-        cwt_rgb = (cwt_colored[:, :, :3] * 255).astype(np.uint8)
-
-        # Save using PIL (much faster than matplotlib)
-        output_folder = self.get_output_folder()
-        output_path = Path(output_folder, f'{self.trackid}_{round(self.wStart, 1)}-{round(self.wEnd, 1)}ms.png')
-
-        img = Image.fromarray(cwt_rgb, mode='RGB')
-        img.save(output_path, optimize=True)
+        output_path = Path(self.get_output_folder(),
+                           f'{self.trackid}_{round(self.wStart, 1)}-{round(self.wEnd, 1)}ms.png')
+        save_cwt_image(cwt_spec, self.wStart, self.wEnd, self.cwtMode,
+                       self.cmap, self.coiMasking, output_path, override_vmax)
 
     def save_cwt(self, label):
         """

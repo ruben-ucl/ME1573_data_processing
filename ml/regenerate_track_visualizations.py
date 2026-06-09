@@ -7,7 +7,7 @@ version that has been tested.
 Usage:
     python ml/regenerate_track_visualizations.py
     python ml/regenerate_track_visualizations.py --classifier_type cwt_image
-    python ml/regenerate_track_visualizations.py --dry-run  # Show what would be run
+    python ml/regenerate_track_visualizations.py --dry_run  # Show what would be run
 """
 
 import os
@@ -111,7 +111,7 @@ Examples:
   python ml/regenerate_track_visualizations.py --classifier_type pd_signal
 
   # Dry run to see what would be executed
-  python ml/regenerate_track_visualizations.py --dry-run
+  python ml/regenerate_track_visualizations.py --dry_run
         """
     )
 
@@ -119,7 +119,7 @@ Examples:
                        choices=['cwt_image', 'pd_signal'],
                        default='cwt_image',
                        help='Type of classifier (default: cwt_image)')
-    parser.add_argument('--dry-run', action='store_true',
+    parser.add_argument('--dry_run', action='store_true',
                        help='Show what would be executed without running')
     parser.add_argument('--versions', type=str, nargs='+',
                        help='Specific versions to process (e.g., v206 v207)')

@@ -20,8 +20,8 @@ HYPERPARAMETER_REGISTRY = {
         'type': 'continuous',
         'category': 'training',
         'tier': 1,
-        'default': 0.001,
-        'search_space': [0.0001, 0.0005, 0.001, 0.002, 0.005],
+        'default': 0.0001,
+        'search_space': [0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.002, 0.005],
         'doe_range': (0.0001, 0.01),
         'log_scale': True,
         'description': 'Learning rate for optimizer - critical for convergence'
@@ -53,11 +53,11 @@ HYPERPARAMETER_REGISTRY = {
         'tier': 1,
         'default': {
             'pd_signal': 0.2,
-            'cwt_image': 0.0
+            'cwt_image': 0.2
         },
         'search_space': {
             'pd_signal': [0.1, 0.2, 0.3],
-            'cwt_image': [0.0, 0.1, 0.2, 0.3]
+            'cwt_image': [0.0, 0.1, 0.2, 0.3, 0.4]
         },
         'doe_range': (0.0, 0.5),
         'description': 'Dropout rate for convolutional layers - critical for overfitting control'
@@ -68,11 +68,12 @@ HYPERPARAMETER_REGISTRY = {
         'tier': 1,
         'default': {
             'pd_signal': [0.3, 0.2],
-            'cwt_image': [0.5]
+            'cwt_image': [0.4, 0.3]
         },
         'search_space': {
             'pd_signal': [[0.2, 0.1], [0.2, 0.2], [0.3, 0.2], [0.3, 0.3], [0.4, 0.3]],
-            'cwt_image': [[0.1], [0.2], [0.3], [0.5], [0.3, 0.2], [0.5, 0.3]]
+            # 'cwt_image': [[0.1], [0.2], [0.3], [0.4], [0.5], [0.6]]
+            'cwt_image': [[0.1, 0.0], [0.2, 0.1], [0.3, 0.2], [0.4, 0.3], [0.5, 0.4]]
         },
         'description': 'Dropout rates for dense layers - critical for overfitting control'
     },
@@ -82,8 +83,8 @@ HYPERPARAMETER_REGISTRY = {
         'type': 'continuous',
         'category': 'regularization',
         'tier': 2,
-        'default': 0.001,
-        'search_space': [0.0, 0.0001, 0.001, 0.01],
+        'default': 0.0001,
+        'search_space': [0.0, 0.00001, 0.0001, 0.001, 0.01],
         'doe_range': (0.0, 0.1),
         'log_scale': True,
         'description': 'L2 regularization strength - high impact on overfitting'
@@ -112,8 +113,8 @@ HYPERPARAMETER_REGISTRY = {
         'category': 'architecture',
         'tier': 2,
         'default': {
-            'pd_signal': [16, 32, 64],
-            'cwt_image': [16, 16, 32, 32, 64, 64]
+            'pd_signal': [8, 16, 32, 64],
+            'cwt_image': [16, 32]
         },
         'search_space': {
             'pd_signal': [
@@ -123,12 +124,12 @@ HYPERPARAMETER_REGISTRY = {
                 [32, 64, 128]
             ],
             'cwt_image': [
-                [16, 32, 64],
-                [16, 32, 32, 64],
-                [32, 32, 64, 64],
-                [16, 32, 64, 64, 128],
-                [16, 16, 32, 32, 64, 64],
-                [32, 32, 64, 64, 128, 128]
+                # Ordered by total filter count (sum) as a capacity proxy
+                [4, 8],
+                [8, 16],
+                [16, 32],
+                [8, 16, 32],
+                [16, 32, 64]
             ]
         },
         'description': 'Number of filters in each convolutional layer - high impact on model capacity'
@@ -139,7 +140,7 @@ HYPERPARAMETER_REGISTRY = {
         'tier': 2,
         'default': {
             'pd_signal': [128, 64],
-            'cwt_image': [128]
+            'cwt_image': [32, 16]
         },
         'search_space': {
             'pd_signal': [
@@ -149,11 +150,9 @@ HYPERPARAMETER_REGISTRY = {
                 [256, 128]
             ],
             'cwt_image': [
-                [64],
-                [128],
-                [128, 64],
-                [256, 128],
-                [512, 256]
+                # [16, 8],
+                [32, 16],
+                # [64, 32],
             ]
         },
         'description': 'Number of units in each dense layer - high impact on model capacity'
@@ -168,7 +167,7 @@ HYPERPARAMETER_REGISTRY = {
         'type': 'discrete',
         'category': 'training_control',
         'tier': 3,
-        'default': 10,
+        'default': 15,
         'search_space': {
             'pd_signal': [8, 12],
             'cwt_image': [5, 10, 15]
@@ -218,7 +217,7 @@ HYPERPARAMETER_REGISTRY = {
             'pd_signal': 0.5,
             'cwt_image': 0.0
         },
-        'search_space': [0.0, 0.25, 0.5, 0.75, 1.0],
+        'search_space': [0.0, 0.25, 0.5, 1.0],
         'doe_range': (0.0, 1.0),
         'description': 'Probability that augmentation is applied to a sample - high impact in data-limited scenarios'
     },
@@ -238,7 +237,7 @@ HYPERPARAMETER_REGISTRY = {
         'tier': 3,
         'default': {
             'pd_signal': ['time_shift', 'noise'],
-            'cwt_image': []
+            'cwt_image': ['time_shift', 'noise']
         },
         'search_space': {
             'pd_signal': [
@@ -334,18 +333,38 @@ HYPERPARAMETER_REGISTRY = {
         'type': 'categorical',
         'category': 'fixed',
         'tier': 'fixed',
-        'default': [2, 5],
+        'default': None,
         'search_space': {
             'cwt_image': [
-                [1, 2],
-                [1, 3],
-                [2, 4],
-                [2, 5],
-                [0, 2],
-                [1, 4]
+                # [1, 2],
+                # [1, 3],
+                # [2, 4],
+                # [2, 5],
+                # [0, 2],
+                # [1, 4]
             ]
         },
-        'description': 'Which conv layers to add pooling after - typically fixed'
+        'description': 'Which conv layers to add pooling after - ignored when auto_pool=True'
+    },
+    'auto_pool': {
+        'type': 'categorical',
+        'category': 'fixed',
+        'tier': 2,
+        'default': True,
+        'search_space': {
+            'cwt_image': [True, False]
+        },
+        'description': 'Derive pool_layers automatically from conv_filters: pool after each filter-count transition (VGG-block pattern). Overrides pool_layers when True.'
+    },
+    'pool_after_last_block': {
+        'type': 'categorical',
+        'category': 'fixed',
+        'tier': 3,
+        'default': False,
+        'search_space': {
+            'cwt_image': [True, False]
+        },
+        'description': 'When auto_pool=True, also add MaxPool after the final conv block before Flatten.'
     }
 }
 

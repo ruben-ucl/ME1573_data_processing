@@ -25,9 +25,19 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import pickle
+import time
 from datetime import datetime
 
-# TensorFlow setup
+# Local imports first — config registers the CUDA DLL directory before TF loads
+from config import (convert_numpy_types, CWT_OUTPUTS_DIR, PD_OUTPUTS_DIR, ML_ROOT,
+                    format_version, load_dataset_variant_info,
+                    get_cwt_experiment_log_path, get_pd_experiment_log_path)
+from data_utils import normalize_image, load_cwt_test_images, load_pd_test_images
+
+# CPU-only inference — faster than GPU for small test sets due to transfer overhead
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # suppress TF info/warning logs
+
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 import matplotlib.pyplot as plt
@@ -40,16 +50,30 @@ from sklearn.metrics import (
     roc_curve, precision_recall_curve
 )
 
-# Local imports
-from config import convert_numpy_types
-from data_utils import normalize_image
+def _resolve_paths_from_version(version_str, classifier_type='cwt_image'):
+    """Resolve model, test_data, and output_dir paths from a version string."""
+    base_dir = PD_OUTPUTS_DIR if classifier_type == 'pd_signal' else CWT_OUTPUTS_DIR
+    version_dir = base_dir / version_str
+    # Search in priority order: best_model* at root, then models/ subdir
+    model_candidates = (
+        sorted(version_dir.glob('best_model*.h5')) +
+        sorted(version_dir.glob('best_model*.keras')) +
+        sorted(version_dir.glob('models/final_model*.h5')) +
+        sorted(version_dir.glob('models/final_model*.keras'))
+    )
+    model_path = str(model_candidates[-1]) if model_candidates else str(version_dir / f'best_model_{version_str}.h5')
+    return {
+        'model':      model_path,
+        'test_data':  str(version_dir / 'test_set_data.pkl'),
+        'output_dir': str(version_dir / 'test_evaluation'),
+    }
 
 class ModelTester:
     """Evaluates trained models on test data."""
     
-    def __init__(self, model_path, test_data_path, output_dir, verbose=False):
+    def __init__(self, model_path, test_data_path=None, output_dir='.', verbose=False):
         self.model_path = Path(model_path)
-        self.test_data_path = Path(test_data_path)
+        self.test_data_path = Path(test_data_path) if test_data_path else None
         self.output_dir = Path(output_dir)
         self.verbose = verbose
         
@@ -116,24 +140,26 @@ class ModelTester:
         """Load test data from pickle file."""
         if not self.test_data_path.exists():
             raise FileNotFoundError(f"Test data not found: {self.test_data_path}")
-        
+
         if self.verbose:
             print(f"Loading test data from: {self.test_data_path}")
-            
+
         try:
             with open(self.test_data_path, 'rb') as f:
                 test_data = pickle.load(f)
-            
+
             X_test = test_data['X_test']
             y_test = test_data['y_test']
-            
+            test_files = test_data.get('test_files', None)
+            classifier_type = test_data.get('classifier_type', None)
+
             if self.verbose:
                 print(f"Test data loaded: {len(X_test)} samples")
                 print(f"Test data shape: {X_test.shape if hasattr(X_test, 'shape') else 'Multiple arrays'}")
                 print(f"Class distribution: {np.bincount(y_test)}")
-                
-            return X_test, y_test
-            
+
+            return X_test, y_test, test_files, classifier_type
+
         except Exception as e:
             raise Exception(f"Failed to load test data: {e}")
     
@@ -204,6 +230,22 @@ class ModelTester:
         
         return X_test, y_test
     
+    def _benchmark_cwt_time(self, n_scales, n_time_samples, n_repeats=5):
+        """Time a representative CWT on a synthetic signal. Returns ms per sample."""
+        import pywt
+        wavelet = 'cmor1.5-1.0'
+        sampling_period = 1e-5  # 100 kHz — typical for this dataset
+        scales = np.arange(1, n_scales + 1, dtype=float)
+        signal = np.random.randn(n_time_samples)
+        # Warm-up run to exclude any one-time initialisation overhead
+        pywt.cwt(signal, scales, wavelet, sampling_period=sampling_period)
+        elapsed = []
+        for _ in range(n_repeats):
+            t0 = time.perf_counter()
+            pywt.cwt(signal, scales, wavelet, sampling_period=sampling_period)
+            elapsed.append(time.perf_counter() - t0)
+        return float(np.median(elapsed)) * 1000  # ms per sample
+
     def _get_expected_input_shape(self):
         """Get the expected input shape from the loaded model."""
         try:
@@ -228,18 +270,38 @@ class ModelTester:
         if self.verbose:
             print("Evaluating model on test data...")
         
-        # Get predictions
+        # Get predictions and time the inference
+        n_samples = len(y_test)
+        _t0 = time.perf_counter()
         y_pred_proba = model.predict(X_test, verbose=0)
+        _inference_seconds = time.perf_counter() - _t0
+        predictions_per_second = n_samples / _inference_seconds if _inference_seconds > 0 else float('inf')
+        ms_per_sample_classify = (_inference_seconds / n_samples) * 1000 if n_samples > 0 else 0.0
+
+        # CWT timing benchmark (CWT image classifiers only — inferred from 4-D array input)
+        if isinstance(X_test, np.ndarray) and X_test.ndim == 4:
+            ms_per_sample_cwt = self._benchmark_cwt_time(X_test.shape[1], X_test.shape[2])
+        else:
+            ms_per_sample_cwt = None
+
+        ms_per_sample_total = (
+            ms_per_sample_classify + ms_per_sample_cwt
+            if ms_per_sample_cwt is not None
+            else ms_per_sample_classify
+        )
         
+        THRESHOLD = 0.4
+        print(f"Using classification threshold: {THRESHOLD} (hardcoded — run final_model_trainer for optimized threshold)")
+
         # Handle softmax output (n_samples, n_classes) vs sigmoid output (n_samples, 1)
         if len(y_pred_proba.shape) > 1 and y_pred_proba.shape[1] > 1:
-            # Multi-class softmax output: take argmax for predictions, class 1 prob for metrics
+            # Multi-class softmax output: argmax ignores threshold
             y_pred = np.argmax(y_pred_proba, axis=1)
-            y_pred_proba_binary = y_pred_proba[:, 1]  # Probability of class 1 for ROC AUC
+            y_pred_proba_binary = y_pred_proba[:, 1]
         else:
-            # Binary sigmoid output: use threshold
+            # Binary sigmoid output
             y_pred_proba_binary = y_pred_proba.flatten()
-            y_pred = (y_pred_proba_binary > 0.5).astype(int)
+            y_pred = (y_pred_proba_binary > THRESHOLD).astype(int)
         
         # Ensure y_test is in the right format
         if len(y_test.shape) > 1:
@@ -277,7 +339,12 @@ class ModelTester:
                 'y_true': y_test.tolist(),
                 'y_pred': y_pred.tolist(),
                 'y_pred_proba': y_pred_proba.flatten().tolist() if len(y_pred_proba.shape) > 1 else y_pred_proba.tolist()
-            }
+            },
+            'inference_time_seconds': float(_inference_seconds),
+            'ms_per_sample_classify': float(ms_per_sample_classify),
+            'predictions_per_second': float(predictions_per_second),
+            'ms_per_sample_cwt': float(ms_per_sample_cwt) if ms_per_sample_cwt is not None else None,
+            'ms_per_sample_total': float(ms_per_sample_total),
         }
         
         if self.verbose:
@@ -288,6 +355,10 @@ class ModelTester:
             print(f"  F1-Score: {f1:.4f}")
             if roc_auc is not None:
                 print(f"  ROC AUC: {roc_auc:.4f}")
+            print(f"  Classification speed: {predictions_per_second:.1f} pred/s ({ms_per_sample_classify:.2f} ms/sample)")
+            if ms_per_sample_cwt is not None:
+                print(f"  CWT time (benchmark):  {ms_per_sample_cwt:.2f} ms/sample")
+                print(f"  End-to-end estimate:   {ms_per_sample_total:.2f} ms/sample")
             print(f"\nConfusion Matrix:")
             print(cm)
         
@@ -775,16 +846,11 @@ class ModelTester:
         # Convert numpy types for JSON serialization
         results_with_metadata = convert_numpy_types(results_with_metadata)
         
-        # Save as JSON
+        # Save detailed results as JSON
         results_file = self.output_dir / 'test_results.json'
         with open(results_file, 'w', encoding='utf-8') as f:
             json.dump(results_with_metadata, f, indent=2, ensure_ascii=False)
-        
-        # Save as pickle for easy loading
-        pickle_file = self.output_dir / 'test_results.pkl'
-        with open(pickle_file, 'wb') as f:
-            pickle.dump(results_with_metadata, f)
-        
+
         # Save summary CSV for easy viewing
         summary_data = {
             'model_version': [model_version],
@@ -794,101 +860,613 @@ class ModelTester:
             'test_f1_score': [results['test_f1_score']],
             'test_roc_auc': [results['test_roc_auc']],
             'test_samples': [results['test_samples']],
+            'ms_per_sample_classify': [results['ms_per_sample_classify']],
+            'predictions_per_second': [results['predictions_per_second']],
+            'ms_per_sample_cwt': [results['ms_per_sample_cwt']],
+            'ms_per_sample_total': [results['ms_per_sample_total']],
             'evaluation_timestamp': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
         }
-        
+
         summary_df = pd.DataFrame(summary_data)
         summary_file = self.output_dir / 'test_summary.csv'
         summary_df.to_csv(summary_file, index=False, encoding='utf-8')
-        
+
         if self.verbose:
             print(f"\nResults saved:")
             print(f"  Detailed: {results_file}")
-            print(f"  Pickle: {pickle_file}")
-            print(f"  Summary: {summary_file}")
-        
-        return results_file, pickle_file, summary_file
-    
+            print(f"  Summary:  {summary_file}")
+
+        return results_file, summary_file
+
+    def load_test_data_from_variant(self, dataset_variant, model, classifier_type):
+        """
+        Load test data from a dataset variant CSV when test_set_data.pkl is absent.
+        Saves the resulting pkl so subsequent runs can use the fast path.
+
+        Args:
+            dataset_variant: Dataset variant name (used by load_dataset_variant_info)
+            model: Loaded Keras model (needed for input shape)
+            classifier_type: 'cwt_image' or 'pd_signal'
+
+        Returns:
+            (X_test, y_test, test_files, classifier_type)
+        """
+        print(f"Loading test data from dataset variant: {dataset_variant}")
+        dataset_info = load_dataset_variant_info(dataset_variant)
+        test_csv = dataset_info['dataset_dir'] / 'test.csv'
+        if not test_csv.exists():
+            raise FileNotFoundError(f"Test CSV not found: {test_csv}")
+
+        df_test = pd.read_csv(test_csv, encoding='utf-8')
+
+        # Get data_dir from dataset_config.json saved alongside the model
+        dataset_config_path = self.output_dir.parent / 'dataset_config.json'
+        if dataset_config_path.exists():
+            with open(dataset_config_path, 'r', encoding='utf-8') as f:
+                dataset_config = json.load(f)
+            data_dir = dataset_config.get('data_dir')
+        else:
+            data_dir = dataset_info['config'].get('data_dir')
+        if not data_dir:
+            raise ValueError("Cannot determine data directory from dataset variant or dataset_config.json")
+
+        is_multi_channel = isinstance(data_dir, dict)
+        channel_paths = list(data_dir.values()) if is_multi_channel else [data_dir]
+
+        if is_multi_channel:
+            print(f"Loading {len(channel_paths)}-channel test images")
+        else:
+            print(f"Loading test images from: {data_dir}")
+
+        test_files, test_labels = [], []
+        for _, row in df_test.iterrows():
+            filename = row['filename']
+            label = int(row['has_porosity'])
+            check_path = Path(channel_paths[0]) / filename if is_multi_channel else Path(data_dir) / filename
+            if check_path.exists():
+                test_files.append(filename if is_multi_channel else str(check_path))
+                test_labels.append(label)
+
+        if not test_files:
+            raise ValueError("No test files found matching CSV entries")
+        print(f"Found {len(test_files)} test images")
+
+        test_files_arr = np.array(test_files)
+        test_labels_arr = np.array(test_labels)
+
+        if classifier_type == 'cwt_image':
+            img_shape = model.input_shape
+            img_height, img_width = img_shape[1], img_shape[2]
+            img_channels = img_shape[3] if len(img_shape) > 3 else 1
+            X_test, y_test_filtered, test_files_filtered = load_cwt_test_images(
+                test_files_arr, test_labels_arr, img_width, img_height, img_channels,
+                channel_paths=channel_paths if is_multi_channel else None,
+                verbose=self.verbose,
+            )
+        else:
+            img_width = model.input_shape[0][1]
+            X_test, y_test_filtered, test_files_filtered = load_pd_test_images(
+                test_files_arr, test_labels_arr, img_width, verbose=self.verbose)
+
+        test_data = {
+            'X_test':           X_test,
+            'y_test':           np.array(y_test_filtered),
+            'test_files':       test_files_filtered,
+            'classifier_type':  classifier_type,
+            'dataset_variant':  dataset_variant,
+        }
+        pkl_path = self.output_dir.parent / 'test_set_data.pkl'
+        with open(pkl_path, 'wb') as f:
+            pickle.dump(test_data, f)
+        print(f"Saved test set definition to: {pkl_path}")
+
+        return X_test, np.array(y_test_filtered), test_files_filtered, classifier_type
+
+    def _load_val_threshold(self, version_str, classifier_type):
+        """Return the val-set optimised threshold saved during training, or None if absent."""
+        try:
+            log_path = (get_cwt_experiment_log_path() if classifier_type == 'cwt_image'
+                        else get_pd_experiment_log_path())
+            df = pd.read_csv(log_path, encoding='utf-8')
+            row = df[df['version'] == version_str]
+            if not row.empty and 'best_val_threshold' in row.columns:
+                val = row.iloc[-1]['best_val_threshold']
+                if pd.notna(val):
+                    return float(val)
+        except Exception:
+            pass
+        return None
+
     def run_evaluation(self, model_version):
         """Run complete model evaluation pipeline."""
+        # To add Grad-CAM: from gradcam_utils import generate_comprehensive_gradcam_analysis
         try:
             # Load model and test data
             model = self.load_model()
-            X_test, y_test = self.load_test_data()
-            
+            X_test, y_test, test_files, classifier_type = self.load_test_data()
+
             # Prepare data
             X_test, y_test = self.prepare_test_data(X_test, y_test)
-            
+
             # Evaluate model
             results = self.evaluate_model(model, X_test, y_test)
-            
+
+            y_true_arr = np.array(results['predictions']['y_true'])
+            y_pred_arr = np.array(results['predictions']['y_pred'])
+            y_proba_arr = np.array(results['predictions']['y_pred_proba'])
+
+            if test_files is not None:
+                from visualize_track_predictions import (
+                    generate_track_predictions_viz,
+                    generate_confusion_matrix,
+                )
+
+                # Track prediction figures — same path as final_model_trainer
+                generate_track_predictions_viz(
+                    test_files=test_files,
+                    y_true=y_true_arr,
+                    y_pred=y_pred_arr,
+                    output_dir=self.output_dir.parent,
+                    version=model_version,
+                    use_time_labels=True,
+                    unlabelled=False,
+                    y_proba=y_proba_arr,
+                )
+
+                # Confusion matrix figure — same path and filename as final_model_trainer
+                class_labels = ['Conduct', 'Keyhole'] if classifier_type == 'pd_signal' else ['No Porosity', 'Porosity']
+                generate_confusion_matrix(
+                    y_true=y_true_arr,
+                    y_pred=y_pred_arr,
+                    output_dir=self.output_dir.parent,
+                    version=model_version,
+                    threshold=0.4,
+                    test_files=test_files,
+                    class_labels=class_labels,
+                    subdir='test_evaluation',
+                )
+
+                # Save test_predictions_{version}.pkl so visualize_track_predictions.py
+                # --version mode works without re-running final_model_trainer
+                y_pred_proba = np.array(results['predictions']['y_pred_proba'])
+                predictions_pkl = self.output_dir / f'test_predictions_{model_version}.pkl'
+                with open(predictions_pkl, 'wb') as f:
+                    pickle.dump({
+                        'y_pred':          y_pred_arr,
+                        'y_proba':         y_pred_proba,
+                        'y_true':          y_true_arr,
+                        'best_threshold':  0.4,
+                        'test_files':      test_files,
+                        'classifier_type': classifier_type,
+                    }, f)
+
             # Run activation analysis for PD models
             activation_results = self.analyze_pd_activations(model, X_test, y_test, num_samples_per_class=10)
             if activation_results is not None:
                 results['activation_analysis'] = activation_results
-            
+
             # Save results
             results_files = self.save_results(results, model_version)
-            
+
             return results, results_files
-            
+
         except Exception as e:
             raise Exception(f"Evaluation failed: {e}")
 
-def main():
-    parser = argparse.ArgumentParser(description='Evaluate trained model on test data')
-    parser.add_argument('--model', type=str, required=True,
-                       help='Path to trained model file (.h5 or .keras)')
-    parser.add_argument('--test_data', type=str, required=True,
-                       help='Path to test data pickle file')
-    parser.add_argument('--output_dir', type=str, required=True,
-                       help='Output directory for results')
-    parser.add_argument('--model_version', type=str, required=True,
-                       help='Model version identifier')
-    parser.add_argument('--verbose', action='store_true',
-                       help='Show detailed output')
-    
-    args = parser.parse_args()
-    
-    try:
-        # Initialize tester
-        tester = ModelTester(
-            model_path=args.model,
-            test_data_path=args.test_data,
-            output_dir=args.output_dir,
-            verbose=args.verbose
+    def run_full_evaluation(self, model_version, model, X_test, y_test, test_files, classifier_type, gradcam=False):
+        """
+        Complete evaluation: threshold optimization, Grad-CAM, P-V map, classification report,
+        and all standard outputs. Produces the same file set as final_model_trainer's
+        evaluate_with_threshold_optimization(), so results are directly comparable.
+
+        Args:
+            model_version: Version string (e.g. 'v229')
+            model: Loaded Keras model
+            X_test: Test images / dual-branch list
+            y_test: Ground-truth labels (np.ndarray)
+            test_files: List of filenames for visualization
+            classifier_type: 'cwt_image' or 'pd_signal'
+        """
+        from sklearn.metrics import (accuracy_score, precision_score, recall_score,
+                                     f1_score as sk_f1, roc_auc_score, classification_report as sk_report)
+        from visualize_track_predictions import generate_track_predictions_viz, generate_confusion_matrix
+
+        test_eval_dir = self.output_dir  # already points to version/test_evaluation
+
+        # --- Predictions ---
+        if classifier_type == 'cwt_image':
+            y_proba = model.predict(X_test, verbose=0)
+        else:
+            pd1, pd2 = X_test if isinstance(X_test, (list, tuple)) else (X_test, X_test)
+            y_proba = model.predict([pd1, pd2], verbose=0)
+        y_proba_flat = y_proba.flatten()
+
+        # --- Load val-set threshold from training log ---
+        best_threshold = self._load_val_threshold(model_version, classifier_type)
+        if best_threshold is None:
+            print("Warning: val-set threshold not found in log; falling back to 0.4")
+            best_threshold = 0.4
+        else:
+            print(f"Using val-set threshold from training: {best_threshold:.2f}")
+
+        y_pred = (y_proba_flat >= best_threshold).astype(int)
+
+        best_result = {
+            'threshold': best_threshold,
+            'accuracy':  float(accuracy_score(y_test, y_pred)),
+            'precision': float(precision_score(y_test, y_pred, zero_division=0)),
+            'recall':    float(recall_score(y_test, y_pred, zero_division=0)),
+            'f1_score':  float(sk_f1(y_test, y_pred, zero_division=0)),
+        }
+        print(f"Threshold {best_threshold:.2f}  F1={best_result['f1_score']:.4f}  "
+              f"Acc={best_result['accuracy']:.4f}")
+
+        try:
+            auc_score = float(roc_auc_score(y_test, y_proba_flat))
+        except ValueError:
+            auc_score = None
+
+        # --- test_predictions pkl (same format as final_model_trainer) ---
+        predictions_pkl = test_eval_dir / f'test_predictions_{model_version}.pkl'
+        with open(predictions_pkl, 'wb') as f:
+            pickle.dump({
+                'y_pred':          y_pred,
+                'y_proba':         y_proba_flat,
+                'y_true':          y_test,
+                'best_threshold':  best_threshold,
+                'test_files':      test_files,
+                'classifier_type': classifier_type,
+            }, f)
+
+        # --- Classification report ---
+        report_str = sk_report(y_test, y_pred)
+        report_path = test_eval_dir / f'classification_report_{model_version}.txt'
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(f"Classification Report — Threshold: {best_threshold:.2f}\n{'='*50}\n")
+            f.write(report_str)
+            f.write(f"\nAUC: {auc_score:.4f}" if auc_score else "\nAUC: N/A")
+
+        # --- Confusion matrix (identical path/filename to trainer) ---
+        class_labels = ['Conduct', 'Keyhole'] if classifier_type == 'pd_signal' else ['No Porosity', 'Porosity']
+        generate_confusion_matrix(
+            y_true=y_test, y_pred=y_pred,
+            output_dir=test_eval_dir.parent,
+            version=model_version, threshold=best_threshold,
+            test_files=test_files, class_labels=class_labels,
+            subdir='test_evaluation',
         )
-        
-        # Run evaluation
-        results, result_files = tester.run_evaluation(args.model_version)
-        
-        print(f"\n✅ Model evaluation completed successfully!")
-        print(f"Test Accuracy: {results['test_accuracy']:.4f}")
-        print(f"Results saved to: {args.output_dir}")
-        
-        # Print activation analysis summary if available
-        if 'activation_analysis' in results:
-            activation_data = results['activation_analysis']
-            print(f"\n🔍 Activation Analysis Summary:")
-            
-            if 'overall_patterns' in activation_data and 'cross_class_comparison' in activation_data['overall_patterns']:
-                comparison = activation_data['overall_patterns']['cross_class_comparison']
-                if 'most_discriminative_channel' in comparison:
-                    channel = comparison['most_discriminative_channel']
-                    pd1_diff = comparison.get('pd1_max_difference', 0)
-                    pd2_diff = comparison.get('pd2_max_difference', 0)
-                    print(f"  Most discriminative channel: {channel}")
-                    print(f"  PD1 max difference: {pd1_diff:.4f}")
-                    print(f"  PD2 max difference: {pd2_diff:.4f}")
-            
-            if 'by_class' in activation_data:
-                for class_name, class_data in activation_data['by_class'].items():
-                    pred_conf = class_data['prediction_confidence']
-                    corr = class_data['cross_channel_correlation']
-                    print(f"  {class_name}: Pred confidence {pred_conf['mean']:.3f}±{pred_conf['std']:.3f}, PD1-PD2 correlation {corr:.3f}")
-            
-            print(f"  Detailed plots saved to: {args.output_dir}/activation_analysis/")
-        
+
+        # --- Track prediction figures (identical path to trainer) ---
+        if test_files is not None:
+            generate_track_predictions_viz(
+                test_files=test_files, y_true=y_test, y_pred=y_pred,
+                output_dir=test_eval_dir.parent,
+                version=model_version, use_time_labels=True, unlabelled=False,
+                y_proba=y_proba_flat,
+            )
+
+        # --- Grad-CAM (CWT only, --full mode) ---
+        gradcam_results = None
+        if gradcam and classifier_type == 'cwt_image':
+            try:
+                from gradcam_utils import generate_comprehensive_gradcam_analysis
+                num_channels = X_test.shape[-1] if hasattr(X_test, 'shape') and len(X_test.shape) == 4 else 1
+                channel_labels = [f'Channel_{i+1}' for i in range(num_channels)] if num_channels > 1 else None
+                gradcam_results = generate_comprehensive_gradcam_analysis(
+                    model, X_test, y_test, y_pred, y_proba_flat,
+                    best_threshold, test_eval_dir, model_version, test_files,
+                    channel_labels=channel_labels,
+                )
+            except Exception as e:
+                print(f"Warning: Grad-CAM failed: {e}")
+
+        # --- P-V map ---
+        pv_map_results = None
+        if test_files is not None:
+            try:
+                import sys as _sys
+                _sys.path.insert(0, str(Path(__file__).parent.parent))
+                from tools import generate_pv_map, get_logbook
+                test_trackids = sorted({
+                    f"{Path(fp).name.split('_')[0]}_{Path(fp).name.split('_')[1]}"
+                    for fp in test_files if len(Path(fp).name.split('_')) >= 2
+                })
+                logbook = get_logbook()
+                mask = (
+                    (logbook['Substrate material'] == 'AlSi10Mg') &
+                    (logbook['Layer'] == 1) &
+                    (logbook['Point jump delay [us]'] == 0) &
+                    (logbook['Powder material'] != 'None')
+                )
+                bg_trackids = logbook[mask]['trackid'].unique().tolist()
+                output_path = test_eval_dir / f'pv_map_test_set_{model_version}.png'
+                generate_pv_map(
+                    trackids=bg_trackids, output_path=output_path,
+                    highlight_trackids=test_trackids,
+                )
+                pv_map_results = {'unique_tracks': len(test_trackids), 'output_file': str(output_path)}
+                print(f"P-V map saved: {output_path}")
+            except Exception as e:
+                print(f"Warning: P-V map generation failed: {e}")
+
+        # --- PD activation analysis ---
+        activation_results = None
+        if classifier_type == 'pd_signal':
+            activation_results = self.analyze_pd_activations(model, X_test, y_test, num_samples_per_class=10)
+
+        # --- Comprehensive JSON ---
+        from sklearn.metrics import confusion_matrix as sk_cm
+        cm = sk_cm(y_test, y_pred)
+        eval_results = {
+            'version':               model_version,
+            'classifier_type':       classifier_type,
+            'test_samples':          int(len(y_test)),
+            'best_threshold':        best_threshold,
+            'best_metrics':          best_result,
+            'auc_score':             auc_score,
+            'confusion_matrix':      cm.tolist(),
+            'classification_report': sk_report(y_test, y_pred, output_dict=True),
+            'gradcam_results':       gradcam_results,
+            'activation_results':    activation_results,
+            'pv_map':                pv_map_results,
+            'output_files': {
+                'confusion_matrix':      str(test_eval_dir / f'confusion_matrix_{model_version}.png'),
+                'classification_report': str(report_path),
+            },
+        }
+        json_path = test_eval_dir / f'comprehensive_evaluation_{model_version}.json'
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(convert_numpy_types(eval_results), f, indent=2, default=str)
+
+        # --- Standard quick-eval outputs too ---
+        self.save_results({
+            'test_accuracy':          best_result['accuracy'],
+            'test_precision':         best_result['precision'],
+            'test_recall':            best_result['recall'],
+            'test_f1_score':          best_result['f1_score'],
+            'test_roc_auc':           auc_score,
+            'test_samples':           int(len(y_test)),
+            'confusion_matrix':       cm.tolist(),
+            'classification_report':  sk_report(y_test, y_pred, output_dict=True),
+            'predictions': {
+                'y_true':       y_test.tolist(),
+                'y_pred':       y_pred.tolist(),
+                'y_pred_proba': y_proba_flat.tolist(),
+            },
+            'inference_time_seconds':   0.0,
+            'ms_per_sample_classify':   0.0,
+            'predictions_per_second':   0.0,
+            'ms_per_sample_cwt':        None,
+            'ms_per_sample_total':      0.0,
+        }, model_version)
+
+        print(f"Full evaluation complete. Results saved to: {test_eval_dir}")
+        return eval_results
+
+    def load_images_from_dir(self, image_dir, model):
+        """Load unlabelled PNG images from a flat directory using the training preprocessing pipeline."""
+        from PIL import Image as PILImage
+
+        image_dir = Path(image_dir)
+        if not image_dir.exists():
+            raise FileNotFoundError(
+                f"Directory not found: {image_dir}\n"
+                f"  Tip: in Git Bash use forward slashes (F:/path/to/dir) or "
+                f"double-quote backslash paths (\"F:\\path\\to\\dir\")"
+            )
+        paths = sorted(image_dir.glob('*.png'))
+        if not paths:
+            raise FileNotFoundError(f"No PNG files found in {image_dir}")
+
+        # Derive resize target from model input shape (H, W)
+        H, W = model.input_shape[1], model.input_shape[2]
+
+        images, filenames = [], []
+        for p in paths:
+            try:
+                img = np.array(PILImage.open(p).convert('L'))
+            except Exception as e:
+                print(f"  Warning: could not load {p.name}: {e}, skipping")
+                continue
+            img = PILImage.fromarray(img).resize((W, H), PILImage.LANCZOS)
+            img = normalize_image(np.array(img))        # float32 [0,1]
+            img = np.expand_dims(img, axis=-1)          # (H, W, 1)
+            images.append(img)
+            filenames.append(p.name)
+
+        X = np.stack(images, axis=0)                    # (N, H, W, 1)
+        print(f"Loaded {len(filenames)} images  shape={X.shape}")
+        return X, filenames
+
+    def predict_unlabelled(self, model, X, filenames):
+        """Run model on unlabelled images; return DataFrame with per-image predictions."""
+        y_pred_proba = model.predict(X, verbose=0)
+
+        if len(y_pred_proba.shape) > 1 and y_pred_proba.shape[1] > 1:
+            # Softmax multi-class
+            y_pred      = np.argmax(y_pred_proba, axis=1)
+            confidence  = np.max(y_pred_proba, axis=1)
+        else:
+            # Sigmoid binary
+            proba_flat  = y_pred_proba.flatten()
+            y_pred      = (proba_flat > 0.5).astype(int)
+            confidence  = np.where(y_pred == 1, proba_flat, 1.0 - proba_flat)
+
+        return pd.DataFrame({
+            'filename':        filenames,
+            'predicted_class': y_pred.tolist(),
+            'confidence':      confidence.tolist(),
+        })
+
+    def generate_track_figures(self, df, output_dir, vote_windows=False):
+        """Generate per-track prediction box figures from unlabelled predictions DataFrame."""
+        from visualize_track_predictions import generate_track_predictions_viz
+        filenames = df['filename'].tolist()
+        y_pred    = df['predicted_class'].to_numpy()
+        generate_track_predictions_viz(
+            test_files=filenames,
+            y_true=y_pred,       # unused when unlabelled=True
+            y_pred=y_pred,
+            output_dir=Path(output_dir),
+            version='unlabelled',
+            use_time_labels=True,
+            unlabelled=True,
+            vote_windows=vote_windows,
+        )
+
+    def save_predictions(self, df, output_dir, model_info=None):
+        """Save unlabelled predictions to CSV and print a brief summary."""
+        import json
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = output_dir / 'predictions.csv'
+        df.to_csv(out_path, index=False, encoding='utf-8')
+
+        counts = df['predicted_class'].value_counts().sort_index()
+        print(f"\nPredictions saved: {out_path}")
+        print(f"  Total images : {len(df)}")
+        for cls, n in counts.items():
+            mean_conf = df.loc[df['predicted_class'] == cls, 'confidence'].mean()
+            print(f"  Class {cls}      : {n} images  (mean confidence {mean_conf:.3f})")
+
+        if model_info is not None:
+            info_path = output_dir / 'model_info.json'
+            with open(info_path, 'w', encoding='utf-8') as f:
+                json.dump(model_info, f, indent=2)
+            print(f"  Model info   : {info_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Evaluate trained model on test data',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Usage:\n"
+            "  python ml/model_tester.py --version 229\n"
+            "  python ml/model_tester.py --version 229 --full\n"
+            "  python ml/model_tester.py --version 229 --full --dataset_variant MyVariant\n"
+            "  python ml/model_tester.py --version 229 --classifier_type pd_signal\n"
+            "  python ml/model_tester.py --version 229 --image_dir /path/to/images\n\n"
+            "Paths resolve from the version folder. Use --model/--test_data/--output_dir to override."
+        )
+    )
+    parser.add_argument('--version', type=str, default=None,
+                        help='Model version (e.g. 229 or v229).')
+    parser.add_argument('--classifier_type', type=str, default='cwt_image',
+                        choices=['cwt_image', 'pd_signal'],
+                        help='Classifier type — determines which output directory to search (default: cwt_image).')
+    parser.add_argument('--model', type=str, default=None,
+                        help='Override: explicit path to trained model (.h5 or .keras).')
+    parser.add_argument('--test_data', type=str, default=None,
+                        help='Override: explicit path to test data pickle.')
+    parser.add_argument('--output_dir', type=str, default=None,
+                        help='Override: output directory for results.')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Show detailed output.')
+    parser.add_argument('--full', action='store_true', default=False,
+                        help='Add Grad-CAM analysis on top of the standard evaluation. '
+                             'All other outputs (threshold optimisation, P-V map, classification report) '
+                             'are produced by default.')
+    parser.add_argument('--dataset_variant', type=str, default=None,
+                        help='Dataset variant name. When test_set_data.pkl is absent, loads test '
+                             'data from the variant CSV and saves the pkl for future runs.')
+    parser.add_argument('--image_dir', type=str, default=None,
+                        help='Directory of unlabelled PNG images to predict (skips ground-truth evaluation). '
+                             'On Windows in Git Bash, use forward slashes (F:/path/to/dir) or '
+                             'double-quote the path to preserve backslashes.')
+    parser.add_argument('--vote_windows', action='store_true', default=False,
+                        help='Show majority-voted label per offset step in track figures.')
+
+    args = parser.parse_args()
+
+    if args.version is None and args.model is None:
+        parser.error('Provide --version (e.g. --version 229) or explicit --model / --test_data paths.')
+
+    version_str = format_version(args.version) if args.version else None
+
+    if version_str:
+        resolved = _resolve_paths_from_version(version_str, args.classifier_type)
+        model_path     = args.model      or resolved['model']
+        test_data_path = args.test_data  or resolved['test_data']
+        output_dir     = args.output_dir or resolved['output_dir']
+    else:
+        missing = [n for n, v in [('--test_data', args.test_data), ('--output_dir', args.output_dir)] if v is None]
+        if missing:
+            parser.error(f'Without --version you must also supply: {", ".join(missing)}')
+        model_path     = args.model
+        test_data_path = args.test_data
+        output_dir     = args.output_dir
+        version_str    = Path(model_path).stem
+
+    try:
+        model_path     = Path(model_path)
+        test_data_path = Path(test_data_path) if test_data_path else None
+        output_dir     = Path(output_dir)
+        image_dir      = Path(args.image_dir) if args.image_dir else None
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        tester = ModelTester(
+            model_path=model_path,
+            test_data_path=test_data_path,
+            output_dir=output_dir,
+            verbose=args.verbose,
+        )
+
+        # --- Unlabelled prediction mode ---
+        if image_dir:
+            from datetime import datetime
+            model = tester.load_model()
+            X, filenames = tester.load_images_from_dir(image_dir, model)
+            df = tester.predict_unlabelled(model, X, filenames)
+
+            pred_dir = image_dir / 'predictions'
+            pred_dir.mkdir(parents=True, exist_ok=True)
+
+            counts = df['predicted_class'].value_counts().sort_index()
+            model_info = {
+                'model_path':    str(model_path),
+                'model_version': version_str,
+                'timestamp':     datetime.now().isoformat(timespec='seconds'),
+                'image_dir':     str(image_dir),
+                'n_images':      len(df),
+                'class_counts':  {str(k): int(v) for k, v in counts.items()},
+                'mean_confidence_per_class': {
+                    str(cls): float(df.loc[df['predicted_class'] == cls, 'confidence'].mean())
+                    for cls in counts.index
+                },
+            }
+            tester.save_predictions(df, pred_dir, model_info=model_info)
+            tester.generate_track_figures(df, pred_dir, vote_windows=args.vote_windows)
+            print(f"\nDone. Results saved to: {pred_dir}")
+            return
+
+        # --- Ground-truth evaluation modes ---
+        model = tester.load_model()
+
+        # If pkl is absent and --dataset_variant given, build it from CSV
+        if test_data_path is not None and not test_data_path.exists():
+            if args.dataset_variant:
+                X_test, y_test, test_files, classifier_type = tester.load_test_data_from_variant(
+                    args.dataset_variant, model, args.classifier_type)
+                # pkl now saved; update tester's test_data_path so run_evaluation can find it
+                tester.test_data_path = output_dir.parent / 'test_set_data.pkl'
+            else:
+                parser.error(
+                    f"Test data not found: {test_data_path}\n"
+                    f"Supply --dataset_variant to load from CSV, or point --test_data at an existing pkl."
+                )
+
+        if 'X_test' not in dir():
+            X_test, y_test, test_files, classifier_type = tester.load_test_data()
+            X_test, y_test = tester.prepare_test_data(X_test, y_test)
+        results = tester.run_full_evaluation(
+            version_str, model, X_test, y_test, test_files, classifier_type,
+            gradcam=args.full,
+        )
+        print(f"\nEvaluation complete.  Accuracy: {results['best_metrics']['accuracy']:.4f}")
+        print(f"Results saved to: {output_dir}")
+
     except Exception as e:
         print(f"\n❌ Model evaluation failed: {e}")
         exit(1)

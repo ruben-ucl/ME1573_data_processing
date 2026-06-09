@@ -143,12 +143,12 @@ def main():
         help='Classifier type: cwt or pd'
     )
     parser.add_argument(
-        '--dry-run',
+        '--dry_run',
         action='store_true',
         help='Show what would be deleted without actually deleting'
     )
     parser.add_argument(
-        '--keep-logs',
+        '--keep_logs',
         action='store_true',
         help='Delete from experiment log but keep output/log folders'
     )
@@ -234,7 +234,7 @@ def main():
     else:
         deleted_outputs = deleted_logs = 0
         failed_outputs = failed_logs = 0
-        print(f"\n⊘ Skipping folder deletion (--keep-logs enabled)")
+        print(f"\n⊘ Skipping folder deletion (--keep_logs enabled)")
 
     # Delete from experiment log
     print(f"\n{'='*70}")
@@ -276,7 +276,7 @@ def main():
             print(f"  - Failed deletions: {failed_outputs + failed_logs}")
 
     if args.dry_run:
-        print(f"\n💡 Run without --dry-run to actually delete files")
+        print(f"\n💡 Run without --dry_run to actually delete files")
     else:
         print(f"\n✅ Cleanup completed successfully!")
 

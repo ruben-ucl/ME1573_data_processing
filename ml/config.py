@@ -5,8 +5,26 @@ This module provides centralized path management and configuration constants
 to make it easy to update paths when directory structure changes.
 """
 
+import datetime
+import json
 import os
+from glob import glob
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+# TF's internal CUDA loading uses LoadLibraryA which reads PATH from the process
+# environment. conda's Git Bash activation can drop Windows system PATH entries
+# (including CUDA), so we inject it explicitly before TF is imported.
+# os.add_dll_directory() covers Python's own extension loading (bpo-36085).
+_cuda_bin = Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.2\bin")
+if _cuda_bin.exists():
+    _cuda_bin_str = str(_cuda_bin)
+    if hasattr(os, 'add_dll_directory'):
+        os.add_dll_directory(_cuda_bin_str)
+    if _cuda_bin_str not in os.environ.get('PATH', ''):
+        os.environ['PATH'] = _cuda_bin_str + os.pathsep + os.environ.get('PATH', '')
 
 # Base directories
 PROJECT_ROOT = Path(__file__).parent.parent  # Go up to ME1573_data_processing
@@ -140,14 +158,6 @@ def get_cwt_experiment_log_path():
     """Get the path to the CWT-specific experiment log."""
     return CWT_LOGS_DIR / "cwt_experiment_log.csv"
 
-def get_pd_timing_database_path():
-    """Get the path to the PD signal timing database for hyperparameter tuning."""
-    return PD_HYPEROPT_RESULTS_DIR / "timing_database.json"
-
-def get_cwt_timing_database_path():
-    """Get the path to the CWT timing database for hyperparameter tuning."""
-    return CWT_HYPEROPT_RESULTS_DIR / "timing_database.json"
-
 def get_pd_config_template():
     """Get the default PD signal configuration template."""
     from hyperparameter_registry import get_default_config
@@ -200,6 +210,7 @@ def get_cwt_config_template(multi_channel=False, channel=None):
         'img_height': 256,
         'img_channels': img_channels,
         'output_root': str(CWT_OUTPUTS_DIR),
+        'save_model': True,
         'run_gradcam': True,
         'gradcam_layer': 'auto',
         'save_gradcam_images': True,
@@ -223,8 +234,6 @@ def load_config(config_path=None, classifier_type='pd_signal', **overrides):
     Returns:
         dict: Merged configuration
     """
-    import json
-    
     # Start with appropriate default configuration
     if classifier_type == 'cwt_image':
         config = get_cwt_config_template()
@@ -302,8 +311,6 @@ def parse_version(version_str):
 
 def get_next_version_from_log(log_path=None, classifier_type='pd_signal'):
     """Get next version number based on experiment log entries."""
-    import pandas as pd
-    
     if log_path is None:
         if classifier_type == 'cwt_image':
             log_path = get_cwt_experiment_log_path()
@@ -331,8 +338,6 @@ def get_next_version_from_log(log_path=None, classifier_type='pd_signal'):
 
 def get_next_version_from_directory(directory, pattern='v*'):
     """Get next version number based on versioned directories."""
-    from glob import glob
-
     if not Path(directory).exists():
         return 1
 
@@ -366,9 +371,6 @@ def get_config_by_version(version, classifier_type='cwt_image'):
         FileNotFoundError: If version not found in experiment log
         ValueError: If config data is invalid
     """
-    import pandas as pd
-    import json
-
     # Format version consistently
     version_str = format_version(version)
 
@@ -423,8 +425,6 @@ def get_config_by_version(version, classifier_type='cwt_image'):
 
 def convert_numpy_types(obj):
     """Convert NumPy types to Python native types for JSON serialization."""
-    import numpy as np
-    
     if isinstance(obj, np.integer):
         return int(obj)
     elif isinstance(obj, np.floating):
@@ -496,10 +496,10 @@ def _get_legacy_augmentation_params(config, classifier_type):
 # CONSOLIDATED EXPERIMENT MANAGEMENT FUNCTIONS
 # ========================================================================================
 
-def log_experiment_results(classifier_type, version, start_time, end_time, config, fold_results, 
-                          X=None, y=None, class_counts=None, model_complexity=0, source='manual', 
-                          hyperopt_run_id=None, config_file=None, config_number_in_run=None, 
-                          test_results=None, data_info=None):
+def log_experiment_results(classifier_type, version, start_time, end_time, config, fold_results,
+                          X=None, y=None, class_counts=None, model_complexity=0, source='manual',
+                          hyperopt_run_id=None, config_file=None, config_number_in_run=None,
+                          test_results=None, data_info=None, best_val_threshold=None):
     """
     Unified experiment logging function for both PD and CWT classifiers.
     
@@ -524,12 +524,6 @@ def log_experiment_results(classifier_type, version, start_time, end_time, confi
     Returns:
         dict: The log entry that was written
     """
-    import datetime
-    import json
-    import numpy as np
-    import pandas as pd
-    from pathlib import Path
-    
     # Calculate aggregate metrics based on classifier type
     if classifier_type == 'cwt_image':
         # CWT case - fold_results is a list of fold dictionaries
@@ -637,8 +631,11 @@ def log_experiment_results(classifier_type, version, start_time, end_time, confi
 
         # Data filtering
         'data_filters': json.dumps(config.get('data_filters', [])),
+
+        # Val-set optimised classification threshold
+        'best_val_threshold': float(best_val_threshold) if best_val_threshold is not None else None,
     }
-    
+
     # Add classifier-specific fields
     if classifier_type == 'cwt_image':
         # Handle multi-channel logging
@@ -664,6 +661,8 @@ def log_experiment_results(classifier_type, version, start_time, end_time, confi
             'conv_kernel_size': str(config['conv_kernel_size']),
             'pool_size': str(config['pool_size']),
             'pool_layers': str(config.get('pool_layers', [])),
+            'auto_pool': config.get('auto_pool', False),
+            'pool_after_last_block': config.get('pool_after_last_block', False),
             'dense_dropout': str(config['dense_dropout']) if isinstance(config['dense_dropout'], list) else str([config['dense_dropout']]),
             
             # CWT-specific augmentation (converted from new 3-param system to legacy format for logging)
@@ -677,6 +676,7 @@ def log_experiment_results(classifier_type, version, start_time, end_time, confi
             'mean_best_epoch': float(np.mean([r['best_epoch'] for r in fold_results])),
 
             # CWT-specific analysis
+            'save_model': config.get('save_model', False),
             'run_gradcam': config.get('run_gradcam', False),
             'gradcam_layer': config.get('gradcam_layer', 'auto'),
 
@@ -823,10 +823,60 @@ def log_experiment_results(classifier_type, version, start_time, end_time, confi
     
     return log_entry
 
+
+def compute_val_threshold(y_proba, y_true, output_dir, version, concise=False):
+    """Sweep F1-optimal threshold on val-set predictions; save figure; return best threshold."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score as sk_f1
+
+    y_proba = np.asarray(y_proba).flatten()
+    y_true  = np.asarray(y_true).flatten()
+    output_dir = Path(output_dir)
+
+    thresholds = np.arange(0.2, 0.81, 0.05)
+    rows = []
+    for thr in thresholds:
+        y_p = (y_proba >= thr).astype(int)
+        rows.append({
+            'threshold': float(thr),
+            'accuracy':  float(accuracy_score(y_true, y_p)),
+            'precision': float(precision_score(y_true, y_p, zero_division=0)),
+            'recall':    float(recall_score(y_true, y_p, zero_division=0)),
+            'f1_score':  float(sk_f1(y_true, y_p, zero_division=0)),
+        })
+    best = max(rows, key=lambda x: x['f1_score'])
+    best_thr = best['threshold']
+
+    if not concise:
+        print(f"Val-set threshold: {best_thr:.2f}  "
+              f"F1={best['f1_score']:.4f}  Acc={best['accuracy']:.4f}")
+
+    df = pd.DataFrame(rows)
+    fig, axes = plt.subplots(2, 2, figsize=(6.30, 4.80))
+    axes = axes.flatten()
+    for i, metric in enumerate(['accuracy', 'precision', 'recall', 'f1_score']):
+        axes[i].plot(df['threshold'], df[metric], 'b-', linewidth=1.5)
+        axes[i].axvline(best_thr, color='red', linestyle='--', linewidth=1.0,
+                        label=f'Best: {best_thr:.2f}')
+        axes[i].set_xlabel('Threshold', fontsize=9)
+        axes[i].set_ylabel(metric.replace('_', ' ').title(), fontsize=9)
+        axes[i].tick_params(axis='both', labelsize=8)
+        axes[i].grid(True, alpha=0.3)
+        axes[i].legend(fontsize=8)
+        axes[i].set_ylim(0, 1)
+    plt.tight_layout()
+    stem = output_dir / f'val_threshold_optimization_{version}'
+    plt.savefig(str(stem) + '.png', dpi=300, bbox_inches='tight')
+    plt.savefig(str(stem) + '.pdf', bbox_inches='tight')
+    plt.close()
+
+    return best_thr
+
+
 def calculate_data_statistics(classifier_type, X, y, class_counts=None):
     """Calculate data statistics for experiment logging."""
-    import numpy as np
-    
     if class_counts is None and y is not None:
         unique_labels, counts = np.unique(y, return_counts=True)
         class_counts = dict(zip(unique_labels, counts))
@@ -859,9 +909,6 @@ def extract_experiment_result(classifier_type, version, config_number_in_run=Non
     Returns:
         dict: Extracted experiment results or None if not found
     """
-    import pandas as pd
-    import datetime
-    
     try:
         # Get appropriate experiment log path
         if classifier_type == 'cwt_image':
@@ -953,10 +1000,6 @@ def create_experiment_summary_files(classifier_type, output_dir, version, config
         source: 'manual' or 'hyperopt'
         start_time: Experiment start time (optional)
     """
-    import json
-    import datetime
-    from pathlib import Path
-    
     output_dir = Path(output_dir)
     
     # Create logs subdirectory
@@ -1089,7 +1132,6 @@ def save_fold_plots(classifier_type, y_true, y_pred, history, fold, output_dir, 
     import matplotlib
     matplotlib.use('Agg')  # Use non-interactive backend
     import matplotlib.pyplot as plt
-    from pathlib import Path
 
     output_dir = Path(output_dir)
 
@@ -1182,8 +1224,6 @@ def load_dataset_variant_info(dataset_name):
         FileNotFoundError: If dataset variant doesn't exist
         ValueError: If dataset config is invalid
     """
-    import json
-
     # Search for dataset in dataset_definitions directories
     search_paths = []
 
@@ -1233,7 +1273,7 @@ def load_dataset_variant_info(dataset_name):
 
     mode = config['statistics']['mode']
 
-    if mode not in ['k_fold_cv', 'train_test_split']:
+    if mode not in ['k_fold_cv', 'train_test_split', 'no_split']:
         raise ValueError(f"Invalid dataset mode: {mode}")
 
     # Auto-detect format from data_dir type

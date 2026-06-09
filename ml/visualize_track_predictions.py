@@ -8,7 +8,7 @@ This script can operate in two modes:
 Usage:
     python ml/visualize_track_predictions.py --version v001 --classifier_type cwt_image
     python ml/visualize_track_predictions.py --version v115 --dataset_variant AlSi10Mg_CW_L1_powder_porosity_with-test_auto-split
-    python ml/visualize_track_predictions.py --version v001 --force-regenerate
+    python ml/visualize_track_predictions.py --version v001 --force_regenerate
 """
 
 import os
@@ -39,6 +39,13 @@ COLOR_NO_POROSITY = '#3498db'      # Blue for no porosity (class 0)
 COLOR_POROSITY = '#e74c3c'         # Red for porosity (class 1)
 COLOR_SKIPPED_WINDOW = '#95a5a6'   # Grey for skipped first window
 # ============================================================================
+
+# RGB uint8 equivalents for substrate map imshow rendering
+_MAP_BLUE = np.array([52,  152, 219], dtype=np.uint8)   # no porosity
+_MAP_RED  = np.array([231, 76,  60],  dtype=np.uint8)   # porosity
+
+# Physical substrate layout: number of tracks per column (left → right)
+SUBSTRATE_COLUMN_SIZES = [11, 18, 18, 11]  # 58 tracks total
 
 
 def load_saved_predictions(version, model_dir):
@@ -189,7 +196,7 @@ def regenerate_predictions(version, classifier_type, dataset_variant, model_dir)
     return predictions_data
 
 
-def generate_track_predictions_viz(test_files, y_true, y_pred, output_dir, version, exclude_final_window=False, use_time_labels=False):
+def generate_track_predictions_viz(test_files, y_true, y_pred, output_dir, version, exclude_final_window=False, use_time_labels=False, unlabelled=False, vote_windows=False, y_proba=None, threshold=0.5):
     """
     Generate track-level prediction visualizations.
 
@@ -212,6 +219,8 @@ def generate_track_predictions_viz(test_files, y_true, y_pred, output_dir, versi
         version: Version string
         exclude_final_window: If True, white out and exclude final window from each track
         use_time_labels: If True, show time (ms) instead of window index on x-axis
+        y_proba: Optional array of raw predicted probabilities; adds a probability row below boxes
+        threshold: Classification threshold (drawn as dashed line on the probability row)
 
     Returns:
         dict: Summary of generated visualizations
@@ -219,12 +228,18 @@ def generate_track_predictions_viz(test_files, y_true, y_pred, output_dir, versi
     print(f"\n📊 Generating track-level prediction visualizations...")
 
     # Create output directory for track visualizations
-    track_viz_dir = Path(output_dir) / 'test_evaluation' / 'track_predictions'
+    if unlabelled:
+        track_viz_dir = Path(output_dir) / 'track_predictions'
+    else:
+        track_viz_dir = Path(output_dir) / 'test_evaluation' / 'track_predictions'
     track_viz_dir.mkdir(exist_ok=True, parents=True)
 
     # Extract track IDs from filenames (format: TRACKID_layerinfo_timewindow.png)
     # Example: 0105_01_0.2-1.2ms.png -> track_id = "0105_01"
-    track_data = defaultdict(lambda: {'files': [], 'true_labels': [], 'pred_labels': [], 'windows': []})
+    track_data = defaultdict(lambda: {
+        'files': [], 'true_labels': [], 'pred_labels': [],
+        'windows': [], 'window_ends': [], 'probas': []
+    })
 
     for i, filepath in enumerate(test_files):
         filename = Path(filepath).name
@@ -238,13 +253,17 @@ def generate_track_predictions_viz(test_files, y_true, y_pred, output_dir, versi
             window_match = re.search(r'(\d+\.\d+)-(\d+\.\d+)ms', filename)
             if window_match:
                 window_start = float(window_match.group(1))
+                window_end   = float(window_match.group(2))
             else:
-                window_start = i  # Fallback to index
+                window_start = i
+                window_end   = i + 1
 
             track_data[track_id]['files'].append(filename)
             track_data[track_id]['true_labels'].append(y_true[i])
             track_data[track_id]['pred_labels'].append(y_pred[i])
             track_data[track_id]['windows'].append(window_start)
+            track_data[track_id]['window_ends'].append(window_end)
+            track_data[track_id]['probas'].append(float(y_proba[i]) if y_proba is not None else 0.0)
 
     print(f"Found {len(track_data)} unique tracks")
 
@@ -253,18 +272,93 @@ def generate_track_predictions_viz(test_files, y_true, y_pred, output_dir, versi
     for track_id, data in sorted(track_data.items()):
         try:
             # Sort by window start time
-            sorted_indices = np.argsort(data['windows'])
-            true_labels = np.array(data['true_labels'])[sorted_indices]
-            pred_labels = np.array(data['pred_labels'])[sorted_indices]
-            windows = np.array(data['windows'])[sorted_indices]
-            filenames = np.array(data['files'])[sorted_indices]
+            sorted_indices     = np.argsort(data['windows'])
+            true_labels        = np.array(data['true_labels'])[sorted_indices]
+            pred_labels        = np.array(data['pred_labels'])[sorted_indices]
+            windows            = np.array(data['windows'])[sorted_indices]
+            window_ends_sorted = np.array(data['window_ends'])[sorted_indices]
+            filenames_sorted   = np.array(data['files'])[sorted_indices]
+            probas_sorted      = np.array(data['probas'])[sorted_indices]
+
+            # Voting mode: collapse overlapping windows into per-offset-step blocks
+            block_centers_for_labels = None
+            if vote_windows and len(windows) >= 2:
+                diffs  = np.diff(windows).round(6)
+                offset = float(np.min(diffs))
+
+                t, t_max = windows[0], float(window_ends_sorted[-1])
+                blocks = []
+                while t < t_max - 1e-9:
+                    blocks.append((round(t, 6), round(t + offset, 6)))
+                    t = round(t + offset, 6)
+
+                voted_pred, voted_true = [], []
+                for bs, be in blocks:
+                    mask = (windows < be - 1e-9) & (window_ends_sorted > bs + 1e-9)
+                    if mask.any():
+                        preds = pred_labels[mask].tolist()
+                        trues = true_labels[mask].tolist()
+                        voted_pred.append(int(sum(preds) > len(preds) / 2))
+                        voted_true.append(int(sum(trues) > len(trues) / 2))
+                    else:
+                        voted_pred.append(0)
+                        voted_true.append(0)
+
+                pred_labels  = np.array(voted_pred)
+                true_labels  = np.array(voted_true)
+                block_centers_for_labels = [(bs + be) / 2 for bs, be in blocks]
+                voted_proba = []
+                for bs, be in blocks:
+                    mask = (windows < be - 1e-9) & (window_ends_sorted > bs + 1e-9)
+                    if mask.any():
+                        voted_proba.append(float(np.mean(probas_sorted[mask])))
+                    else:
+                        voted_proba.append(0.5)
+                probas_sorted = np.array(voted_proba)
 
             n_windows = len(true_labels)
             n_skip_windows_start = 4  # Four white windows before first data window
             n_skip_windows_end = 4    # Four white windows after last data window
 
-            # Create figure with fixed width of 6 inches
-            fig, ax = plt.subplots(1, 1, figsize=(6, 0.5))
+            # Fixed physical dimensions — colored-box row is exactly 0.3 cm tall
+            _FIG_W = 6.0
+            _AX_H  = 0.3 / 2.54   # 0.3 cm in inches
+            _TOP   = 0.45          # title headroom
+            _LEFT  = 0.60
+            _RIGHT = 0.10
+            _has_proba = y_proba is not None
+
+            if _has_proba:
+                _PROB_H = 1.5 / 2.54   # 1.5 cm probability row
+                _GAP    = 0.08          # gap between rows (inches)
+                _BOT    = 0.35
+                _fig_h  = _TOP + _AX_H + _GAP + _PROB_H + _BOT
+            else:
+                _PROB_H = 0.0
+                _GAP    = 0.0
+                _BOT    = 0.30
+                _fig_h  = _TOP + _AX_H + _BOT
+
+            fig = plt.figure(figsize=(_FIG_W, _fig_h))
+
+            # Colored-box axis (top row)
+            ax = fig.add_axes([
+                _LEFT / _FIG_W,
+                (_BOT + _PROB_H + _GAP) / _fig_h,
+                (_FIG_W - _LEFT - _RIGHT) / _FIG_W,
+                _AX_H / _fig_h,
+            ])
+
+            # Probability axis (below boxes, only when y_proba provided)
+            if _has_proba:
+                ax_prob = fig.add_axes([
+                    _LEFT / _FIG_W,
+                    _BOT / _fig_h,
+                    (_FIG_W - _LEFT - _RIGHT) / _FIG_W,
+                    _PROB_H / _fig_h,
+                ])
+            else:
+                ax_prob = None
 
             # Add four skipped windows at the start (white cells at positions 0-3, no text, no ticks)
             for i in range(n_skip_windows_start):
@@ -298,7 +392,10 @@ def generate_track_predictions_viz(test_files, y_true, y_pred, output_dir, versi
                     y_p = pred_labels[i]
 
                     # Determine color and hatching based on true vs predicted
-                    if y_t == 0 and y_p == 0:
+                    if unlabelled:
+                        color = COLOR_POROSITY if y_p == 1 else COLOR_NO_POROSITY
+                        hatch = None
+                    elif y_t == 0 and y_p == 0:
                         # True Negative - blue solid
                         color = COLOR_NO_POROSITY
                         hatch = None
@@ -330,88 +427,104 @@ def generate_track_predictions_viz(test_files, y_true, y_pred, output_dir, versi
                                           edgecolor='black',
                                           linewidth=0.5))
 
+            # Plot raw probability bars on the second row
+            if ax_prob is not None:
+                n_draw = n_windows - 1 if exclude_final_window else n_windows
+                for i in range(n_draw):
+                    p = float(probas_sorted[i])
+                    bar_color = COLOR_POROSITY if pred_labels[i] == 1 else COLOR_NO_POROSITY
+                    ax_prob.bar(n_skip_windows_start + i + 0.5, p, width=1.0,
+                                color=bar_color, edgecolor='black', linewidth=0.3, align='center')
+                ax_prob.axhline(y=threshold, color='black', linestyle='--',
+                                linewidth=0.8, alpha=0.7)
+                ax_prob.set_xlim(0, n_skip_windows_start + n_windows + n_skip_windows_end)
+                ax_prob.set_ylim(0, 1)
+                ax_prob.set_ylabel('p', fontsize=8)
+                yticks = sorted({0.0, round(threshold, 2), 1.0})
+                ax_prob.set_yticks(yticks)
+                ax_prob.set_yticklabels([f'{v:.1f}' for v in yticks], fontsize=7)
+
             # Configure axes
             ax.set_xlim(0, n_skip_windows_start + n_windows + n_skip_windows_end)
             ax.set_ylim(0, 1)
             ax.set_yticks([])
 
-            # X-axis configuration - ticks and labels only for data windows (not skip windows)
-            # Exclude final window tick/label if exclude_final_window is True
+            # X-axis ticks/labels go on the bottom axis
+            _ax_x = ax_prob if _has_proba else ax
+            if _has_proba:
+                ax.set_xticks([])
+
+            # X-axis configuration — ticks and labels only for data windows (not skip windows)
             n_windows_for_ticks = n_windows - 1 if exclude_final_window else n_windows
 
             if use_time_labels:
-                # Extract time windows and calculate center times
-                time_labels = []
-                for i in range(n_windows_for_ticks):
-                    filename = filenames[i]
-                    window_match = re.search(r'(\d+\.\d+)-(\d+\.\d+)ms', filename)
-                    if window_match:
-                        start_time = float(window_match.group(1))
-                        end_time = float(window_match.group(2))
-                        center_time = (start_time + end_time) / 2.0
-                        time_labels.append(f'{center_time:.1f}')
-                    else:
-                        time_labels.append(str(i))
+                if block_centers_for_labels is not None:
+                    time_labels = [f'{c:.1f}' for c in block_centers_for_labels[:n_windows_for_ticks]]
+                else:
+                    time_labels = []
+                    for i in range(n_windows_for_ticks):
+                        window_match = re.search(r'(\d+\.\d+)-(\d+\.\d+)ms', filenames_sorted[i])
+                        if window_match:
+                            center_time = (float(window_match.group(1)) + float(window_match.group(2))) / 2.0
+                            time_labels.append(f'{center_time:.1f}')
+                        else:
+                            time_labels.append(str(i))
 
-                ax.set_xlabel('Time (ms)', fontsize=10)
-                ax.set_xticks(np.arange(n_skip_windows_start + 0.5, n_skip_windows_start + n_windows_for_ticks, 1))
-                ax.set_xticklabels(time_labels, fontsize=8)
+                _ax_x.set_xlabel('Time (ms)', fontsize=10)
+                _ax_x.set_xticks(np.arange(n_skip_windows_start + 0.5, n_skip_windows_start + n_windows_for_ticks, 1))
+                _ax_x.set_xticklabels(time_labels, fontsize=8)
 
-                # Hide some tick labels if there are many windows
                 if n_windows_for_ticks > 25:
-                    for idx, label in enumerate(ax.xaxis.get_ticklabels()):
+                    for idx, label in enumerate(_ax_x.xaxis.get_ticklabels()):
                         if idx % 3 != 0:
                             label.set_visible(False)
-                            
                 elif n_windows_for_ticks > 15:
-                    for idx, label in enumerate(ax.xaxis.get_ticklabels()):
+                    for idx, label in enumerate(_ax_x.xaxis.get_ticklabels()):
                         if idx % 2 != 0:
                             label.set_visible(False)
-                
-                
-                
-                
             else:
-                # Use window index starting from 0
-                ax.set_xlabel('Time Window Index', fontsize=10)
-                ax.set_xticks(np.arange(n_skip_windows_start + 0.5, n_skip_windows_start + n_windows_for_ticks, 1))
-                ax.set_xticklabels(list(range(0, n_windows_for_ticks)), fontsize=8)
+                _ax_x.set_xlabel('Time Window Index', fontsize=10)
+                _ax_x.set_xticks(np.arange(n_skip_windows_start + 0.5, n_skip_windows_start + n_windows_for_ticks, 1))
+                _ax_x.set_xticklabels(list(range(0, n_windows_for_ticks)), fontsize=8)
 
-                # Hide every other tick label if there are many windows
                 if n_windows_for_ticks > 20:
-                    for idx, label in enumerate(ax.xaxis.get_ticklabels()):
+                    for idx, label in enumerate(_ax_x.xaxis.get_ticklabels()):
                         if idx % 2 == 1:
                             label.set_visible(False)
 
             # Add title above plot area with accuracy info
-            if n_windows_for_accuracy > 0:
+            if unlabelled or n_windows_for_accuracy == 0:
+                title_text = f'Track: {track_id}'
+            else:
                 accuracy = np.mean(true_labels_for_accuracy == pred_labels_for_accuracy)
                 correct = np.sum(true_labels_for_accuracy == pred_labels_for_accuracy)
                 total = len(true_labels_for_accuracy)
                 title_text = f'Track: {track_id}     Accuracy: {accuracy:.1%} ({correct}/{total})'
-            else:
-                title_text = f'Track: {track_id}     No windows for accuracy'
 
             ax.set_title(title_text, fontsize=10, fontweight='bold', pad=10)
 
             # Create legend
             from matplotlib.patches import Patch
-            legend_elements = [
-                Patch(facecolor=COLOR_NO_POROSITY, edgecolor='black', label='True Negative'),
-                Patch(facecolor=COLOR_POROSITY, edgecolor='black', label='True Positive'),
-                Patch(facecolor=COLOR_NO_POROSITY, edgecolor='black', hatch='///', label='False Negative'),
-                Patch(facecolor=COLOR_POROSITY, edgecolor='black', hatch='///', label='False Positive'),
-                Patch(facecolor='white', edgecolor='black', label='Skipped Window')
-            ]
+            if unlabelled:
+                legend_elements = [
+                    Patch(facecolor=COLOR_NO_POROSITY, edgecolor='black', label='Predicted: no porosity'),
+                    Patch(facecolor=COLOR_POROSITY,    edgecolor='black', label='Predicted: porosity'),
+                    Patch(facecolor='white',           edgecolor='black', label='Skipped window'),
+                ]
+            else:
+                legend_elements = [
+                    Patch(facecolor=COLOR_NO_POROSITY, edgecolor='black', label='True Negative'),
+                    Patch(facecolor=COLOR_POROSITY, edgecolor='black', label='True Positive'),
+                    Patch(facecolor=COLOR_NO_POROSITY, edgecolor='black', hatch='///', label='False Negative'),
+                    Patch(facecolor=COLOR_POROSITY, edgecolor='black', hatch='///', label='False Positive'),
+                    Patch(facecolor='white', edgecolor='black', label='Skipped Window')
+                ]
             
-            # Shrink plot to make space for legend below
-            box = ax.get_position()
-            ax.set_position([box.x0, box.y0 + box.height * 0.5,
-                             box.width, box.height * 0.5])
-
-            # Place legend well below the plot
-            ax.legend(handles=legend_elements, loc='upper center',
-                     bbox_to_anchor=(0.5, -2), ncol=5, fontsize=8, frameon=True)
+            # Place legend below the bottom axis
+            _ax_legend = ax_prob if _has_proba else ax
+            _legend_y = -2 if _has_proba else -5
+            _ax_legend.legend(handles=legend_elements, loc='upper center',
+                             bbox_to_anchor=(0.5, _legend_y), ncol=5, fontsize=8, frameon=True)
 
             # Save figure (bbox_inches='tight' handles spacing better than tight_layout)
             output_file = track_viz_dir / f'track_{track_id}_predictions.png'
@@ -427,11 +540,153 @@ def generate_track_predictions_viz(test_files, y_true, y_pred, output_dir, versi
     print(f"✅ Generated {len(figures_generated)} track prediction visualizations")
     print(f"📁 Output directory: {track_viz_dir}")
 
+    # Generate substrate map when the track count matches the expected layout
+    if len(track_data) == sum(SUBSTRATE_COLUMN_SIZES):
+        generate_substrate_map_viz(
+            track_data, track_viz_dir, version,
+            unlabelled=unlabelled, vote_windows=vote_windows,
+        )
+
     return {
         'total_tracks': len(track_data),
         'figures_generated': len(figures_generated),
         'output_directory': str(track_viz_dir)
     }
+
+
+def generate_substrate_map_viz(track_data, output_dir, version,
+                               unlabelled=False, column_sizes=None,
+                               vote_windows=False):
+    """
+    Tiled substrate-map overview of all track predictions.
+
+    Tracks are placed in columns matching the physical substrate layout
+    (default: 4 columns of 11 / 18 / 18 / 11 tracks = 58 total).
+    Each track is rendered as a compact horizontal colour bar (blue = no
+    porosity, red = porosity) with only a track number.  No axis ticks,
+    labels, or correctness annotations are shown.
+
+    Args:
+        track_data: dict  {track_id: {pred_labels, true_labels, windows,
+                           window_ends, files}} — same structure built by
+                    generate_track_predictions_viz.
+        output_dir: Path  directory where the output files are saved.
+        version:    str   version tag used in the output filename.
+        unlabelled: bool  ignored here (colours are always prediction-based).
+        column_sizes: list[int]  tracks per column (default SUBSTRATE_COLUMN_SIZES).
+        vote_windows: bool  apply the same majority-vote collapsing as the
+                      individual track figures.
+    """
+    if column_sizes is None:
+        column_sizes = SUBSTRATE_COLUMN_SIZES
+
+    sorted_ids = sorted(track_data.keys())
+    n_tracks   = len(sorted_ids)
+
+    if n_tracks == 0:
+        print("Substrate map: no tracks to render, skipping.")
+        return None
+
+    # Assign sorted track IDs to (col_idx, row_idx, track_number)
+    assignment = {}
+    idx = 0
+    track_num = 1
+    for col_idx, col_size in enumerate(column_sizes):
+        for row_idx in range(col_size):
+            if idx < n_tracks:
+                assignment[sorted_ids[idx]] = (col_idx, row_idx, track_num)
+                idx += 1
+            track_num += 1
+
+    # ---- Figure geometry (inches) ----------------------------------------
+    FIG_W    = 6.30    # full A4 width
+    BAR_H    = 0.105   # height of each track bar
+    ROW_STEP = 0.150   # vertical pitch (bar + inter-bar gap)
+    TOP_M    = 0.12
+    BOT_M    = 0.12
+    L_M      = 0.10
+    R_M      = 0.10
+    LABEL_W  = 0.24    # width reserved for track-number text per column group
+
+    n_cols   = len(column_sizes)
+    max_rows = max(column_sizes)
+    FIG_H    = TOP_M + max_rows * ROW_STEP + BOT_M
+
+    col_group_w = (FIG_W - L_M - R_M) / n_cols
+    bar_in_w    = col_group_w - LABEL_W
+
+    fig = plt.figure(figsize=(FIG_W, FIG_H))
+
+    for track_id, (col_idx, row_idx, t_num) in assignment.items():
+        data = track_data[track_id]
+
+        order       = np.argsort(data['windows'])
+        pred_labels = np.array(data['pred_labels'])[order]
+        true_labels = np.array(data['true_labels'])[order]
+        windows     = np.array(data['windows'])[order]
+        window_ends = np.array(data['window_ends'])[order]
+
+        # Apply majority-vote collapsing if requested
+        if vote_windows and len(windows) >= 2:
+            diffs  = np.diff(windows).round(6)
+            offset = float(np.min(diffs))
+            t      = windows[0]
+            t_max  = float(window_ends[-1])
+            blocks = []
+            while t < t_max - 1e-9:
+                blocks.append((round(t, 6), round(t + offset, 6)))
+                t = round(t + offset, 6)
+            voted_pred, voted_true = [], []
+            for bs, be in blocks:
+                mask = (windows < be - 1e-9) & (window_ends > bs + 1e-9)
+                if mask.any():
+                    preds = pred_labels[mask].tolist()
+                    trues = true_labels[mask].tolist()
+                    voted_pred.append(int(sum(preds) > len(preds) / 2))
+                    voted_true.append(int(sum(trues) > len(trues) / 2))
+                else:
+                    voted_pred.append(0)
+                    voted_true.append(0)
+            pred_labels = np.array(voted_pred)
+
+        n_win = len(pred_labels)
+
+        # Build (1, n_win, 3) colour array — solid prediction colours only
+        img = np.where(
+            (pred_labels == 1)[:, None],
+            _MAP_RED[None],
+            _MAP_BLUE[None],
+        ).astype(np.uint8)[np.newaxis]   # (1, n_win, 3)
+
+        # Axes position in normalised figure coordinates
+        x0 = (L_M + col_idx * col_group_w + LABEL_W) / FIG_W
+        y0 = 1.0 - (TOP_M + row_idx * ROW_STEP + BAR_H) / FIG_H
+
+        ax = fig.add_axes([x0, y0, bar_in_w / FIG_W, BAR_H / FIG_H])
+        ax.imshow(img, aspect='auto', interpolation='nearest',
+                  extent=[0, n_win, 0, 1])
+        ax.set_xlim(0, n_win)
+        ax.set_ylim(0, 1)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for sp in ax.spines.values():
+            sp.set_linewidth(0.4)
+            sp.set_color('black')
+
+        # Track number — centred in the label band, vertically aligned to bar
+        lx = (L_M + col_idx * col_group_w + LABEL_W / 2) / FIG_W
+        ly = y0 + (BAR_H / FIG_H) / 2
+        fig.text(lx, ly, str(t_num), ha='center', va='center', fontsize=7)
+
+    out = Path(output_dir)
+    png = out / f'substrate_map_{version}.png'
+    pdf = out / f'substrate_map_{version}.pdf'
+    plt.savefig(str(png), dpi=300, bbox_inches='tight')
+    plt.savefig(str(pdf), bbox_inches='tight')
+    plt.close()
+
+    print(f"Substrate map saved: {png}")
+    return str(png)
 
 
 def generate_confusion_matrix(y_true, y_pred, output_dir, version, threshold, test_files=None, exclude_final_window=False, class_labels=None, subdir='test_evaluation'):
@@ -571,7 +826,7 @@ Examples:
   python ml/visualize_track_predictions.py --version v115 --dataset_variant AlSi10Mg_CW_L1_powder_porosity_with-test_auto-split
 
   # Force regeneration from model
-  python ml/visualize_track_predictions.py --version v001 --force-regenerate
+  python ml/visualize_track_predictions.py --version v001 --force_regenerate
         """
     )
 
@@ -581,12 +836,14 @@ Examples:
                        default='cwt_image', help='Type of classifier (default: cwt_image)')
     parser.add_argument('--dataset_variant', type=str, default=None,
                        help='Dataset variant name (optional, used for finding model directory)')
-    parser.add_argument('--force-regenerate', action='store_true',
+    parser.add_argument('--force_regenerate', action='store_true',
                        help='Force regeneration of predictions from model even if saved predictions exist')
-    parser.add_argument('--exclude-final-window', action='store_true',
+    parser.add_argument('--exclude_final_window', action='store_true',
                        help='Exclude final window of each track from visualizations and confusion matrix')
-    parser.add_argument('--use-time-labels', action='store_true',
+    parser.add_argument('--use_time_labels', action='store_true',
                        help='Use time (ms) labels instead of window index on x-axis')
+    parser.add_argument('--vote_windows', action='store_true',
+                       help='Show majority-voted label per offset step instead of per raw window')
 
     args = parser.parse_args()
 
@@ -657,8 +914,12 @@ Examples:
     print(f"   Overall accuracy: {np.mean(y_true == y_pred):.1%}")
 
     # Generate track predictions visualizations
+    y_proba = predictions_data.get('y_proba')
     track_results = generate_track_predictions_viz(
-        test_files, y_true, y_pred, model_dir, version, args.exclude_final_window, args.use_time_labels
+        test_files, y_true, y_pred, model_dir, version,
+        args.exclude_final_window, args.use_time_labels,
+        vote_windows=args.vote_windows,
+        y_proba=y_proba,
     )
 
     # Generate confusion matrix

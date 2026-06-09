@@ -9,6 +9,7 @@ Author: AI Assistant
 """
 
 import numpy as np
+from pathlib import Path
 
 
 def normalize_image(img):
@@ -78,6 +79,110 @@ def estimate_memory_usage_gb(num_files, img_width, signals_per_image=2):
     bytes_per_image = img_width * 1 * 4 * signals_per_image
     total_bytes = num_files * bytes_per_image
     return total_bytes / (1024**3)  # Convert to GB
+
+
+def load_cwt_test_images(test_files, test_labels, img_width, img_height, img_channels,
+                         channel_paths=None, verbose=False):
+    """
+    Load CWT test images from file paths.
+
+    Args:
+        test_files: Array of file paths (single-channel) or filenames (multi-channel)
+        test_labels: Array of integer labels
+        img_width: Target image width
+        img_height: Target image height
+        img_channels: Number of channels expected
+        channel_paths: List of channel directories for multi-channel, or None
+        verbose: Print warnings for skipped files
+
+    Returns:
+        tuple: (X_test np.ndarray, y_test_filtered list, files_filtered list)
+    """
+    import cv2
+    X_test, files_filtered, y_test_filtered = [], [], []
+    is_multi_channel = channel_paths is not None and len(channel_paths) > 1
+
+    for class_label in [0, 1]:
+        class_files = test_files[test_labels == class_label]
+        for file_path_or_name in class_files:
+            try:
+                if is_multi_channel:
+                    filename = (Path(file_path_or_name).name
+                                if ('/' in str(file_path_or_name) or '\\' in str(file_path_or_name))
+                                else file_path_or_name)
+                    channels = []
+                    for channel_path in channel_paths:
+                        img_path = Path(channel_path) / filename
+                        if not img_path.exists():
+                            raise FileNotFoundError(f"Image not found: {img_path}")
+                        channel_img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
+                        if channel_img is None:
+                            raise ValueError(f"Failed to read image: {img_path}")
+                        channel_img = cv2.resize(channel_img, (img_width, img_height))
+                        channel_img = channel_img.astype(np.float32) / 255.0
+                        channels.append(channel_img)
+                    img = np.stack(channels, axis=-1)
+                    files_filtered.append(filename)
+                else:
+                    file_path = file_path_or_name
+                    img = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
+                    if img is None:
+                        raise ValueError(f"Failed to read image: {file_path}")
+                    img = cv2.resize(img, (img_width, img_height))
+                    if img_channels == 1:
+                        img = np.expand_dims(img, axis=-1)
+                    img = img.astype(np.float32) / 255.0
+                    files_filtered.append(file_path)
+                X_test.append(img)
+                y_test_filtered.append(class_label)
+            except Exception as e:
+                if verbose:
+                    print(f"Warning: Could not load CWT test image {file_path_or_name}: {e}")
+
+    return np.array(X_test), y_test_filtered, files_filtered
+
+
+def load_pd_test_images(test_files, test_labels, img_width, verbose=False):
+    """
+    Load PD test images from file paths into dual-branch format.
+
+    Args:
+        test_files: Array of file paths
+        test_labels: Array of integer labels
+        img_width: Expected signal length
+        verbose: Print warnings for skipped files
+
+    Returns:
+        tuple: ((pd1_array, pd2_array), y_test_filtered list, files_filtered list)
+    """
+    import cv2
+    pd1_test, pd2_test, y_test_filtered, files_filtered = [], [], [], []
+
+    for class_label in [0, 1]:
+        class_files = test_files[test_labels == class_label]
+        for file_path in class_files:
+            try:
+                img = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE | cv2.IMREAD_ANYDEPTH)
+                if img is None:
+                    raise ValueError(f"Failed to read image: {file_path}")
+                if img.shape == (2, img_width):
+                    img = img.T
+                elif img.shape == (img_width, 2):
+                    pass
+                else:
+                    raise ValueError(f"Unexpected shape {img.shape}; expected (2,{img_width}) or ({img_width},2)")
+                assert img.shape == (img_width, 2)
+                img = normalize_image(img)
+                pd1_signal, pd2_signal = split_dual_branch_image(img, img_width)
+                pd1_test.append(pd1_signal)
+                pd2_test.append(pd2_signal)
+                y_test_filtered.append(class_label)
+                files_filtered.append(file_path)
+            except Exception as e:
+                if verbose:
+                    print(f"Warning: Could not load PD test image {file_path}: {e}")
+
+    return (np.array(pd1_test), np.array(pd2_test)), y_test_filtered, files_filtered
 
 
 def extract_trackid_from_filename(filename):

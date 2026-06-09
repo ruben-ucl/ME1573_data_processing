@@ -17,9 +17,12 @@ os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
 
 import argparse
 import datetime
+import gc
 import json
 import random
+import shutil
 import sys
+import traceback
 import warnings
 from glob import glob
 from pathlib import Path
@@ -28,27 +31,39 @@ from matplotlib import pyplot as plt
 import cv2
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn import metrics
-from tensorflow.keras import layers, models, callbacks
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from PIL import Image
 
 from config import (
-    get_default_cwt_data_dir, get_cwt_experiment_log_path, get_cwt_config_template, 
+    get_default_cwt_data_dir, get_cwt_experiment_log_path, get_cwt_config_template,
     format_version, get_next_version_from_log, CWT_OUTPUTS_DIR, CWT_LOGS_DIR, ensure_cwt_directories,
     normalize_path, ensure_path_exists, convert_numpy_types,
-    log_experiment_results, create_experiment_summary_files, save_fold_plots
+    log_experiment_results, create_experiment_summary_files, save_fold_plots,
+    compute_val_threshold,
+    load_dataset_variant_info, resolve_cwt_data_channels, validate_multichannel_structure,
 )
+
+import tensorflow as tf
+from tensorflow.keras import layers, models, callbacks
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 from data_utils import normalize_image
 
 # Suppress TensorFlow warnings
 warnings.filterwarnings('ignore', category=UserWarning)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+# GPU configuration
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    for gpu in gpus:
+        tf.config.experimental.set_memory_growth(gpu, True)
+    print(f"GPU training enabled: {len(gpus)} device(s) found")
+else:
+    print("No GPU detected — training on CPU")
 
 # -------------------------
 # Concise Progress Callback
@@ -144,9 +159,6 @@ def load_cwt_image_data(root_dirs, img_size, verbose=False, exclude_files=None):
     
     if verbose:
         print(f"Loading {num_channels}-channel CWT image data from {len(root_dirs)} directories")
-    
-    # Import validation from config to avoid duplication
-    from config import validate_multichannel_structure
     
     # Validate all directories exist and have same structure
     validate_multichannel_structure(root_dirs, verbose)
@@ -488,6 +500,46 @@ def apply_cwt_augmentation(X, config):
 # -------------------------
 # 3. Model Architecture
 # -------------------------
+def _estimate_flatten_size(config):
+    """Trace spatial dims through conv+pool stack to estimate flatten feature count."""
+    H, W = config.get('img_height', 256), config.get('img_width', 100)
+    conv_filters = config.get('conv_filters', [])
+    kH, kW = config.get('conv_kernel_size', [3, 3])
+    pH, pW = config.get('pool_size', [2, 2])
+    pool_layers = config.get('pool_layers', []) or []
+    for i in range(len(conv_filters)):
+        H -= kH - 1
+        W -= kW - 1
+        if i in pool_layers:
+            H //= pH
+            W //= pW
+    return H * W * (conv_filters[-1] if conv_filters else 1)
+
+
+def resolve_pool_layers(config):
+    """Return the effective pool_layers list, deriving from conv_filters if auto_pool=True.
+    Also writes the resolved value back into config so it is logged correctly.
+    Forces pool after the final block if the estimated flatten size exceeds 200,000."""
+    conv_filters = config.get('conv_filters', [])
+    if config.get('auto_pool', False):
+        pool_layers = [i for i in range(len(conv_filters) - 1)
+                       if conv_filters[i] != conv_filters[i + 1]]
+        if config.get('pool_after_last_block', False):
+            pool_layers.append(len(conv_filters) - 1)
+        config['pool_layers'] = pool_layers
+
+        # Safety guard: if flatten would be too large, force pool after the final conv block
+        flatten = _estimate_flatten_size(config)
+        last_idx = len(conv_filters) - 1
+        if flatten > 200_000 and last_idx not in pool_layers:
+            print(f"POOL_GUARD_TRIGGERED: estimated flatten size {flatten:,} > 200,000 — forcing pool after final block to prevent OOM.")
+            pool_layers.append(last_idx)
+            config['pool_after_last_block'] = True
+            config['pool_layers'] = pool_layers
+
+    return config.get('pool_layers', [])
+
+
 def create_cnn_model(input_shape, config, verbose=False):
     """
     Create CNN model for CWT image classification.
@@ -612,7 +664,7 @@ def create_cnn_model(input_shape, config, verbose=False):
 # -------------------------
 # 4. Training Functions
 # -------------------------
-def train_fold(fold, train_idx, val_idx, X, y, config, class_weights=None, best_overall_acc=0.0, concise=False, output_dir=None):
+def train_fold(fold, train_idx, val_idx, X, y, config, class_weights=None, best_overall_acc=0.0, concise=False, output_dir=None, save_model=False):
     """
     Train model on a single fold of the data.
     
@@ -870,7 +922,6 @@ def run_gradcam_analysis(model, X_sample, y_sample, config, output_dir, concise=
             if save_images:
                 try:
                     # Resize heatmap to match original image size
-                    import cv2
                     heatmap_resized = cv2.resize(heatmap_np, (original_img.shape[1], original_img.shape[0]))
                     
                     # Create colormap version (0-255 range)
@@ -1068,8 +1119,6 @@ def main():
         if args.dataset_variant or config.get('label_file'):
             # Handle dataset variant configuration
             if args.dataset_variant:
-                from config import load_dataset_variant_info
-
                 dataset_info = load_dataset_variant_info(args.dataset_variant)
                 dataset_dir = dataset_info['dataset_dir']
                 dataset_config = dataset_info['config']
@@ -1128,7 +1177,6 @@ def main():
                     print(f"Data directory: {config.get('cwt_data_dir', 'multi-channel')}")
 
             # Resolve data directories for multi-channel support
-            from config import resolve_cwt_data_channels
             try:
                 channels_dict, channel_labels, channel_paths = resolve_cwt_data_channels(config)
                 if args.verbose:
@@ -1152,7 +1200,6 @@ def main():
         else:
             # Standard class-based directory structure loading
             # Resolve data directories for multi-channel support
-            from config import resolve_cwt_data_channels
             try:
                 channels_dict, channel_labels, channel_paths = resolve_cwt_data_channels(config)
                 if args.verbose:
@@ -1185,6 +1232,9 @@ def main():
             if not args.concise:
                 print(f"Using class weights: {class_weights}")
         
+        # Resolve pool_layers (auto_pool derives from conv_filters if enabled)
+        resolve_pool_layers(config)
+
         # Train all folds
         if not args.concise:
             print(f"\nStarting {config['k_folds']}-fold cross-validation...")
@@ -1197,16 +1247,17 @@ def main():
                 print(f"\n{'='*20} FOLD {fold}/{config['k_folds']} {'='*20}")
             
             # Train this fold
-            output_dir = CWT_OUTPUTS_DIR / version if config.get('run_gradcam', False) else None
+            output_dir = CWT_OUTPUTS_DIR / version if (config.get('run_gradcam', False) or config.get('save_model', False)) else None
             if output_dir:
                 ensure_path_exists(output_dir)
             
             fold_result = train_fold(
-                fold, train_idx, val_idx, X, y, config, 
-                class_weights=class_weights, 
+                fold, train_idx, val_idx, X, y, config,
+                class_weights=class_weights,
                 best_overall_acc=best_overall_acc,
                 concise=args.concise,
-                output_dir=output_dir
+                output_dir=output_dir,
+                save_model=config.get('save_model', False)
             )
             
             fold_results.append(fold_result)
@@ -1257,7 +1308,13 @@ def main():
             # Update best overall accuracy
             if fold_result['val_accuracy'] > best_overall_acc:
                 best_overall_acc = fold_result['val_accuracy']
-            
+
+            # Free GPU memory before next fold; post-training steps reload from checkpoint
+            _fold_model = fold_result.pop('model', None)
+            del _fold_model
+            gc.collect()
+            tf.keras.backend.clear_session()
+
             if not args.concise:
                 print(f"Fold {fold} Results:")
                 print(f"  Validation Accuracy: {fold_result['val_accuracy']:.4f}")
@@ -1329,23 +1386,42 @@ def main():
         
         # Get model complexity from first fold (should be same for all folds)
         model_complexity = fold_results[0].get('model_complexity', 0) if fold_results else 0
-        
+
+        # Identify best fold once, reused by threshold sweep, save_model, and run_gradcam blocks
+        best_fold_idx = np.argmax(val_accuracies)
+        best_fold_num = fold_results[best_fold_idx]['fold']
+
+        # Threshold sweep on best fold's validation set (binary classifiers only)
+        best_val_threshold = None
+        label_type = fold_results[0].get('label_type', 'binary') if fold_results else 'binary'
+        if label_type != 'continuous':
+            _y_proba = fold_results[best_fold_idx]['y_pred_proba']
+            if _y_proba.ndim == 1 or _y_proba.shape[-1] == 1:
+                _out_dir = CWT_OUTPUTS_DIR / version
+                ensure_path_exists(_out_dir)
+                best_val_threshold = compute_val_threshold(
+                    _y_proba.flatten(),
+                    fold_results[best_fold_idx]['y_val_flat'],
+                    _out_dir, version, args.concise,
+                )
+
         # Log results using consolidated function
         log_entry = log_experiment_results(
             classifier_type='cwt_image',
             version=version,
-            start_time=start_time, 
+            start_time=start_time,
             end_time=end_time,
             config=config,
             fold_results=fold_results,
-            X=X, 
-            y=y, 
+            X=X,
+            y=y,
             class_counts=class_counts,
             model_complexity=model_complexity,
             source=getattr(args, 'source', 'manual'),
             hyperopt_run_id=getattr(args, 'hyperopt_run_id', None),
             config_file=getattr(args, 'config_file', None),
-            config_number_in_run=getattr(args, 'config_number_in_run', None)
+            config_number_in_run=getattr(args, 'config_number_in_run', None),
+            best_val_threshold=best_val_threshold,
         )
         
         # Save experiment summary files using consolidated function
@@ -1355,8 +1431,7 @@ def main():
             
             # Prepare data info and experiment results for consolidated function
             training_time_minutes = (end_time - start_time).total_seconds() / 60
-            best_fold_idx = np.argmax(val_accuracies)
-            
+
             data_info = {
                 'cwt_data_dir': config['cwt_data_dir'],
                 'total_samples': len(X),
@@ -1401,38 +1476,50 @@ def main():
                 print(f"Experiment summary saved: {summary_filename}")
                 print(f"Human-readable summary saved: {readable_summary_filename}")
         
+        # Load best model once from checkpoint (used by save_model and/or run_gradcam)
+        best_model_post = None
+        if config.get('save_model', False) or config.get('run_gradcam', False):
+            output_dir = CWT_OUTPUTS_DIR / version
+            models_dir = output_dir / 'models'
+            checkpoint_path = models_dir / f'best_model_fold_{best_fold_num}.h5'
+            best_model_post = tf.keras.models.load_model(str(checkpoint_path))
+            if models_dir.exists():
+                shutil.rmtree(models_dir)
+
+        # Save best model (independent of Grad-CAM)
+        if config.get('save_model', False):
+            output_dir = CWT_OUTPUTS_DIR / version
+            best_model_filename = output_dir / f"best_model_{version}_fold_{best_fold_num}.h5"
+            best_model_post.save(best_model_filename)
+            if not args.concise:
+                print(f"Best model saved: {best_model_filename.name} (fold {best_fold_num})")
+
         # Run Grad-CAM analysis on the best model
         if config.get('run_gradcam', False):
-            best_fold_idx = np.argmax(val_accuracies)
-            best_model = fold_results[best_fold_idx]['model']
-            
-            # Output directory already created above
             output_dir = CWT_OUTPUTS_DIR / version
-            
-            # Save best model
-            best_model.save(output_dir / f"best_model_{version}.h5")
-            
+
             # Run Grad-CAM on validation set from best fold
             gradcam_results = run_gradcam_analysis(
-                best_model,
+                best_model_post,
                 fold_results[best_fold_idx]['X_val'],
                 fold_results[best_fold_idx]['y_val'],
                 config,
                 output_dir,
                 concise=args.concise
             )
-            
+
             # Save configuration
             with open(output_dir / f"config_{version}.json", 'w') as f:
                 json.dump(config, f, indent=2, default=str)
+
+        if best_model_post is not None:
+            del best_model_post
         
         return 0
         
     except Exception as e:
         print(f"❌ Training failed: {e}")
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
+        traceback.print_exc()
         return 1
 
 if __name__ == "__main__":

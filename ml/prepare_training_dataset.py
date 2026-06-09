@@ -15,16 +15,16 @@ Comprehensive dataset preparation for ML training that:
 
 Usage:
     # Basic balancing with default settings
-    python ml/prepare_training_dataset.py --dry-run
+    python ml/prepare_training_dataset.py --dry_run
 
     # With signal filtering and custom ratio
-    python ml/prepare_training_dataset.py --signal-threshold 10 --target-ratio 1.5
+    python ml/prepare_training_dataset.py --signal_threshold 10 --target_ratio 1.5
 
     # With logbook-based filtering (AlSi10Mg, Layer 1, CW laser)
-    python ml/prepare_training_dataset.py --material AlSi10Mg --layer 1 --laser-mode cw
+    python ml/prepare_training_dataset.py --material AlSi10Mg --layer 1 --laser_mode cw
 
     # Combined filtering and balancing
-    python ml/prepare_training_dataset.py --material AlSi10Mg --layer 1 --signal-threshold 10 --target-ratio 1.5
+    python ml/prepare_training_dataset.py --material AlSi10Mg --layer 1 --signal_threshold 10 --target_ratio 1.5
 """
 
 import argparse
@@ -109,14 +109,14 @@ def get_channel_paths_for_dataset(args):
     from ml.config import CWT_DATA_DIR_DICT, default_channel
     from pathlib import Path
 
-    # Option 1: --multi-channel flag (use all from config)
+    # Option 1: --multi_channel flag (use all from config)
     if args.multi_channel:
         if args.data_paths:
-            raise ValueError("Cannot use both --multi-channel and --data-paths")
+            raise ValueError("Cannot use both --multi_channel and --data_paths")
         print(f"Using multi-channel mode: loading all channels from CWT_DATA_DIR_DICT")
         return CWT_DATA_DIR_DICT.copy()
 
-    # Option 2: --data-paths (explicit paths)
+    # Option 2: --data_paths (explicit paths)
     elif args.data_paths:
         paths = args.data_paths
 
@@ -628,7 +628,7 @@ def find_best_temporal_split(df, target_val_ratio=0.2, target_class_ratio=None,
         print(f"     Use --augment_to_balance to balance training data")
     elif abs(best_train_class_1_pct - best_val_class_1_pct) > 15:
         print(f"  ⚠️  Large train/val class distribution mismatch ({abs(best_train_class_1_pct - best_val_class_1_pct):.1f}% difference)")
-        print(f"     Consider increasing --n-seeds for better optimization")
+        print(f"     Consider increasing --n_seeds for better optimization")
     else:
         print(f"  ✓ Train/val class distributions are well matched")
 
@@ -868,7 +868,7 @@ def list_available_datasets():
 
     if not found_datasets:
         print("\nNo prepared datasets found.")
-        print("Create datasets with: python ml/prepare_training_dataset.py --temporal-split --dataset-name <name>")
+        print("Create datasets with: python ml/prepare_training_dataset.py --temporal_split --dataset_name <name>")
 
 
 def score_test_holdout_split(df, train_tracks, test_tracks, target_test_fraction=0.2):
@@ -2225,6 +2225,19 @@ def prepare_dataset_variant(df_filtered, args, logbook, active_filters, label_pa
             total_samples = len(df_train_tracks) + len(df_test)
         config['statistics']['retention_pct'] = (total_samples / len(df_filtered)) * 100
 
+    # Mode 3: All data, no splits (full trainval set for use with --label_file)
+    else:
+        print(f"\nMode: NO SPLIT (full filtered dataset)")
+
+        trainval_csv = dataset_dir / "trainval.csv"
+        df_filtered[['filename', 'has_porosity']].to_csv(trainval_csv, index=False, encoding='utf-8')
+
+        print(f"✓ Saved: {trainval_csv.name} ({len(df_filtered)} samples)")
+
+        config['statistics']['mode'] = 'no_split'
+        config['statistics']['total_samples'] = len(df_filtered)
+        config['statistics']['retention_pct'] = 100.0
+
     # Save dataset configuration
     config_file = dataset_dir / 'dataset_config.json'
     with open(config_file, 'w', encoding='utf-8') as f:
@@ -2294,16 +2307,10 @@ def main():
 
     # File paths
     parser.add_argument(
-        '--label-file',
+        '--label_file',
         type=Path,
         help='Path to label CSV file (if not provided, uses default CWT data directory)'
     )
-    parser.add_argument(
-        '--image-dir',
-        type=Path,
-        help='Path to image directory (if not provided, derives from label file location)'
-    )
-
     # Logbook-based filtering
     parser.add_argument(
         '--material',
@@ -2316,19 +2323,19 @@ def main():
         help='Filter by layer number (e.g., 1, 2)'
     )
     parser.add_argument(
-        '--laser-mode',
+        '--laser_mode',
         type=str,
         choices=['cw', 'pwm'],
         help='Filter by laser mode: cw (continuous wave) or pwm (pulsed)'
     )
     parser.add_argument(
-        '--base-type',
+        '--base_type',
         type=str,
         choices=['powder', 'welding'],
         help='Filter by base type: powder or welding (substrate only)'
     )
     parser.add_argument(
-        '--substrate-no',
+        '--substrate_no',
         type=str,
         help='Filter by substrate number (e.g., 514, 515)'
     )
@@ -2341,7 +2348,7 @@ def main():
 
     # Signal-based filtering
     parser.add_argument(
-        '--signal-threshold',
+        '--signal_threshold',
         type=float,
         default=10.0,
         help='Minimum mean intensity threshold for filtering (default: 10.0)'
@@ -2349,29 +2356,29 @@ def main():
 
     # Class balancing
     parser.add_argument(
-        '--target-ratio',
+        '--target_ratio',
         type=float,
         default=1.5,
         help='Target class imbalance ratio (class_0:class_1) for stratified downsampling (default: 1.5). '
-             'Only used when --no-balancing is NOT set.'
+             'Only used when --no_balancing is NOT set.'
     )
     parser.add_argument(
-        '--no-balancing',
+        '--no_balancing',
         action='store_true',
         help='Skip stratified downsampling (prevents random data removal to balance classes). '
-             'Note: Does not affect smart seed selection when using --temporal-split.'
+             'Note: Does not affect smart seed selection when using --temporal_split.'
     )
 
     # Temporal splitting (prevents train/val leakage from window overlap)
     parser.add_argument(
-        '--temporal-split',
+        '--temporal_split',
         action='store_true',
         help='Use adaptive temporal block splitting to prevent train/val data leakage. '
              'Uses smart seed selection to optimize class balance without removing data. '
-             'Incompatible with stratified downsampling (forces --no-balancing).'
+             'Incompatible with stratified downsampling (forces --no_balancing).'
     )
     parser.add_argument(
-        '--n-seeds',
+        '--n_seeds',
         type=int,
         default=100,
         help='Number of random seeds to try for best class balance (default: 100)'
@@ -2383,7 +2390,7 @@ def main():
              'Default is to target 50:50 class balance in validation set.'
     )
     parser.add_argument(
-        '--gap-size',
+        '--gap_size',
         type=int,
         default=5,
         help='Gap size between blocks in windows (default: 5 for zero temporal overlap)'
@@ -2391,62 +2398,62 @@ def main():
 
     # Output options
     parser.add_argument(
-        '--dry-run',
+        '--dry_run',
         action='store_true',
         help='Show what would be done without creating output files'
     )
     parser.add_argument(
-        '--output-type',
+        '--output_type',
         choices=['filtered_csv', 'exclusion_list', 'both'],
         default='both',
         help='Type of output to generate (default: both)'
     )
     parser.add_argument(
-        '--output-dir',
+        '--output_dir',
         type=Path,
         help='Output directory for results (default: same as label file)'
     )
 
     # Dataset variant options (for separating dataset preparation from training)
     parser.add_argument(
-        '--dataset-name',
+        '--dataset_name',
         type=str,
-        help='Name for this dataset variant (required when using --k-folds or --test-holdout)'
+        help='Name for this dataset variant (required when using --k_folds or --test_holdout)'
     )
     parser.add_argument(
-        '--data-paths',
+        '--data_paths',
         type=str,
         nargs='+',
         help='Data directory path(s). Single path for single-channel, multiple paths for multi-channel. '
-             'Use --multi-channel flag to auto-load all channels from CWT_DATA_DIR_DICT.'
+             'Use --multi_channel flag to auto-load all channels from CWT_DATA_DIR_DICT.'
     )
     parser.add_argument(
-        '--multi-channel',
+        '--multi_channel',
         action='store_true',
-        help='Auto-load all channels from CWT_DATA_DIR_DICT (alternative to --data-paths)'
+        help='Auto-load all channels from CWT_DATA_DIR_DICT (alternative to --data_paths)'
     )
     parser.add_argument(
-        '--channel-labels',
+        '--channel_labels',
         type=str,
         nargs='*',
         help='Optional channel labels (e.g., PD1_cmor1.5-1.0 PD2_mexh). '
              'If not provided, auto-generated from paths.'
     )
     parser.add_argument(
-        '--k-folds',
+        '--k_folds',
         type=int,
         default=1,
         help='Number of folds for k-fold CV dataset preparation (default: 1). '
              'Each fold gets independent temporal split with different seed.'
     )
     parser.add_argument(
-        '--test-holdout',
+        '--test_holdout',
         type=float,
         help='Fraction of tracks to hold out for test set (e.g., 0.2 for 20%%). '
-             'Mutually exclusive with --k-folds.'
+             'Mutually exclusive with --k_folds.'
     )
     parser.add_argument(
-        '--test-selection-strategy',
+        '--test_selection_strategy',
         type=str,
         choices=['random', 'preserve_diversity', 'random_search'],
         default='preserve_diversity',
@@ -2455,42 +2462,42 @@ def main():
              'random_search uses multi-objective optimization (class balance + regime diversity).'
     )
     parser.add_argument(
-        '--test-holdout-seed',
+        '--test_holdout_seed',
         type=int,
         help='Random seed for test holdout selection. Allows deterministic/reproducible splits.'
     )
     parser.add_argument(
-        '--test-holdout-candidates',
+        '--test_holdout_candidates',
         type=int,
         help='Number of ranked test holdout options to show for selection (e.g., 5). '
              'If not specified, automatically selects the best option.'
     )
     parser.add_argument(
-        '--list-datasets',
+        '--list_datasets',
         action='store_true',
         help='List all prepared datasets and exit'
     )
 
     args = parser.parse_args()
 
-    # Handle --list-datasets command (early exit)
+    # Handle --list_datasets command (early exit)
     if args.list_datasets:
         list_available_datasets()
         return 0
 
     # Validate dataset variant options
     if args.dataset_name and not (args.k_folds > 1 or args.test_holdout):
-        print("ERROR: --dataset-name requires either --k-folds or --test-holdout")
+        print("ERROR: --dataset_name requires either --k_folds or --test_holdout")
         return 1
 
     if (args.k_folds > 1 or args.test_holdout) and not args.dataset_name:
-        print("ERROR: Dataset variant mode requires --dataset-name")
+        print("ERROR: Dataset variant mode requires --dataset_name")
         return 1
 
     if args.k_folds > 1 and args.test_holdout:
-        print("ERROR: Cannot use both --k-folds and --test-holdout simultaneously")
-        print("  Use --k-folds for hyperparameter tuning (no test holdout)")
-        print("  Use --test-holdout for final evaluation (with test set)")
+        print("ERROR: Cannot use both --k_folds and --test_holdout simultaneously")
+        print("  Use --k_folds for hyperparameter tuning (no test holdout)")
+        print("  Use --test_holdout for final evaluation (with test set)")
         return 1
 
     print("="*80)
@@ -2516,13 +2523,7 @@ def main():
     print(f"Label file: {label_path}")
 
     # Determine channel paths (single or multi-channel)
-    if args.image_dir:
-        # Single directory specified via --image-dir
-        channel_paths_dict = {'default': str(args.image_dir)}
-        print(f"Using specified image directory: {args.image_dir}")
-    else:
-        # Use get_channel_paths_for_dataset to determine paths
-        channel_paths_dict = get_channel_paths_for_dataset(args)
+    channel_paths_dict = get_channel_paths_for_dataset(args)
 
     # Validate all channel directories exist
     for channel_label, channel_path in channel_paths_dict.items():
@@ -2705,22 +2706,22 @@ def main():
     #    - Tries N random seeds for temporal block assignment
     #    - Selects seed with best train/val class balance
     #    - Compatible with temporal splits (no data removal)
-    #    - Always active when --temporal-split is used
+    #    - Always active when --temporal_split is used
     #
     # 2. Stratified Downsampling (destructive):
     #    - Randomly removes majority class samples to target ratio
     #    - Breaks temporal continuity (creates unpredictable gaps)
     #    - Incompatible with temporal splits
-    #    - Controlled by --no-balancing flag (disabled when True)
+    #    - Controlled by --no_balancing flag (disabled when True)
 
     # Check for incompatible options
     if args.temporal_split and not args.no_balancing:
-        print(f"\n⚠️  Warning: --temporal-split is incompatible with stratified downsampling")
+        print(f"\n⚠️  Warning: --temporal_split is incompatible with stratified downsampling")
         print(f"  Stratified downsampling randomly removes majority class samples")
         print(f"  This breaks temporal continuity required for zero-leakage splits")
         print(f"  Temporal split will use smart seed selection instead (trying {args.n_seeds} seeds)")
         print(f"  Use --augment_to_balance during training for additional balancing")
-        print(f"  Forcing --no-balancing for temporal split")
+        print(f"  Forcing --no_balancing for temporal split")
         args.no_balancing = True
 
     # Check for dataset variant mode (k-fold CV or train/test split)
@@ -2773,9 +2774,9 @@ def main():
         df_balanced = df_filtered  # Not used in temporal split mode
         dimensions = []  # Not used in temporal split mode
 
-    # Step 2 (alternative): Stratified downsampling (skip if --no-balancing specified)
+    # Step 2 (alternative): Stratified downsampling (skip if --no_balancing specified)
     elif args.no_balancing:
-        print(f"\n⊘ Skipping class balancing (--no-balancing enabled)")
+        print(f"\n⊘ Skipping class balancing (--no_balancing enabled)")
         df_balanced = df_filtered.copy()
         final_class_0 = class_0_after
         final_class_1 = class_1_after
@@ -2916,7 +2917,7 @@ def main():
 
         print(f"\n✅ Dataset preparation completed successfully!")
     else:
-        print(f"\n💡 Run without --dry-run to save output files")
+        print(f"\n💡 Run without --dry_run to save output files")
 
     return 0
 

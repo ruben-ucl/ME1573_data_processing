@@ -13,19 +13,30 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
-from tensorflow.keras import layers, models, callbacks
 
 from config import (
     get_data_dir, get_pd_experiment_log_path, load_config, format_version,
     PD_OUTPUTS_DIR, normalize_path, ensure_path_exists, convert_numpy_types,
     # Consolidated functions
-    log_experiment_results, create_experiment_summary_files, save_fold_plots
+    log_experiment_results, create_experiment_summary_files, save_fold_plots,
+    compute_val_threshold,
 )
 from data_utils import normalize_image
+
+import tensorflow as tf
+from tensorflow.keras import layers, models, callbacks
+
+# GPU configuration
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    for gpu in gpus:
+        tf.config.experimental.set_memory_growth(gpu, True)
+    print(f"GPU training enabled: {len(gpus)} device(s) found")
+else:
+    print("No GPU detected — training on CPU")
 
 # -------------------------
 # Concise Progress Callback
@@ -419,7 +430,10 @@ def create_experiment_log_entry(version, hyperparams, data_info, results, output
         'test_recall': test_results.get('test_recall') if test_results else None,
         'test_f1_score': test_results.get('test_f1_score') if test_results else None,
         'test_roc_auc': test_results.get('test_roc_auc') if test_results else None,
-        'test_samples': test_results.get('test_samples') if test_results else None
+        'test_samples': test_results.get('test_samples') if test_results else None,
+
+        # Val-set optimised threshold
+        'best_val_threshold': results.get('best_val_threshold'),
     }
     
     # Create or append to CSV
@@ -850,7 +864,9 @@ def train_kfold(X, y, config, experiment_dir=None, concise=False, progress_info=
         'fold': [],
         'val_loss': [],
         'val_accuracy': [],
-        'best_epoch': []
+        'best_epoch': [],
+        'val_proba_class1': [],
+        'val_true': [],
     }
     
     # Track best overall accuracy
@@ -929,10 +945,15 @@ def train_kfold(X, y, config, experiment_dir=None, concise=False, progress_info=
         val_loss, val_accuracy = save_fold_results(
             model, (pd1_val, pd2_val), y_val, history, fold, experiment_dir, concise
         )
-        
+
         if not concise:
             print(f"Fold {fold} - Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}")
-        
+
+        # Store per-fold val probabilities for threshold sweep
+        _val_preds = model.predict([pd1_val, pd2_val], verbose=0)
+        fold_results['val_proba_class1'].append(_val_preds[:, 1])
+        fold_results['val_true'].append(np.argmax(y_val, axis=1))
+
         # Store results
         fold_results['fold'].append(fold)
         fold_results['val_loss'].append(val_loss)
@@ -1039,7 +1060,18 @@ def train_kfold(X, y, config, experiment_dir=None, concise=False, progress_info=
     # Assumes 80/20 train/val split - could be made configurable if needed
     training_samples_per_fold = len(pd1_data) * 0.8  # Approximate training size per fold
     augmentation_ratio = avg_augmented_samples_per_fold / training_samples_per_fold if training_samples_per_fold > 0 else 0.0
-    
+
+    # Threshold sweep on best fold's validation set
+    best_fold_idx = np.argmax(fold_results['val_accuracy'])
+    best_val_threshold = None
+    if experiment_dir:
+        _version = Path(experiment_dir).name
+        best_val_threshold = compute_val_threshold(
+            fold_results['val_proba_class1'][best_fold_idx],
+            fold_results['val_true'][best_fold_idx],
+            experiment_dir, _version, concise,
+        )
+
     # Prepare results for experiment logging
     experiment_results = {
         'mean_accuracy': mean_acc,
@@ -1051,7 +1083,8 @@ def train_kfold(X, y, config, experiment_dir=None, concise=False, progress_info=
         'fold_accuracies': fold_results['val_accuracy'],
         'fold_losses': fold_results['val_loss'],
         'training_time_minutes': training_time_minutes,
-        
+        'best_val_threshold': best_val_threshold,
+
         # Augmentation statistics (relative to total_samples already in log)
         'augmented_samples_per_fold': avg_augmented_samples_per_fold,
         'total_augmented_samples_created': total_augmented_samples_added,
