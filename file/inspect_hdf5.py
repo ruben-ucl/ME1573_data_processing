@@ -25,8 +25,8 @@ INTENDED CHANGES
 # Input data informaton
 filepath = get_paths()['hdf5']
     
-repeat_for_all = False
-dset_to_delete_all = ''
+repeat_for_all = True
+dset_to_delete_all = 'bs-p1'
 # dset_to_delete_all = 'bs-p10-s37_lagrangian_bin'
 # dset_to_delete_all = 'bs-p10-s37'
 

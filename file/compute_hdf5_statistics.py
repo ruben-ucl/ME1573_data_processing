@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """
-Compute statistics for all datasets in HDF5 files.
+Compute statistics for 1D datasets in HDF5 files.
 
 This script iterates through all HDF5 files, calculates statistics
-(min, max, mean, std, count) for each dataset, and saves them to a CSV log file.
+(min, max, mean, std, count) for each 1D dataset, and saves them to a CSV log file.
+Multi-dimensional datasets (images, timeseries images) are skipped.
 Overall statistics are computed using weighted averages based on counts.
 
 Author: AI Assistant
@@ -87,7 +88,7 @@ def compute_dataset_statistics(dataset):
 
 def process_hdf5_file(hdf5_path):
     """
-    Process a single HDF5 file and extract statistics for all datasets.
+    Process a single HDF5 file and extract statistics for 1D datasets only.
 
     Parameters:
     -----------
@@ -106,6 +107,9 @@ def process_hdf5_file(hdf5_path):
             # Iterate through all datasets
             def collect_stats(name, obj):
                 if isinstance(obj, h5py.Dataset):
+                    # Skip multi-dimensional datasets (images, timeseries images)
+                    if obj.ndim != 1:
+                        return
                     # Compute statistics for this dataset
                     stats = compute_dataset_statistics(obj)
                     # Use full path as key (e.g., "AMPM/Photodiode1Bits")

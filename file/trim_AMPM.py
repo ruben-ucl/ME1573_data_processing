@@ -11,7 +11,7 @@ from tools import get_paths, get_logbook, get_logbook_data
 AMPM_path = get_paths()['AMPM']
 hdf5_path = get_paths()['hdf5']
 
-sample_rate = '2M' # '2M' or '100K'
+sample_rate = '100K' # '2M' or '100K'
 
 mode = 'append' # 'append' or 'overwrite'
 
