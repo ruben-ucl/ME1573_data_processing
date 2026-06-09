@@ -12,7 +12,7 @@ Output CSV format:
 
 Usage:
     python export_keyhole_to_csv.py input.hdf5 output.csv
-    python export_keyhole_to_csv.py input.hdf5 output.csv --opening-width 150 --smoothing 0.7
+    python export_keyhole_to_csv.py input.hdf5 output.csv --opening_width 150 --smoothing 0.7
 
 Author: Claude
 Date: 2025-11-20
@@ -36,15 +36,15 @@ def main():
     parser.add_argument('output_csv', help='Output CSV file path')
     parser.add_argument('--dataset', default='keyhole_bin',
                        help='HDF5 dataset name (default: keyhole_bin)')
-    parser.add_argument('--opening-width', type=float, default=120.0,
+    parser.add_argument('--opening_width', type=float, default=120.0,
                        help='Opening width in microns (default: 120.0)')
     parser.add_argument('--smoothing', type=float, default=0.5,
                        help='Smoothing factor (default: 0.5)')
     parser.add_argument('--resolution', type=float, default=4.3,
                        help='Resolution in μm/pixel (default: 4.3)')
-    parser.add_argument('--frame-start', type=int, default=None,
+    parser.add_argument('--frame_start', type=int, default=None,
                        help='Start frame index (optional)')
-    parser.add_argument('--frame-end', type=int, default=None,
+    parser.add_argument('--frame_end', type=int, default=None,
                        help='End frame index (optional)')
 
     args = parser.parse_args()
