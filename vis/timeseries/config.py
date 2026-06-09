@@ -73,6 +73,12 @@ class ProcessingConfig:
     target_samples: int = 1000
     resampling_method: str = 'linear'  # 'linear', 'cubic', 'nearest'
 
+    # Synchronization grid strategy (affects correlation p-values)
+    # 'upsample': interpolate to finest grid (default legacy behaviour)
+    # 'downsample': interpolate to coarsest grid - avoids artificially inflating
+    #               lag-1 autocorrelation in slower signals, giving more accurate p-values
+    sync_method: str = 'downsample'  # 'upsample' | 'downsample'
+
     # Outlier removal
     remove_outliers: bool = False
     outlier_method: str | list[str] = 'iqr'  # Single method or list of methods: 'iqr', 'zscore', 'mad', 'gradient', 'second_derivative'

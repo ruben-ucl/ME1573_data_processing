@@ -7,7 +7,7 @@ correlation analysis, cross-correlation lags, and statistical measures.
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
@@ -72,85 +72,9 @@ class StatisticsMixin:
         """Count zero crossings in the signal"""
         return len(np.where(np.diff(np.signbit(data)))[0])
     
-    def _calculate_effective_sample_size(self, data: np.ndarray) -> Tuple[float, float]:
-        """
-        Calculate effective sample size for autocorrelated time series
-
-        Uses the Bretherton et al. (1999) / Bayley-Hammersley correction:
-        n_eff = n * (1 - ρ₁) / (1 + ρ₁)
-
-        where ρ₁ is the lag-1 autocorrelation coefficient.
-
-        Parameters:
-        -----------
-        data : np.ndarray
-            Time series data
-
-        Returns:
-        --------
-        n_eff : float
-            Effective sample size accounting for autocorrelation
-        rho_1 : float
-            Lag-1 autocorrelation coefficient
-        """
-        n = len(data)
-
-        # Calculate lag-1 autocorrelation
-        data_centered = data - np.mean(data)
-        autocorr_full = np.correlate(data_centered, data_centered, mode='full')
-        autocorr_full = autocorr_full / autocorr_full[len(autocorr_full)//2]  # Normalize
-
-        # Get lag-1 autocorrelation (index n corresponds to lag 0, so n+1 is lag 1)
-        rho_1 = autocorr_full[len(autocorr_full)//2 + 1]
-
-        # Calculate effective sample size
-        # Bound rho_1 to avoid numerical issues
-        rho_1_bounded = np.clip(rho_1, -0.99, 0.99)
-        n_eff = n * (1 - rho_1_bounded) / (1 + rho_1_bounded)
-
-        # Ensure n_eff is at least 2 (minimum for correlation)
-        n_eff = max(n_eff, 2.0)
-
-        return n_eff, rho_1
-
-    def _corrected_pearson_pvalue(self, r: float, n_eff: float) -> float:
-        """
-        Calculate p-value for Pearson correlation with effective sample size
-
-        Uses t-distribution: t = r * sqrt((n_eff - 2) / (1 - r²))
-
-        Parameters:
-        -----------
-        r : float
-            Pearson correlation coefficient
-        n_eff : float
-            Effective sample size (accounting for autocorrelation)
-
-        Returns:
-        --------
-        p_value : float
-            Two-tailed p-value corrected for autocorrelation
-        """
-        from scipy.stats import t as t_dist
-
-        # Avoid division by zero for perfect correlations
-        if abs(r) >= 0.9999:
-            return 0.0 if abs(r) > 0.9999 else 1e-16
-
-        # Calculate t-statistic
-        t_stat = r * np.sqrt((n_eff - 2) / (1 - r**2))
-
-        # Two-tailed p-value
-        p_value = 2 * t_dist.sf(abs(t_stat), n_eff - 2)
-
-        return p_value
-
     def calculate_correlations(self) -> Dict[str, float]:
         """
-        Calculate correlations between all pairs of datasets with autocorrelation-corrected p-values
-
-        P-values are corrected for time series autocorrelation using effective sample size
-        based on the Bretherton et al. (1999) method.
+        Calculate Pearson and Spearman correlations between all pairs of datasets.
 
         Results are stored in self.correlations and also returned.
         """
@@ -164,44 +88,22 @@ class StatisticsMixin:
                 time1 = self.time_vectors[label1]
                 time2 = self.time_vectors[label2]
 
-                # Synchronize time series for correlation analysis
                 data1_sync, data2_sync = self._synchronize_time_series(
                     data1, time1, data2, time2
                 )
 
-                # Calculate standard correlations and p-values (uncorrected)
-                pearson_corr, pearson_p_uncorr = pearsonr(data1_sync, data2_sync)
-                spearman_corr, spearman_p_uncorr = spearmanr(data1_sync, data2_sync)
-
-                # Calculate effective sample sizes for both series
-                n_eff_1, rho1_1 = self._calculate_effective_sample_size(data1_sync)
-                n_eff_2, rho1_2 = self._calculate_effective_sample_size(data2_sync)
-
-                # Use the more conservative (smaller) effective sample size
-                n_eff = min(n_eff_1, n_eff_2)
-
-                # Calculate corrected p-values using effective sample size
-                pearson_p_corr = self._corrected_pearson_pvalue(pearson_corr, n_eff)
-
-                # For Spearman, use the same correction approach
-                # (Spearman is just Pearson on ranks, so same correction applies)
-                spearman_p_corr = self._corrected_pearson_pvalue(spearman_corr, n_eff)
+                pearson_corr, pearson_p = pearsonr(data1_sync, data2_sync)
+                spearman_corr, spearman_p = spearmanr(data1_sync, data2_sync)
 
                 pair_key = f"{label1} vs {label2}"
                 correlations[pair_key] = {
                     'pearson': pearson_corr,
-                    'pearson_p_uncorrected': pearson_p_uncorr,
-                    'pearson_p_corrected': pearson_p_corr,
+                    'pearson_p': pearson_p,
                     'spearman': spearman_corr,
-                    'spearman_p_uncorrected': spearman_p_uncorr,
-                    'spearman_p_corrected': spearman_p_corr,
+                    'spearman_p': spearman_p,
                     'n_actual': len(data1_sync),
-                    'n_effective': n_eff,
-                    'autocorr_lag1_series1': rho1_1,
-                    'autocorr_lag1_series2': rho1_2
                 }
 
-        # Store in instance variable
         self.correlations = correlations
         return correlations
     

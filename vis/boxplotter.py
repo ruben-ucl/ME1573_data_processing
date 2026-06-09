@@ -516,7 +516,7 @@ def filter_logbook(log):
 
     # Apply combination of above filters to select parameter subset to plot
     # log_red = log[np.logical_or(AlSi10Mg, lit) & L1 & cw & powder]
-    log_red = log[AlSi10Mg & L1 & cw]
+    log_red = log[AlSi10Mg & L1 & cw & powder]
     # print(log_red)
     # print(len(log_red))
     return log_red
@@ -527,7 +527,7 @@ def main():
     col_dict = define_collumn_labels()
     
     # Select data to analyse
-    data_label = 'St'
+    data_label = 'MP_vol'
     cat_label = 'regime'
     
     # Fetch column labels and titles from dictionary
@@ -546,12 +546,12 @@ def main():
     results = analyze_regime_differences(df, val_col, cat_col, plot_posthoc=True, p_adjust=None, posthoc_method='mannwhitney', order=order)
     print_statistical_summary(results, val_title)
     # Save figure
-    results['fig'].savefig(f'{val_title} significance by {cat_title} heatmap.png', dpi=300, bbox_inches='tight', facecolor='white')
+    results['fig'].savefig(f'{val_title.split(',')[0]} significance by {cat_title} heatmap.png', dpi=300, bbox_inches='tight', facecolor='white')
     
     # Generate boxplot of grouped data
     fig = plot_boxplot_by_category(df, val_col, cat_col, val_title, cat_title, order=order, show_points=False, show_counts=False, scientific=False)
     # Save figure
-    fig.savefig(f'{val_title} by {cat_title} boxplot horizontal.png', dpi=300, bbox_inches='tight', facecolor='white')
+    fig.savefig(f'{val_title.split(',')[0]} by {cat_title} boxplot horizontal.png', dpi=300, bbox_inches='tight', facecolor='white')
     
     # plt.show()
 

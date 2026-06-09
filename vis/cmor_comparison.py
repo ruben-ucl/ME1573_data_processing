@@ -25,17 +25,17 @@ sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from tools import get_paths, get_cwt_scales
 
 # Configuration
-TARGET_TRACKID = '0110_04'  # Hardcoded test track
+TARGET_TRACKID = '0323_05'  # Hardcoded test track
 SAVE_OUTPUT = True
 DEBUG = True
 
-# Complex Morlet wavelets in 3x3 grid: bandwidth (rows) x center frequency (columns)
+# Complex Morlet wavelets in 4x4 grid: bandwidth (rows) x center frequency (columns)
 # Format: cmor<bandwidth>-<center_frequency>
-BANDWIDTH_VALUES = [1.5, 2.5, 3.5]  # Low to high bandwidth (high freq res → high time res)
+BANDWIDTH_VALUES = [1.0, 1.5, 2.0]  # Low to high bandwidth (high freq res → high time res)
 CENTER_FREQ_VALUES = [0.5, 1.0, 1.5]  # Low to high center frequency
 
 def generate_cmor_grid():
-    """Generate 3x3 grid of cmor wavelets."""
+    """Generate 4x4 grid of cmor wavelets."""
     wavelets = []
     for bw in BANDWIDTH_VALUES:
         row = []
@@ -93,7 +93,7 @@ def compute_cwt_for_signal(signal, time, wavelet_name, sampling_period):
 
         # Get scales for this wavelet with actual sampling rate
         # Note: We ignore the vmax from get_cwt_scales, will compute from actual data
-        scales, _ = get_cwt_scales(wavelet_name, num=128, sampling_rate=sampling_rate)
+        scales, _ = get_cwt_scales(wavelet_name, num=256, sampling_rate=sampling_rate)
 
         # Apply symmetric padding to minimize edge artifacts (best practice)
         signal_pad = np.pad(signal, len(signal), mode='symmetric')
@@ -127,12 +127,10 @@ def plot_cwt_result(cwtmatr, freqs, time, vmax, ax, title):
         return
     
     t_ax, f_ax = np.meshgrid(time*1000, freqs/1000)
-    pcm = ax.pcolormesh(t_ax, f_ax, cwtmatr, cmap='jet', vmax=vmax)
+    pcm = ax.pcolormesh(t_ax, f_ax, cwtmatr, cmap='inferno', vmax=vmax)
     ax.set_yscale('log', base=2)
     ax.set_ylim(1, 50)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter('%.0f'))
-    ax.set_xlabel('Time [ms]')
-    ax.set_ylabel('Freq [kHz]')
     ax.set_title(title, fontsize=10)
     ax.set_yticks([1, 2, 4, 8, 16, 32, 50])
     
@@ -164,13 +162,9 @@ def create_cmor_comparison_figure():
             t = np.array(file[f'{group}/{time_key}'])
             s = np.array(file[f'{group}/{series_key}'])
 
-        # Calculate sampling parameters
-        sampling_period = round(t[1]-t[0], 9)
-        sampling_rate = round(1/sampling_period, 7)
-
         # Crop signals from 0 to 5 ms
-        crop_start = 0.0  # seconds
-        crop_end = 0.005  # 5 ms in seconds
+        crop_start = 0.5 * 0.001  # seconds
+        crop_end = 5 * 0.001 # 5 ms in seconds
 
         # Find indices for cropping
         start_idx = np.searchsorted(t, crop_start)
@@ -179,6 +173,10 @@ def create_cmor_comparison_figure():
         # Crop the data
         t = t[start_idx:end_idx]
         s = s[start_idx:end_idx]
+        
+        # Calculate sampling parameters
+        sampling_period = round(t[1]-t[0], 9)
+        sampling_rate = round(1/sampling_period, 7)
 
         # Apply logarithm to smooth peaks at laser onset
         s = np.log(s + 1)  # Add 1 to avoid log(0)
@@ -191,17 +189,21 @@ def create_cmor_comparison_figure():
             print(f"Time range: {t[0]*1000:.1f} to {t[-1]*1000:.1f} ms")
             print(f"Signal range: {s.min():.2f} to {s.max():.2f}")
 
-    # Create 3x3 grid figure
-    fig = plt.figure(figsize=(18, 14), dpi=150)
-    fig.suptitle(f'Complex Morlet Wavelet Parameter Grid - {TARGET_TRACKID}\n'
-                 f'Bandwidth (rows) × Center Frequency (columns)',
-                 fontsize=16, fontweight='bold', y=0.98)
+    # Create 4x4 grid figure
+    n_rows = len(BANDWIDTH_VALUES)
+    n_cols = len(CENTER_FREQ_VALUES)
+    plt.rcParams.update({
+        'font.size': 8, 'axes.titlesize': 8, 'axes.labelsize': 8,
+        'xtick.labelsize': 7, 'ytick.labelsize': 7, 'legend.fontsize': 7,
+    })
+    A4_TEXT_WIDTH = 6.3  # inches (A4 210mm minus 25mm margins each side)
+    fig = plt.figure(figsize=(A4_TEXT_WIDTH, A4_TEXT_WIDTH * (4.5 / 5.5) * n_rows / n_cols), dpi=150)
+    fig.suptitle(f'cmor — {TARGET_TRACKID}', fontsize=9, fontweight='bold', y=0.98)
 
-    # Create 3x3 grid with space for colorbars
-    # Reduced top margin to 0.89 to make room for CF labels above plots
-    gs = fig.add_gridspec(3, 4, width_ratios=[1, 1, 1, 0.05],
-                         hspace=0.4, wspace=0.3,
-                         left=0.08, right=0.95, top=0.89, bottom=0.08)
+    # Create 4x4 grid with space for colorbars
+    gs = fig.add_gridspec(n_rows, n_cols + 1, width_ratios=[1] * n_cols + [0.09],
+                         hspace=0.45, wspace=0.35,
+                         left=0.16, right=0.93, top=0.83, bottom=0.13)
 
     # Iterate through grid: rows = bandwidth, cols = center frequency
     for row_idx, bw in enumerate(BANDWIDTH_VALUES):
@@ -218,33 +220,33 @@ def create_cmor_comparison_figure():
             cwtmatr, freqs, vmax = compute_cwt_for_signal(s, t, wavelet_name, sampling_period)
             pcm = plot_cwt_result(cwtmatr, freqs, t, vmax, ax, wavelet_name)
 
-            # Add row labels (bandwidth) on the left
+            # Y-axis: label and ticks only on leftmost column
             if col_idx == 0:
-                ax.set_ylabel(f'Freq [kHz]', fontsize=9)
-                # Add bold bandwidth label with extra spacing
-                ax.text(-0.35, 0.5, f'BW={bw}', transform=ax.transAxes,
-                       fontsize=11, fontweight='bold', rotation=90,
+                ax.set_ylabel('Freq [kHz]', fontsize=9)
+                ax.text(-0.72, 0.5, f'B={bw}', transform=ax.transAxes,
+                       fontsize=9, fontweight='bold', rotation=90,
                        ha='center', va='center')
             else:
-                ax.set_ylabel('Freq [kHz]', fontsize=9)
+                ax.set_ylabel('')
+                ax.tick_params(labelleft=False)
 
-            # Add column labels (center frequency) on top
+            # X-axis: label and ticks only on bottom row
+            if row_idx == n_rows - 1:
+                ax.set_xlabel('Time [ms]')
+            else:
+                ax.tick_params(labelbottom=False)
+
+            # Column labels (center frequency) on top row only
             if row_idx == 0:
-                # Normal wavelet name at regular title position
                 ax.set_title(f'{wavelet_name}', fontsize=9)
-                # Bold CF label positioned above with spacing
-                ax.text(0.5, 1.18, f'CF={cf}', transform=ax.transAxes,
-                       fontsize=11, fontweight='bold',
+                ax.text(0.5, 1.46, f'C={cf}', transform=ax.transAxes,
+                       fontsize=9, fontweight='bold',
                        ha='center', va='bottom')
             else:
                 ax.set_title(wavelet_name, fontsize=9)
 
-            # Only show x-label on bottom row
-            if row_idx < len(BANDWIDTH_VALUES) - 1:
-                ax.set_xlabel('')
-
     # Add a single colorbar on the right for the entire figure
-    cbar_ax = fig.add_subplot(gs[:, 3])
+    cbar_ax = fig.add_subplot(gs[:, n_cols])
     # Use the last pcm for colorbar (they should all have similar ranges with auto vmax)
     if pcm is not None:
         fig.colorbar(pcm, cax=cbar_ax, label='CWT Coefficient Magnitude')
@@ -258,7 +260,7 @@ def main():
     print("=" * 60)
 
     print(f"Target trackid: {TARGET_TRACKID}")
-    print(f"Grid layout: 3x3 (Bandwidth × Center Frequency)")
+    print(f"Grid layout: {len(BANDWIDTH_VALUES)}x{len(CENTER_FREQ_VALUES)} (Bandwidth × Center Frequency)")
     print(f"Bandwidth values: {BANDWIDTH_VALUES}")
     print(f"Center frequency values: {CENTER_FREQ_VALUES}")
     print(f"Total wavelets: {len(BANDWIDTH_VALUES) * len(CENTER_FREQ_VALUES)}")

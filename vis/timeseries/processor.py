@@ -21,6 +21,7 @@ class TimeSeriesProcessor:
         self.verbose = verbose
         self.outlier_masks = {}  # Store outlier masks per signal label
         self.gradient_diagnostics = {}  # Store gradient diagnostic data per signal label for plotting
+        self.pre_norm_data = {}  # Processed but not yet normalised, keyed by label
 
     def _scale_window_to_sampling_rate(self, window_samples: int, sampling_rate: float) -> int:
         """
@@ -105,6 +106,10 @@ class TimeSeriesProcessor:
         # Apply resampling
         if self.config.apply_resampling:
             processed_data = self._apply_resampling(processed_data)
+
+        # Save pre-normalisation copy for callers that need physical units
+        if label is not None:
+            self.pre_norm_data[label] = processed_data.copy()
 
         # Apply normalization
         if self.config.apply_normalization:

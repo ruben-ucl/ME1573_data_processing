@@ -484,9 +484,9 @@ class BatchCrossCorrelator(StatisticsMixin, PlottingMixin):
                 for pair_key, corr_data in self.correlations.items():
                     f.write(f"\n{pair_key}:\n")
                     f.write(f"  Pearson r:  {corr_data['pearson']:.6f} "
-                           f"(p={corr_data['pearson_p_corrected']:.6e})\n")
+                           f"(p={corr_data['pearson_p']:.6e})\n")
                     f.write(f"  Spearman ρ: {corr_data['spearman']:.6f} "
-                           f"(p={corr_data['spearman_p_corrected']:.6e})\n")
+                           f"(p={corr_data['spearman_p']:.6e})\n")
                 f.write("\n")
 
             # Silhouette scores
@@ -563,8 +563,8 @@ class BatchCrossCorrelator(StatisticsMixin, PlottingMixin):
                 pair_clean = pair_key.replace(' vs ', '_vs_').replace(' ', '_')
                 row_data[f"{pair_clean}_pearson"] = corr_data['pearson']
                 row_data[f"{pair_clean}_spearman"] = corr_data['spearman']
-                row_data[f"{pair_clean}_pearson_p"] = corr_data['pearson_p_corrected']
-                row_data[f"{pair_clean}_spearman_p"] = corr_data['spearman_p_corrected']
+                row_data[f"{pair_clean}_pearson_p"] = corr_data['pearson_p']
+                row_data[f"{pair_clean}_spearman_p"] = corr_data['spearman_p']
 
         # Add silhouette scores
         if hasattr(self, 'silhouette_scores') and self.silhouette_scores:

@@ -6,8 +6,8 @@ Performs statistical cross-correlation analysis across multiple HDF5 files.
 Concatenates data from filtered tracks and analyzes correlations between signals.
 
 Usage:
-    python vis/batch_cross_correlation_cli.py --config config.json --output-dir results/
-    python vis/batch_cross_correlation_cli.py --material AlSi10Mg --layer 1 --base-type powder
+    python vis/batch_cross_correlation_cli.py --config config.json --output_dir results/
+    python vis/batch_cross_correlation_cli.py --material AlSi10Mg --layer 1 --base_type powder
 
 Author: AI Assistant
 Date: 2025-01-15
@@ -28,10 +28,11 @@ import pandas as pd
 
 # Add parent directory to path for tools import
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from tools import get_paths, get_logbook, filter_logbook_tracks
+from tools import get_paths, get_logbook, filter_logbook_tracks, DEFAULT_LOGBOOK_FILTERS
 
 from vis.timeseries.batch_cross_correlation import BatchCrossCorrelator
 from vis.timeseries.config import DatasetConfig, ProcessingConfig
+
 
 
 def load_config(config_path):
@@ -65,7 +66,7 @@ def get_filtered_hdf5_files(hdf5_dir, logbook, filter_dict, verbose=True):
     # Get all HDF5 files
     all_hdf5_files = sorted(hdf5_dir.glob('*.hdf5'))
 
-    if not filter_dict or all(v is None for v in filter_dict.values()):
+    if not filter_dict:
         if verbose:
             print(f"\nNo filters applied - using all {len(all_hdf5_files)} HDF5 files")
         return all_hdf5_files
@@ -171,48 +172,48 @@ def main():
         description='Batch cross-correlation analysis across multiple HDF5 files',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+DEFAULT_LOGBOOK_FILTERS (defined in tools.py) is loaded when --filter is passed.
+CLI filter args override individual defaults, or apply in isolation without --filter.
+
 Examples:
-  # Using config file
-  python vis/batch_cross_correlation_cli.py --config config.json --output-dir results/
+  # All tracks, no filtering
+  python vis/batch_cross_correlation_cli.py --config config.json
 
-  # Using command-line filters
-  python vis/batch_cross_correlation_cli.py --material AlSi10Mg --layer 1 --base-type powder
+  # Apply DEFAULT_LOGBOOK_FILTERS
+  python vis/batch_cross_correlation_cli.py --filter
 
-  # Filter by melting regime (keywords: conduction, keyhole, not_cond)
-  python vis/batch_cross_correlation_cli.py --regime keyhole --output-dir keyhole_results/
-  python vis/batch_cross_correlation_cli.py --regime not_cond --output-dir non_conduction/
+  # Defaults + override regime
+  python vis/batch_cross_correlation_cli.py --filter --regime keyhole --output_dir keyhole_results/
 
-  # Filter by exact regime name (use quotes for multi-word names)
-  python vis/batch_cross_correlation_cli.py --regime "unstable keyhole" --output-dir unstable/
+  # Single filter in isolation (no defaults loaded)
+  python vis/batch_cross_correlation_cli.py --regime keyhole --output_dir keyhole_results/
 
-  # Filter by beamtime number (single or multiple)
-  python vis/batch_cross_correlation_cli.py --beamtime 1 --output-dir beamtime1/
-  python vis/batch_cross_correlation_cli.py --beamtime 1,2 --output-dir beamtimes_1_and_2/
+  # Override beamtime (single or comma-separated)
+  python vis/batch_cross_correlation_cli.py --filter --beamtime 1,2 --output_dir beamtimes_1_and_2/
 
-  # Combining config and filters
-  python vis/batch_cross_correlation_cli.py --config config.json --material AlSi10Mg --regime keyhole
-
-  # Disable normalization to show raw data values
-  python vis/batch_cross_correlation_cli.py --regime keyhole --no-normalize --output-dir keyhole_raw
+  # Disable normalization
+  python vis/batch_cross_correlation_cli.py --filter --no_normalize --output_dir raw/
         """
     )
 
     # Input/output arguments
     parser.add_argument('--config', type=str, help='Path to JSON configuration file')
-    parser.add_argument('--output-dir', type=str, default='batch_cross_correlation_results',
+    parser.add_argument('--output_dir', type=str, default='batch_cross_correlation_results',
                        help='Output directory for results (default: batch_cross_correlation_results)')
 
     # Filter arguments (override config)
     parser.add_argument('--material', type=str, help='Filter by material (e.g., AlSi10Mg)')
     parser.add_argument('--layer', type=int, help='Filter by layer number')
-    parser.add_argument('--laser-mode', type=str, help='Filter by laser mode (CW, PW)')
-    parser.add_argument('--base-type', type=str, help='Filter by base type (powder, weld, solid)')
+    parser.add_argument('--laser_mode', type=str, help='Filter by laser mode (CW, PW)')
+    parser.add_argument('--base_type', type=str, help='Filter by base type (powder, weld, solid)')
     parser.add_argument('--regime', type=str, help='Filter by melting regime (keywords: conduction, keyhole, not_cond; or exact match like "unstable keyhole")')
     parser.add_argument('--beamtime', type=str, help='Filter by beamtime number(s) - single value (e.g., 1) or comma-separated (e.g., 1,2)')
-    parser.add_argument('--travel-direction', type=str, help='Filter by travel direction')
+    parser.add_argument('--travel_direction', type=str, help='Filter by travel direction')
+    parser.add_argument('--filter', action='store_true',
+                       help='Load DEFAULT_LOGBOOK_FILTERS from tools.py as the filter base')
 
     # Processing arguments
-    parser.add_argument('--no-normalize', action='store_true', help='Disable normalization - show raw data values in plots')
+    parser.add_argument('--no_normalize', action='store_true', help='Disable normalization - show raw data values in plots')
     parser.add_argument('--verbose', action='store_true', help='Print detailed progress')
     parser.add_argument('--quiet', action='store_true', help='Suppress non-essential output')
 
@@ -238,29 +239,32 @@ Examples:
             'filters': {}
         }
 
-    # Override filters from command line
-    filters = config.get('filters', {})
-    if args.material:
-        filters['material'] = args.material
-    if args.layer is not None:
-        filters['layer'] = args.layer
-    if args.laser_mode:
-        filters['laser_mode'] = args.laser_mode
-    if args.base_type:
-        filters['base_type'] = args.base_type
-    if args.regime:
-        filters['regime'] = args.regime
-    if args.beamtime:
-        # Parse comma-separated beamtime values
-        beamtime_str = args.beamtime.strip()
-        if ',' in beamtime_str:
-            # Multiple beamtimes: convert to list of integers
-            filters['beamtime'] = [int(bt.strip()) for bt in beamtime_str.split(',')]
-        else:
-            # Single beamtime: convert to integer
-            filters['beamtime'] = int(beamtime_str)
-    if args.travel_direction:
-        filters['travel_direction'] = args.travel_direction
+    # Build filter dict: --filter loads defaults; CLI args override or apply in isolation
+    cli_filter_args = {
+        'material': args.material,
+        'layer': args.layer,
+        'laser_mode': args.laser_mode,
+        'base_type': args.base_type,
+        'regime': args.regime,
+        'beamtime': args.beamtime,
+        'travel_direction': args.travel_direction,
+    }
+    has_cli_filters = any(v is not None for v in cli_filter_args.values())
+
+    if args.filter or has_cli_filters:
+        filters = DEFAULT_LOGBOOK_FILTERS.copy() if args.filter else {}
+        filters.update({k: v for k, v in config.get('filters', {}).items()})
+        if args.material:          filters['material']          = args.material
+        if args.layer is not None: filters['layer']             = args.layer
+        if args.laser_mode:        filters['laser_mode']        = args.laser_mode
+        if args.base_type:         filters['base_type']         = args.base_type
+        if args.regime:            filters['regime']            = args.regime
+        if args.beamtime:
+            bt = args.beamtime.strip()
+            filters['beamtime'] = [int(x) for x in bt.split(',')] if ',' in bt else int(bt)
+        if args.travel_direction:  filters['travel_direction']  = args.travel_direction
+    else:
+        filters = {}
 
     # Get paths and logbook
     paths = get_paths()
@@ -292,7 +296,7 @@ Examples:
     # Create processing configuration
     processing_config = create_processing_config_from_config(config)
 
-    # Override normalization if --no-normalize flag is set
+    # Override normalization if --no_normalize flag is set
     if args.no_normalize:
         processing_config.apply_normalization = False
         if verbose:

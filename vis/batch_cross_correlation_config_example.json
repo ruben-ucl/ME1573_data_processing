@@ -5,7 +5,7 @@
   "filters": {
     "material": "AlSi10Mg",
     "layer": 1,
-    "base_type": "powder"
+    "base_type": "weld"
   },
 
   "datasets": [
@@ -52,7 +52,30 @@
       "time_name": "time",
       "sampling_rate": null,
       "time_units": "s"
+    },
+    {
+      "group": "KH",
+      "name": "max_length",
+      "label": "KH length",
+      "color": "#57106e",
+      "linestyle": "-",
+      "time_group": "KH",
+      "time_name": "time",
+      "sampling_rate": null,
+      "time_units": "s"
+    },
+    {
+      "group": "KH",
+      "name": "fkw_angle",
+      "label": "FKW angle",
+      "color": "#57106e",
+      "linestyle": "-",
+      "time_group": "KH",
+      "time_name": "time",
+      "sampling_rate": null,
+      "time_units": "s"
     }
+
   ],
 
   "processing": {

@@ -557,135 +557,6 @@ class AlignmentMixin:
         """Count zero crossings in the signal"""
         return len(np.where(np.diff(np.signbit(data)))[0])
     
-    def _calculate_effective_sample_size(self, data: np.ndarray) -> Tuple[float, float]:
-        """
-        Calculate effective sample size for autocorrelated time series
-
-        Uses the Bretherton et al. (1999) / Bayley-Hammersley correction:
-        n_eff = n * (1 - ρ₁) / (1 + ρ₁)
-
-        where ρ₁ is the lag-1 autocorrelation coefficient.
-
-        Parameters:
-        -----------
-        data : np.ndarray
-            Time series data
-
-        Returns:
-        --------
-        n_eff : float
-            Effective sample size accounting for autocorrelation
-        rho_1 : float
-            Lag-1 autocorrelation coefficient
-        """
-        n = len(data)
-
-        # Calculate lag-1 autocorrelation
-        data_centered = data - np.mean(data)
-        autocorr_full = np.correlate(data_centered, data_centered, mode='full')
-        autocorr_full = autocorr_full / autocorr_full[len(autocorr_full)//2]  # Normalize
-
-        # Get lag-1 autocorrelation (index n corresponds to lag 0, so n+1 is lag 1)
-        rho_1 = autocorr_full[len(autocorr_full)//2 + 1]
-
-        # Calculate effective sample size
-        # Bound rho_1 to avoid numerical issues
-        rho_1_bounded = np.clip(rho_1, -0.99, 0.99)
-        n_eff = n * (1 - rho_1_bounded) / (1 + rho_1_bounded)
-
-        # Ensure n_eff is at least 2 (minimum for correlation)
-        n_eff = max(n_eff, 2.0)
-
-        return n_eff, rho_1
-
-    def _corrected_pearson_pvalue(self, r: float, n_eff: float) -> float:
-        """
-        Calculate p-value for Pearson correlation with effective sample size
-
-        Uses t-distribution: t = r * sqrt((n_eff - 2) / (1 - r²))
-
-        Parameters:
-        -----------
-        r : float
-            Pearson correlation coefficient
-        n_eff : float
-            Effective sample size (accounting for autocorrelation)
-
-        Returns:
-        --------
-        p_value : float
-            Two-tailed p-value corrected for autocorrelation
-        """
-        from scipy.stats import t as t_dist
-
-        # Avoid division by zero for perfect correlations
-        if abs(r) >= 0.9999:
-            return 0.0 if abs(r) > 0.9999 else 1e-16
-
-        # Calculate t-statistic
-        t_stat = r * np.sqrt((n_eff - 2) / (1 - r**2))
-
-        # Two-tailed p-value
-        p_value = 2 * t_dist.sf(abs(t_stat), n_eff - 2)
-
-        return p_value
-
-    def calculate_correlations(self) -> Dict[str, float]:
-        """
-        Calculate correlations between all pairs of datasets with autocorrelation-corrected p-values
-
-        P-values are corrected for time series autocorrelation using effective sample size
-        based on the Bretherton et al. (1999) method.
-        """
-        correlations = {}
-        labels = list(self.processed_data.keys())
-
-        for i, label1 in enumerate(labels):
-            for j, label2 in enumerate(labels[i+1:], i+1):
-                data1 = self.processed_data[label1]
-                data2 = self.processed_data[label2]
-                time1 = self.time_vectors[label1]
-                time2 = self.time_vectors[label2]
-
-                # Synchronize time series for correlation analysis
-                data1_sync, data2_sync = self._synchronize_time_series(
-                    data1, time1, data2, time2
-                )
-
-                # Calculate standard correlations and p-values (uncorrected)
-                pearson_corr, pearson_p_uncorr = pearsonr(data1_sync, data2_sync)
-                spearman_corr, spearman_p_uncorr = spearmanr(data1_sync, data2_sync)
-
-                # Calculate effective sample sizes for both series
-                n_eff_1, rho1_1 = self._calculate_effective_sample_size(data1_sync)
-                n_eff_2, rho1_2 = self._calculate_effective_sample_size(data2_sync)
-
-                # Use the more conservative (smaller) effective sample size
-                n_eff = min(n_eff_1, n_eff_2)
-
-                # Calculate corrected p-values using effective sample size
-                pearson_p_corr = self._corrected_pearson_pvalue(pearson_corr, n_eff)
-
-                # For Spearman, use the same correction approach
-                # (Spearman is just Pearson on ranks, so same correction applies)
-                spearman_p_corr = self._corrected_pearson_pvalue(spearman_corr, n_eff)
-
-                pair_key = f"{label1} vs {label2}"
-                correlations[pair_key] = {
-                    'pearson': pearson_corr,
-                    'pearson_p_uncorrected': pearson_p_uncorr,
-                    'pearson_p_corrected': pearson_p_corr,
-                    'spearman': spearman_corr,
-                    'spearman_p_uncorrected': spearman_p_uncorr,
-                    'spearman_p_corrected': spearman_p_corr,
-                    'n_actual': len(data1_sync),
-                    'n_effective': n_eff,
-                    'autocorr_lag1_series1': rho1_1,
-                    'autocorr_lag1_series2': rho1_2
-                }
-
-        return correlations
-    
     def calculate_differences(self) -> Dict[str, Dict[str, float]]:
         """Calculate various difference metrics between datasets using synchronized time series"""
         differences = {}
@@ -754,10 +625,11 @@ class AlignmentMixin:
         if t_start >= t_end:
             raise ValueError("Time series do not overlap")
 
-        # Create common time grid (use finer resolution of the two)
+        # Select grid resolution based on sync_method
         dt1 = np.mean(np.diff(time1)) if len(time1) > 1 else 1.0
         dt2 = np.mean(np.diff(time2)) if len(time2) > 1 else 1.0
-        dt_common = min(dt1, dt2)
+        sync_method = getattr(getattr(self, 'processing_config', None), 'sync_method', 'upsample')
+        dt_common = max(dt1, dt2) if sync_method == 'downsample' else min(dt1, dt2)
 
         # Create common time vector
         t_common = np.arange(t_start, t_end, dt_common)
@@ -1647,6 +1519,8 @@ class AlignmentMixin:
             # Update the data structures
             if use_processed_data:
                 self.processed_data[label] = cropped_data
+                if label in self.pre_norm_data:
+                    self.pre_norm_data[label] = self.pre_norm_data[label][start_idx:end_idx+1]
             else:
                 self.raw_data[label] = cropped_data
 

@@ -495,10 +495,10 @@ Examples:
   python vis/batch_summary_visualizer.py
 
   # Violin plots with custom config
-  python vis/batch_summary_visualizer.py --plot-type violin --config my_filters.json
+  python vis/batch_summary_visualizer.py --plot_type violin --config my_filters.json
 
   # Both plot types overlaid
-  python vis/batch_summary_visualizer.py --plot-type both
+  python vis/batch_summary_visualizer.py --plot_type both
 
   # Specify CSV path explicitly
   python vis/batch_summary_visualizer.py --csv /path/to/batch_summary.csv
@@ -512,9 +512,9 @@ Examples:
                        help='Path to batch_summary.csv (default: auto-detect from hdf5 path)')
     parser.add_argument('--config', type=str, default='vis/batch_summary_config.json',
                        help='Path to filter config JSON file (default: vis/batch_summary_config.json)')
-    parser.add_argument('--output-dir', type=str, default=None,
+    parser.add_argument('--output_dir', type=str, default=None,
                        help='Output directory for plots (default: same as CSV location)')
-    parser.add_argument('--plot-type', choices=['box', 'violin', 'both'], default='box',
+    parser.add_argument('--plot_type', choices=['box', 'violin', 'both'], default='box',
                        help='Plot type: box, violin, or both overlaid (default: box)')
     parser.add_argument('--dpi', type=int, default=600,
                        help='Figure DPI (default: 600)')

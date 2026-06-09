@@ -26,17 +26,19 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 
 # Input informaton
 # Read data folder path from .txt file
-# filepath = get_paths()['hdf5']
-filepath = r'F:/ESRF ME1573 LTP 6 Al data HDF5/ffc'
+filepath = get_paths()['hdf5']
+# filepath = r'F:\AlSi10Mg single layer ffc'
     
-input_dset_name = 'bs-f40_lagrangian_long'
+input_dset_name = 'bs-p1_lagrangian'
 
 frame_reduction_factor = 1                              # Set to 1 to use all frames
 filter_radius = None                                    # Median filter radius, set to None for no filter
+norm = True
+equalize = True
 mode = 'save'                                           # Set to 'view' or 'save'
 proj_mode = 'mean'                                      # 'median', 'mean', 'min' or 'max'
-skip_frames_end = 140                                    # For Lagrangian videos use 45, set to 0 to use all frames
-skip_start_frames = 270
+skip_frames_end = 'auto'                                    # For Lagrangian videos use 45, set to 0 to use all frames
+skip_frames_start = 'auto'
 
 reduction_txt = f'_x{frame_reduction_factor}_stack_reduction' if frame_reduction_factor != 1 else ''
 folder_name = f'{input_dset_name}_z_projection_{proj_mode}{reduction_txt}'
@@ -45,19 +47,44 @@ folder_path = Path(filepath, 'z-project_images', folder_name)
 def main():
     for file in sorted(glob.glob(str(Path(filepath, '*.h*5')))):
         with h5py.File(file, 'a') as f:
-            dset = f[input_dset_name][skip_start_frames:-skip_frames_end]
+            # Extract data and trackid
             trackid = Path(file).name[:-5]
+            dset = f[input_dset_name]
+            
+            if skip_frames_start == 'auto' or skip_frames_end == 'auto':
+                fov_length = dset.shape[2]
+                dset_flat = np.median(dset, axis=1)
+            
+            if skip_frames_start == 'auto':
+                for i, val in enumerate(dset_flat):
+                    if val[0] != 0:
+                        i_start = i
+                        # print(f'Automaticallly skipping first {i_start} frames')
+                        break
+            else:
+                i_start = skip_frames_start
+            
+            if skip_frames_end == 'auto':
+                for i, val in enumerate(dset_flat[::-1]):
+                    if val[-1] != 0:
+                        i_end = len(dset_flat) - i
+                        # print(f'Automaticallly skipping last {len(dset_flat)-i_end} frames')
+                        break
+            else:
+                i_end = skip_frames_end
+            
             if mode == 'save':
                 output_filename = f'{trackid}_{input_dset_name}_z_projection_{proj_mode}.png'
                 output_filepath = Path(folder_path, output_filename)
                 if os.path.exists(output_filepath):
                     print(f'Output file {output_filename} already exists, skipping file.')
                     continue
+            
             print(f'Working on {trackid}')
             
             # Reduce frames by specified factor
             print(f'Reducing image stack by factor {frame_reduction_factor}')
-            dset_reduced = dset[::frame_reduction_factor, :, :]
+            dset_reduced = dset[i_start:i_end:frame_reduction_factor, :, :]
             
             # Apply 2D median filter to each frame
             if filter_radius != None:
@@ -79,11 +106,20 @@ def main():
                 output_im = np.median(dset_filt, axis=0)
             elif proj_mode == 'mean':
                 output_im = np.mean(dset_filt, axis=0)
+                
+            if norm:
+                norm_min = np.percentile(output_im, 0)
+                norm_max = np.percentile(output_im, 100)
+                img_norm = np.clip((output_im - norm_min) / (norm_max - norm_min), 0, 1)
+                output_im = img_norm
+                
+            if equalize:
+                output_im = exposure.equalize_adapthist(output_im, clip_limit=0.02)
             
             # Plot figure
             plt.rcParams.update({'font.size': 8})
             fig, ax = plt.subplots(figsize=(4, 2), dpi=600, tight_layout=True)
-            im = ax.imshow(output_im, cmap='viridis', vmin=100, vmax=150) # Keyhole default colour bar 110:140
+            im = ax.imshow(output_im, cmap='grey', vmin=0, vmax=1) # Keyhole default colour bar 110:140
             scalebar = ScaleBar(dx=4.3, units='um', location='lower left', width_fraction=0.02, box_alpha=0)
             plt.gca().add_artist(scalebar)
             divider = make_axes_locatable(ax)

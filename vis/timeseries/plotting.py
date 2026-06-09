@@ -110,41 +110,64 @@ class PlottingMixin:
         # plt.show()
         plt.close()
     
-    def plot_correlation_matrix(self, save_path: Optional[str] = None) -> None:
-        """Plot correlation matrix heatmap"""
-        correlations = self.calculate_correlations()
+    def plot_correlation_matrix(self, save_path: Optional[str] = None,
+                                data: Optional[Dict] = None,
+                                title: Optional[str] = None) -> None:
+        """Plot correlation matrix heatmap.
 
-        if not correlations:
-            print("No correlations to plot (need at least 2 datasets)")
-            return
+        Parameters
+        ----------
+        data : dict, optional
+            Pre-supplied {label: array} dict (e.g. batch-concatenated data).
+            When omitted the per-track processed data is used via
+            calculate_correlations().
+        title : str, optional
+            Override figure suptitle.
+        """
+        if data is not None:
+            labels = list(data.keys())
+            n_labels = len(labels)
+            if n_labels < 2:
+                print("Need at least 2 datasets for correlation matrix")
+                return
+            pearson_matrix = np.eye(n_labels)
+            spearman_matrix = np.eye(n_labels)
+            for i, l1 in enumerate(labels):
+                for j, l2 in enumerate(labels):
+                    if i < j:
+                        r, _ = pearsonr(data[l1], data[l2])
+                        rho, _ = spearmanr(data[l1], data[l2])
+                        pearson_matrix[i, j] = pearson_matrix[j, i] = r
+                        spearman_matrix[i, j] = spearman_matrix[j, i] = rho
+        else:
+            correlations = self.calculate_correlations()
+            if not correlations:
+                print("No correlations to plot (need at least 2 datasets)")
+                return
+            labels = list(self.processed_data.keys())
+            n_labels = len(labels)
+            pearson_matrix = np.eye(n_labels)
+            spearman_matrix = np.eye(n_labels)
+            for i, label1 in enumerate(labels):
+                for j, label2 in enumerate(labels):
+                    if i != j:
+                        pair_key = f"{label1} vs {label2}" if i < j else f"{label2} vs {label1}"
+                        if pair_key in correlations:
+                            pearson_matrix[i, j] = correlations[pair_key]['pearson']
+                            spearman_matrix[i, j] = correlations[pair_key]['spearman']
 
-        # Create correlation matrices
-        labels = list(self.processed_data.keys())
-        n_labels = len(labels)
-
-        pearson_matrix = np.eye(n_labels)
-        spearman_matrix = np.eye(n_labels)
-
-        for i, label1 in enumerate(labels):
-            for j, label2 in enumerate(labels):
-                if i != j:
-                    pair_key = f"{label1} vs {label2}" if i < j else f"{label2} vs {label1}"
-                    if pair_key in correlations:
-                        pearson_matrix[i,j] = correlations[pair_key]['pearson']
-                        spearman_matrix[i,j] = correlations[pair_key]['spearman']
-
-        # Plot correlation matrices
         fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-        # Pearson correlation
         sns.heatmap(pearson_matrix, annot=True, cmap=self.CMAP_DIVERGING, center=0,
                    xticklabels=labels, yticklabels=labels, ax=axes[0])
         axes[0].set_title('Pearson Correlation Matrix')
 
-        # Spearman correlation
         sns.heatmap(spearman_matrix, annot=True, cmap=self.CMAP_DIVERGING, center=0,
                    xticklabels=labels, yticklabels=labels, ax=axes[1])
         axes[1].set_title('Spearman Correlation Matrix')
+
+        if title:
+            fig.suptitle(title, fontsize=12, fontweight='bold', y=1.02)
 
         plt.tight_layout()
 
@@ -152,8 +175,6 @@ class PlottingMixin:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             print(f"Correlation matrix saved to {save_path}")
 
-        # Don't show plots - only save them
-        # plt.show()
         plt.close()
 
     def plot_scatterplot_matrix(self, save_path: Optional[str] = None,
@@ -256,7 +277,7 @@ class PlottingMixin:
                     data_y = sync_data[label_y]
 
                     # Scatter plot - use color based on first signal (x-axis)
-                    ax.scatter(data_x, data_y, alpha=0.3, s=1, color=self._get_signal_color(j), rasterized=True)
+                    ax.scatter(data_x, data_y, alpha=0.5, s=1, color=self._get_signal_color(j), rasterized=True)
 
                     # Add regression line if requested
                     if show_regression:
@@ -305,12 +326,175 @@ class PlottingMixin:
         # plt.show()
         plt.close()
 
+    def get_synchronized_data(self, ref_label=None):
+        """Return all processed signals interpolated to a common time grid.
+
+        Respects processing_config.sync_method:
+          'downsample' -> coarsest grid (largest dt) among all signals
+          'upsample'   -> finest grid (smallest dt), or ref_label's grid if given
+        """
+        labels = list(self.processed_data.keys())
+        sync_method = getattr(getattr(self, 'processing_config', None), 'sync_method', 'upsample')
+
+        if ref_label:
+            ref_time = self.time_vectors[ref_label]
+        elif sync_method == 'downsample':
+            # Pick the signal with the largest dt (lowest sampling rate)
+            ref_label = max(labels, key=lambda l: np.mean(np.diff(self.time_vectors[l])) if len(self.time_vectors[l]) > 1 else 0)
+            ref_time = self.time_vectors[ref_label]
+        else:
+            ref_label = labels[0]
+            ref_time = self.time_vectors[ref_label]
+
+        sync = {}
+        for label in labels:
+            if label == ref_label:
+                sync[label] = self.processed_data[label].copy()
+            else:
+                sync[label] = np.interp(ref_time, self.time_vectors[label],
+                                        self.processed_data[label])
+        return sync
+
+    def plot_timeseries(self, save_path: Optional[str] = None,
+                        savgol_window_ms: float = 0.03,
+                        savgol_polyorder: int = 2) -> None:
+        """
+        Plot all processed signals over time, grouped by HDF5 group.
+
+        Two stacked subplots with a shared x-axis:
+          - Top:    AMPM group signals (photodiodes, etc.)
+          - Bottom: KH group signals (keyhole measurements)
+
+        Data is taken directly from self.processed_data / self.time_vectors
+        (after all processing and cropping, but before any cross-signal
+        interpolation) so each signal retains its native sampling resolution.
+        A Savitzky-Golay filter is applied per-signal for visualisation only.
+
+        Parameters
+        ----------
+        savgol_window_ms : float
+            Smoothing window in milliseconds, converted to samples per signal.
+        savgol_polyorder : int
+            Polynomial order for the Savitzky-Golay filter.
+
+        Figure sized for 1/2 A4 page width at 8-9 pt font.
+        """
+        from scipy.signal import savgol_filter
+
+        if not self.processed_data:
+            print("No processed data available.")
+            return
+
+        def _smooth(y, sampling_rate):
+            window = max(savgol_polyorder + 1,
+                         int(savgol_window_ms * 1e-3 * sampling_rate))
+            window = window if window % 2 == 1 else window + 1  # must be odd
+            if len(y) < window:
+                return y
+            return savgol_filter(y, window, savgol_polyorder)
+
+        # Build group → [dataset_config, ...] mapping
+        group_labels: Dict[str, List] = {}
+        for ds in self.datasets:
+            if ds.label in self.processed_data:
+                group_labels.setdefault(ds.group, []).append(ds)
+
+        if not group_labels:
+            print("No group information available.")
+            return
+
+        # Separate AMPM and KH groups; put everything else in KH row
+        ampm_configs = group_labels.get('AMPM', [])
+        kh_configs   = [ds for g, dss in group_labels.items()
+                        if g != 'AMPM' for ds in dss]
+
+        # Use pre-norm data if available, otherwise fall back to processed_data
+        data_source = self.pre_norm_data if self.pre_norm_data else self.processed_data
+
+        # Global colour index matches the scatter matrix: position in processed_data
+        global_idx = {label: i for i, label in enumerate(self.processed_data.keys())}
+
+        # KH area goes on a secondary y-axis; all other KH signals on primary
+        AREA_LABEL = 'KH area'
+
+        fig_width  = 4.13   # 1/2 A4 page width in inches
+        fig_height = 3.5
+        fig, (ax_top, ax_bot) = plt.subplots(
+            2, 1, figsize=(fig_width, fig_height),
+            sharex=True,
+            gridspec_kw={'hspace': 0.08}
+        )
+
+        # --- Top subplot: AMPM signals (normalised) ---
+        for ds in ampm_configs:
+            t = self.time_vectors[ds.label] * 1e3  # s → ms
+            src = self.processed_data[ds.label]
+            y = _smooth(src, self.sampling_rates[ds.label])
+            color = self._get_signal_color(global_idx[ds.label])
+            ax_top.plot(t, y, lw=0.7, color=color, label=ds.label,
+                        linestyle=ds.linestyle or '-')
+        leg_top = ax_top.legend(fontsize=8, loc='lower center', ncols=2, framealpha=0.7,
+                                handlelength=1.2, labelspacing=0.3, columnspacing=1.0,
+                                fancybox=False, edgecolor='black',
+                                bbox_to_anchor=(0.53, -0.02))
+        leg_top.get_frame().set_linewidth(0.6)
+        ax_top.set_ylabel("Signal [norm.]", fontsize=9)
+        ax_top.tick_params(labelsize=8)
+        ax_top.yaxis.set_major_locator(plt.MaxNLocator(4, prune='both'))
+        for spine in ax_top.spines.values():
+            spine.set_linewidth(0.6)
+
+        # --- Bottom subplot: KH signals ---
+        # Primary axis: depth (μm), length (μm), angle (°)
+        # Secondary axis: area (μm²) — much larger magnitude
+        ax_bot2 = ax_bot.twinx()
+        legend_handles = []
+
+        for ds in kh_configs:
+            t = self.time_vectors[ds.label] * 1e3  # s → ms
+            src = data_source.get(ds.label, self.processed_data[ds.label])
+            y = _smooth(src, self.sampling_rates[ds.label])
+            color = self._get_signal_color(global_idx[ds.label])
+            ax = ax_bot2 if ds.label == AREA_LABEL else ax_bot
+            ln, = ax.plot(t, y, lw=0.7, color=color, label=ds.label,
+                          linestyle=ds.linestyle or '-')
+            legend_handles.append(ln)
+
+        ax_bot.set_xlabel("Time [ms]", fontsize=9)
+        ax_bot.set_ylabel("Depth, length [μm]\nAngle [°]", fontsize=9)
+        ax_bot2.set_ylabel("Area [μm²]", fontsize=9)
+        ax_bot.tick_params(labelsize=8)
+        ax_bot2.tick_params(labelsize=8)
+        ax_bot.yaxis.set_major_locator(plt.MaxNLocator(4, prune='both'))
+        ax_bot2.yaxis.set_major_locator(plt.MaxNLocator(4, prune='both'))
+
+        # Combined legend for both KH axes
+        leg_bot = ax_bot.legend(handles=legend_handles, fontsize=8, loc='lower center', ncols=2,
+                                framealpha=0.7, handlelength=1.2, labelspacing=0.3, columnspacing=1.0,
+                                fancybox=False, edgecolor='black',
+                                bbox_to_anchor=(0.53, -0.02))
+        leg_bot.get_frame().set_linewidth(0.6)
+
+        for ax in (ax_bot, ax_bot2):
+            for spine in ax.spines.values():
+                spine.set_linewidth(0.6)
+
+        if save_path:
+            plt.savefig(save_path, dpi=600, bbox_inches='tight',
+                        facecolor='white', edgecolor='none')
+            print(f"Timeseries plot saved to {save_path}")
+
+        plt.close()
+
     def plot_scatterplot_matrix_compact(self, save_path: Optional[str] = None,
                                         max_points: int = 5000,
                                         point_size: float = 2.0,
-                                        point_alpha: float = 0.3) -> None:
+                                        point_alpha: float = 0.5,
+                                        data: Optional[Dict] = None,
+                                        title: Optional[str] = None,
+                                        style: str = 'default') -> None:
         """
-        Plot compact scatterplot matrix for small-size display
+        Plot compact scatterplot matrix for small-size display.
 
         Minimal design with no axis ticks, numbers, regression lines, or correlation values.
         Shows only scatter points and variable labels on edges.
@@ -322,44 +506,38 @@ class PlottingMixin:
         max_points : int, default=5000
             Downsample to this many points if signals are longer
         point_size : float, default=2.0
-            Size of scatter points (increase for better visibility)
-        point_alpha : float, default=0.5
+            Size of scatter points
+        point_alpha : float, default=0.3
             Transparency of scatter points (0=transparent, 1=opaque)
+        data : dict, optional
+            Pre-supplied {label: array} dict (e.g. batch-concatenated data).
+            When omitted the per-track processed data is used via
+            get_synchronized_data().
+        title : str, optional
+            Override figure suptitle.
+        style : str, default='default'
+            'default'     - coloured points per signal, coloured histogram fills
+            'correlation' - black points on Spearman-r-coloured cell backgrounds,
+                            white histogram fills, colorbar on right side.
+                            Cells with dark backgrounds (luminance < 0.4) use
+                            white points for contrast.
         """
-        if not self.processed_data:
-            print("No processed data available. Load and process data first.")
-            return
+        if data is not None:
+            sync_data = {label: arr.copy() for label, arr in data.items()}
+        else:
+            if not self.processed_data:
+                print("No processed data available. Load and process data first.")
+                return
+            if len(self.processed_data) < 2:
+                print("Need at least 2 datasets for scatterplot matrix")
+                return
+            sync_data = self.get_synchronized_data()
 
-        if len(self.processed_data) < 2:
-            print("Need at least 2 datasets for scatterplot matrix")
-            return
-
-        # Get synchronized data for all pairs
-        labels = list(self.processed_data.keys())
+        labels = list(sync_data.keys())
         n_labels = len(labels)
 
-        # Prepare synchronized data dictionary
-        sync_data = {}
-        for label in labels:
-            sync_data[label] = []
-
-        # Synchronize all pairs to get data on common time base
-        ref_label = labels[0]
-        ref_data = self.processed_data[ref_label]
-        ref_time = self.time_vectors[ref_label]
-
-        for label in labels:
-            if label == ref_label:
-                sync_data[label] = ref_data
-            else:
-                data = self.processed_data[label]
-                time = self.time_vectors[label]
-                # Interpolate to reference time grid (ensures all signals have same length)
-                data_sync = np.interp(ref_time, time, data)
-                sync_data[label] = data_sync
-
         # All signals now have same length as reference
-        min_len = len(ref_data)
+        min_len = len(sync_data[labels[0]])
 
         # Downsample if needed for performance
         if min_len > max_points:
@@ -368,10 +546,25 @@ class PlottingMixin:
                 sync_data[label] = sync_data[label][::downsample_factor]
             print(f"Downsampled from {min_len} to {len(sync_data[labels[0]])} points for visualization")
 
+        # Pre-compute Spearman r for all pairs (used in 'correlation' style)
+        spearman_r = {}
+        if style == 'correlation':
+            import matplotlib.colors as mcolors
+            cmap = plt.get_cmap(self.CMAP_DIVERGING)
+            for i, ly in enumerate(labels):
+                for j, lx in enumerate(labels):
+                    if i != j:
+                        rho, _ = spearmanr(sync_data[lx], sync_data[ly])
+                        spearman_r[(i, j)] = rho
+            # Fixed ±1 norm matches the correlation matrix (diagonal always = 1)
+            norm = mcolors.Normalize(vmin=-1, vmax=1)
+            cbar_min = min(spearman_r.values()) if spearman_r else -1.0
+            cbar_max = max(spearman_r.values()) if spearman_r else  1.0
+
         # Create figure: 1/2 A4 width (105mm = 4.13 inches)
-        # Scale total size by number of subplots while keeping overall width ~4.13"
-        fig_width = 4.13  # 1/2 A4 page width in inches
-        fig_height = 4.13  # Square aspect ratio
+        # Reserve extra width for colorbar in correlation style
+        fig_width = 4.13 + (0.5 if style == 'correlation' else 0)
+        fig_height = 4.13
         fig, axes = plt.subplots(n_labels, n_labels,
                                 figsize=(fig_width, fig_height))
 
@@ -384,21 +577,42 @@ class PlottingMixin:
             for j, label_x in enumerate(labels):
                 ax = axes[i, j] if n_labels > 2 else axes.flatten()[i*n_labels + j]
 
-                # Off-diagonal: show scatter plot only
-                if i != j:
-                    data_x = sync_data[label_x]
-                    data_y = sync_data[label_y]
+                if style == 'correlation':
+                    if i != j:
+                        rho = spearman_r[(i, j)]
+                        bg_rgba = cmap(norm(rho))
+                        ax.set_facecolor(bg_rgba)
 
-                    # Minimal scatter plot - use color based on x-axis signal
-                    # No rasterization for sharper points at high DPI
-                    ax.scatter(data_x, data_y, alpha=point_alpha, s=point_size,
-                              color=self._get_signal_color(j), edgecolors='none')
+                        # Use white points/text on dark backgrounds (luminance threshold 0.4)
+                        r, g, b = bg_rgba[:3]
+                        luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                        point_color = 'white' if luminance < 0.4 else 'black'
 
-                # Diagonal: show histogram
+                        ax.scatter(sync_data[label_x], sync_data[label_y],
+                                   alpha=point_alpha, s=point_size,
+                                   color=point_color, edgecolors='none')
+
+                        # Spearman r annotation — top-left corner in axes coordinates
+                        # ax.text(0.04, 0.96, f'{rho:.2f}',
+                                # transform=ax.transAxes,
+                                # fontsize=6, va='top', ha='left',
+                                # color=point_color,
+                                # fontweight='bold')
+                    else:
+                        ax.set_facecolor('white')
+                        ax.hist(sync_data[label_y], bins=20,
+                                facecolor='white', edgecolor='black', linewidth=0.5)
                 else:
-                    data = sync_data[label_y]
-                    ax.hist(data, bins=20, alpha=0.7, color=self._get_signal_color(i),
-                           edgecolor='black', linewidth=0.5)
+                    # Off-diagonal: show scatter plot only
+                    if i != j:
+                        ax.scatter(sync_data[label_x], sync_data[label_y],
+                                   alpha=point_alpha, s=point_size,
+                                   color=self._get_signal_color(j), edgecolors='none')
+                    # Diagonal: show histogram
+                    else:
+                        ax.hist(sync_data[label_y], bins=20, alpha=0.7,
+                                color=self._get_signal_color(i),
+                                edgecolor='black', linewidth=0.5)
 
                 # Remove all ticks and tick labels
                 ax.set_xticks([])
@@ -413,20 +627,51 @@ class PlottingMixin:
 
                 # Minimal styling with appropriate line weights for 600 DPI
                 for spine in ax.spines.values():
-                    spine.set_linewidth(0.75)  # Thicker lines for better visibility at high DPI
-                    spine.set_color('gray')
+                    spine.set_linewidth(0.6)
+                    spine.set_color('black')
 
-        # Tight layout with minimal spacing
-        plt.subplots_adjust(wspace=0.05, hspace=0.05)
+        # Tight layout with minimal spacing; leave right margin for colorbar
+        right_margin = 0.85 if style == 'correlation' else 0.98
+        plt.subplots_adjust(wspace=0.05, hspace=0.05, right=right_margin)
+
+        # Add colorbar for correlation style, spanning the full grid height
+        if style == 'correlation':
+            # Derive colorbar position from outermost subplot positions
+            # (must be read after subplots_adjust, before savefig)
+            fig.canvas.draw()
+            pos_top = axes[0, -1].get_position() if n_labels > 1 else axes[0].get_position()
+            pos_bot = axes[-1, -1].get_position() if n_labels > 1 else axes[-1].get_position()
+            cbar_ax = fig.add_axes([
+                pos_top.x1 + 0.015,
+                pos_bot.y0,
+                0.025,
+                pos_top.y1 - pos_bot.y0,
+            ])
+
+            # Draw gradient with imshow, applying the norm so that the colour
+            # mapping matches what is painted on each cell exactly.
+            gradient = np.linspace(cbar_min, cbar_max, 256).reshape(-1, 1)
+            cbar_ax.imshow(gradient, aspect='auto', cmap=cmap, norm=norm,
+                           extent=[0, 1, cbar_min, cbar_max], origin='lower')
+            cbar_ax.set_xlim(0, 1)
+            cbar_ax.set_xticks([])
+            cbar_ax.yaxis.tick_right()
+            cbar_ax.yaxis.set_label_position('right')
+            cbar_ax.set_ylim(cbar_min, cbar_max)
+            cbar_ax.tick_params(labelsize=7)  # auto-locator picks nice tick values
+            cbar_ax.set_ylabel("Spearman r", fontsize=8)
+            for spine in cbar_ax.spines.values():
+                spine.set_linewidth(0.6)
+                spine.set_color('black')
+
+        if title:
+            fig.suptitle(title, fontsize=8, y=1.01)
 
         if save_path:
-            # Save with high quality settings for sharp rendering
             plt.savefig(save_path, dpi=600, bbox_inches='tight',
                        facecolor='white', edgecolor='none')
             print(f"Compact scatterplot matrix saved to {save_path}")
 
-        # Don't show plots - only save them
-        # plt.show()
         plt.close()
 
     def plot_processing_and_alignment_summary(self, save_path: Optional[str] = None, 
@@ -1067,8 +1312,10 @@ class PlottingMixin:
         method = first_diag.get('method', 'gradient')  # Default to 'gradient' for backward compatibility
 
         # Create figure with 3 rows x n_signals columns with shared x-axis
+        # Use constrained_layout to avoid tight_layout incompatibility with sharex='col'
         fig, axes = plt.subplots(3, n_signals, figsize=(5 * n_signals, 12),
-                                sharex='col', gridspec_kw={'hspace': 0.05, 'wspace': 0.3})
+                                sharex='col', gridspec_kw={'hspace': 0.05, 'wspace': 0.3},
+                                layout='constrained')
 
         # Handle single signal case
         if n_signals == 1:
@@ -1157,8 +1404,7 @@ class PlottingMixin:
 
         # Set title based on method used
         title = 'Gradient-Based Outlier Detection Diagnostics' if method == 'gradient' else 'Second Derivative Outlier Detection Diagnostics'
-        fig.suptitle(title, fontsize=14, fontweight='bold', y=0.995)
-        plt.tight_layout()
+        fig.suptitle(title, fontsize=14, fontweight='bold')
 
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -1339,4 +1585,108 @@ class PlottingMixin:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             print(f"Alignment diagnostic plot saved to {save_path}")
 
-        plt.close()
+    def plot_lag_correlation(self, max_lag_ms: float = 5.0,
+                             save_path: Optional[Path] = None) -> None:
+        """
+        Plot Spearman r vs lag (±max_lag_ms ms) for each signal pair.
+
+        One figure per pair is generated, saved into save_path (treated as a
+        directory), and closed immediately.  Each figure is 1/2 A4 width with a
+        horizontal aspect ratio.
+
+        Parameters
+        ----------
+        max_lag_ms : float
+            Half-range of lags to sweep, in milliseconds (default 5 ms).
+        save_path : Path, optional
+            Directory in which per-pair files are saved.
+        """
+        if not self.processed_data or len(self.processed_data) < 2:
+            print("Need at least two signals for lag-correlation plot.")
+            return
+
+        out_dir = Path(save_path) if save_path else None
+        if out_dir:
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+        labels = list(self.processed_data.keys())
+        pairs = [(labels[i], labels[j])
+                 for i in range(len(labels))
+                 for j in range(i + 1, len(labels))]
+
+        for idx, (l1, l2) in enumerate(pairs):
+            data1 = self.processed_data[l1]
+            data2 = self.processed_data[l2]
+            time1 = self.time_vectors[l1]
+            time2 = self.time_vectors[l2]
+
+            # Synchronize to a common time grid
+            d1, d2 = self._synchronize_time_series(data1, time1, data2, time2)
+            N = len(d1)
+
+            dt1 = np.mean(np.diff(time1)) if len(time1) > 1 else 1.0
+            dt2 = np.mean(np.diff(time2)) if len(time2) > 1 else 1.0
+            dt = max(dt1, dt2)
+
+            max_lag_samples = int(round(max_lag_ms * 1e-3 / dt))
+            max_lag_samples = min(max_lag_samples, N - 2)
+
+            lags_samples = np.arange(-max_lag_samples, max_lag_samples + 1)
+            r_values = np.full(len(lags_samples), np.nan)
+
+            for k, lag in enumerate(lags_samples):
+                if lag == 0:
+                    a, b = d1, d2
+                elif lag > 0:
+                    a, b = d1[lag:], d2[:N - lag]
+                else:
+                    a, b = d1[:N + lag], d2[-lag:]
+                if len(a) > 2 and np.std(a) > 0 and np.std(b) > 0:
+                    r, _ = spearmanr(a, b)
+                    r_values[k] = r
+
+            lags_ms = lags_samples * dt * 1e3
+
+            peak_idx = int(np.nanargmax(np.abs(r_values)))
+            peak_lag_ms = lags_ms[peak_idx]
+            peak_r = r_values[peak_idx]
+
+            color = self.COLORS_OKABE_ITO[idx % len(self.COLORS_OKABE_ITO)]
+
+            # 1/2 A4 width, horizontal aspect (width:height ≈ 16:9 scaled down)
+            fig, ax = plt.subplots(figsize=(4.13, 2.0))
+
+            ax.plot(lags_ms, r_values, lw=0.8, color=color)
+            ax.axvline(x=0, color='black', linestyle='--', lw=0.5, alpha=0.4)
+            ax.axhline(y=0, color='black', linestyle='--', lw=0.5, alpha=0.4)
+            ax.axvline(x=peak_lag_ms, color=self.COLOR_SIGNIFICANCE,
+                       linestyle=':', lw=0.8,
+                       label=f'peak {peak_lag_ms:+.2f} ms,  r = {peak_r:.3f}')
+
+            ax.set_xlabel('Lag (ms)', fontsize=9)
+            ax.set_ylabel('Spearman r', fontsize=9)
+            ax.set_title(f'{l1} vs {l2}', fontsize=9)
+            ax.set_ylim([-1.05, 1.05])
+            ax.tick_params(labelsize=8)
+
+            leg = ax.legend(fontsize=8, loc='lower right', fancybox=False,
+                            edgecolor='black', framealpha=0.7)
+            leg.get_frame().set_linewidth(0.6)
+
+            for spine in ax.spines.values():
+                spine.set_linewidth(0.6)
+                spine.set_color('black')
+
+            plt.tight_layout()
+
+            if out_dir:
+                safe = f"{l1}_vs_{l2}".replace(' ', '_')
+                stem = out_dir / f'lag_correlation_{safe}'
+                fig.savefig(f'{stem}.pdf', bbox_inches='tight')
+                fig.savefig(f'{stem}.png', dpi=300, bbox_inches='tight',
+                            facecolor='white', edgecolor='none')
+                print(f"Lag-correlation saved: {stem}.[pdf/png]")
+
+            plt.close(fig)
+
+

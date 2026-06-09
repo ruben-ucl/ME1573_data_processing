@@ -1,63 +1,36 @@
 #!/usr/bin/env python
 """
-Backward compatibility wrapper for timeseries_compare.py
-
-This file maintains backward compatibility with existing code while
-delegating all functionality to the new modular timeseries package.
-
-DEPRECATED: This file is maintained for backward compatibility only.
-New code should use: from vis.timeseries import TimeSeriesComparator
-
-Author: AI Assistant
-Version: 2.1 (Refactored)
+CLI entry point for HDF5 time series comparison analysis (AMPM + KH data).
+Analysis pipeline lives in vis/timeseries/. Dataset and processing config in process_single_file().
 """
 
 # Fix KMeans memory leak on Windows - MUST be set before importing sklearn
-# Set to 2 for typical small datasets (< 1000 samples per signal)
 import os
 os.environ.setdefault('OMP_NUM_THREADS', '1')
 
-import warnings
 import sys
 from pathlib import Path
 
-# Add parent directory to path to allow imports
 parent_dir = Path(__file__).parent.parent
 if str(parent_dir) not in sys.path:
     sys.path.insert(0, str(parent_dir))
 
-# Import everything from the new modular package
-from vis.timeseries import (
-    DatasetConfig,
-    ProcessingConfig,
-    TimeSeriesComparator,
-)
-
-# Issue deprecation warning
-warnings.warn(
-    "Importing from vis.timeseries_compare is deprecated. "
-    "Please use 'from vis.timeseries import TimeSeriesComparator' instead.",
-    DeprecationWarning,
-    stacklevel=2
-)
-
-__all__ = [
-    'DatasetConfig',
-    'ProcessingConfig',
-    'TimeSeriesComparator',
-]
-
-# Import additional dependencies for main() function
+from vis.timeseries import DatasetConfig, ProcessingConfig, TimeSeriesComparator
 from tools import get_paths
 import argparse
 import glob
+
 import shutil
+import numpy as np
+import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
+from scipy.stats import pearsonr, spearmanr
 from tqdm import tqdm
 
 
-def process_single_file(hdf5_file, output_dir=None, verbose=True, run_summary_dir=None):
+def process_single_file(hdf5_file, output_dir=None, verbose=True, run_summary_dir=None,
+                        cache_data=False):
     """
     Process a single HDF5 file for time series comparison.
 
@@ -71,6 +44,8 @@ def process_single_file(hdf5_file, output_dir=None, verbose=True, run_summary_di
         Enable verbose output (prints, debug info)
     run_summary_dir : str or Path, optional
         Directory to copy compact scatter plot for run summary
+    cache_data : bool, default=False
+        If True, return processed data arrays for batch overview plotting
 
     Returns:
     --------
@@ -138,7 +113,7 @@ def process_single_file(hdf5_file, output_dir=None, verbose=True, run_summary_di
             name='area',
             label='KH area',
             color='#57106e',
-            linestyle='-',
+            linestyle='--',
             time_group='KH',
             time_name='time',
             time_units='s',
@@ -148,7 +123,7 @@ def process_single_file(hdf5_file, output_dir=None, verbose=True, run_summary_di
             group='KH',
             name='fkw_angle',
             label='FKW angle',
-            linestyle='-',
+            linestyle=':',
             time_group='KH',
             time_name='time',
             time_units='s',
@@ -191,6 +166,7 @@ def process_single_file(hdf5_file, output_dir=None, verbose=True, run_summary_di
         apply_bandpass = False,
         apply_smoothing = False,
         apply_resampling = False,
+        sync_method = 'downsample',  # 'downsample' = coarsest grid, 'upsample' = finest grid
         apply_auto_alignment = False,
         alignment_method = 'mutual_info',
         apply_manual_lag_corrections = True  # Set to True to use MANUAL_LAG_CORRECTIONS dict
@@ -200,12 +176,12 @@ def process_single_file(hdf5_file, output_dir=None, verbose=True, run_summary_di
     # Format: {'trackid': {'group': time_shift_in_seconds}}
     # Positive values delay the signal, negative values advance it
     MANUAL_LAG_CORRECTIONS = {
-        '1112_01': {'KH': 0.00160}, 
-        '1112_02': {'KH': 0.00160}, 
-        '1112_03': {'KH': 0.00160},  
-        '1112_04': {'KH': 0.00165},
-        '1112_05': {'KH': 0.00170}, 
-        '1112_06': {'KH': 0.00170},  
+        '1112_01': {'KH': 0.00162}, 
+        '1112_02': {'KH': 0.00162}, 
+        '1112_03': {'KH': 0.00162},  
+        '1112_04': {'KH': 0.00168},
+        '1112_05': {'KH': 0.00168}, 
+        '1112_06': {'KH': 0.00168},  
     }
 
     # Set output directory
@@ -354,6 +330,12 @@ def process_single_file(hdf5_file, output_dir=None, verbose=True, run_summary_di
         comparator.correlations = comparator.calculate_correlations()
         comparator.silhouette_scores = comparator.calculate_silhouette_scores()
 
+        # Print correlation table
+        print(f"\n{'Pair':<35s} {'N':>7s}  {'Pearson r':>10s}  {'Pearson p':>10s}  {'Spearman r':>10s}  {'Spearman p':>10s}")
+        print("-" * 95)
+        for pair_key, cd in comparator.correlations.items():
+            print(f"{pair_key:<35s} {cd['n_actual']:>7d}  {cd['pearson']:>+10.4f}  {cd['pearson_p']:>10.4g}  {cd['spearman']:>+10.4f}  {cd['spearman_p']:>10.4g}")
+
         if verbose:
             comparator.get_data_summary()
 
@@ -386,22 +368,24 @@ def process_single_file(hdf5_file, output_dir=None, verbose=True, run_summary_di
             # Restore stdout
             sys.stdout = old_stdout
 
-        return True, summary_row
+        data_cache = None
+        if cache_data:
+            data_cache = comparator.get_synchronized_data()
+
+        return True, summary_row, data_cache, comparator if cache_data else None
 
     except FileNotFoundError:
-        # Restore stdout before printing error
         if not verbose:
             sys.stdout = old_stdout
         print(f"Error: Could not find HDF5 file at {hdf5_file}")
-        return False, None
+        return False, None, None, None
     except Exception as e:
-        # Restore stdout before printing error
         if not verbose:
             sys.stdout = old_stdout
         print(f"Error during analysis of {trackid}: {e}")
         import traceback
         traceback.print_exc()
-        return False, None
+        return False, None, None, None
 
 
 def main():
@@ -411,16 +395,25 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Single file (default)
+  # Single file (default trackid)
   python vis/timeseries_compare.py
 
   # Single file with specific trackid
   python vis/timeseries_compare.py --trackid 1112_01
 
-  # Batch mode (all files)
+  # Batch: all tracks, no filtering
   python vis/timeseries_compare.py --batch
 
-  # Batch mode, silent with progress bar
+  # Batch: apply DEFAULT_LOGBOOK_FILTERS from tools.py
+  python vis/timeseries_compare.py --batch --filter
+
+  # Batch: defaults + override one field
+  python vis/timeseries_compare.py --batch --filter --regime keyhole
+
+  # Batch: single filter in isolation (no defaults loaded)
+  python vis/timeseries_compare.py --batch --regime keyhole
+
+  # Batch, silent with progress bar
   python vis/timeseries_compare.py --batch --quiet
         """
     )
@@ -432,7 +425,14 @@ Examples:
                        help='Suppress verbose output (show only progress bar in batch mode)')
     parser.add_argument('--trackid', type=str, default='0105_03',
                        help='Single trackid to process (default: 0105_03)')
-
+    parser.add_argument('--filter', action='store_true',
+                       help='Load DEFAULT_LOGBOOK_FILTERS from tools.py as the filter base')
+    parser.add_argument('--material', type=str, help='Filter by material (e.g. AlSi10Mg)')
+    parser.add_argument('--layer', type=int, help='Filter by layer number')
+    parser.add_argument('--laser_mode', type=str, help='Filter by laser mode (cw, pw)')
+    parser.add_argument('--base_type', type=str, help='Filter by base type (powder, weld, solid)')
+    parser.add_argument('--regime', type=str, help='Filter by melting regime')
+    parser.add_argument('--beamtime', type=str, help='Filter by beamtime number(s), comma-separated')
     args = parser.parse_args()
 
     # Determine verbosity
@@ -446,6 +446,38 @@ Examples:
     if args.batch:
         # Batch mode: process all .hdf5 files
         hdf5_files = sorted(glob.glob(str(Path(folder) / '*.hdf5')))
+
+        from tools import get_excluded_trackids
+        excluded = set(get_excluded_trackids())
+        hdf5_files = [f for f in hdf5_files if Path(f).stem not in excluded]
+
+        cli_filter_args = {
+            'material': args.material,
+            'layer': args.layer,
+            'laser_mode': args.laser_mode,
+            'base_type': args.base_type,
+            'regime': args.regime,
+            'beamtime': args.beamtime,
+        }
+        has_cli_filters = any(v is not None for v in cli_filter_args.values())
+
+        if args.filter or has_cli_filters:
+            from tools import get_logbook, filter_logbook_tracks, DEFAULT_LOGBOOK_FILTERS
+            filters = DEFAULT_LOGBOOK_FILTERS.copy() if args.filter else {}
+            if args.material:          filters['material']   = args.material
+            if args.layer is not None: filters['layer']      = args.layer
+            if args.laser_mode:        filters['laser_mode'] = args.laser_mode
+            if args.base_type:         filters['base_type']  = args.base_type
+            if args.regime:            filters['regime']     = args.regime
+            if args.beamtime:
+                bt = args.beamtime.strip()
+                filters['beamtime'] = [int(x) for x in bt.split(',')] if ',' in bt else int(bt)
+            logbook = get_logbook()
+            filtered_lb, active_filters = filter_logbook_tracks(logbook, filters)
+            valid_trackids = set(filtered_lb['trackid'].dropna().astype(str))
+            hdf5_files = [f for f in hdf5_files if Path(f).stem in valid_trackids]
+            print(f"Logbook filter applied: {active_filters}")
+            print(f"  {len(hdf5_files)} tracks pass filter")
 
         if not hdf5_files:
             print(f"No .hdf5 files found in {folder}")
@@ -462,9 +494,16 @@ Examples:
         success_count = 0
         failed_files = []
 
-        # Initialize CSV path and header flag for incremental writing
+        # Initialize CSV path - always start fresh each batch run
         csv_path = Path(run_summary_dir, 'batch_summary.csv')
-        write_header = not csv_path.exists()  # Write header only if file doesn't exist
+        if csv_path.exists():
+            csv_path.unlink()
+        write_header = True
+
+        # Signal cache for batch scatter plot {label: [array_per_track, ...]}
+        signal_cache = {}
+        n_cached_tracks = 0
+        last_comparator = None
 
         # Use tqdm progress bar in quiet mode
         if not verbose:
@@ -479,24 +518,73 @@ Examples:
                 print(f"Processing {trackid}...")
                 print(f"{'='*60}")
 
-            success, summary_row = process_single_file(
+            success, summary_row, data_cache, comparator = process_single_file(
                 hdf5_file,
                 verbose=verbose,
-                run_summary_dir=run_summary_dir
+                run_summary_dir=run_summary_dir,
+                cache_data=True,
             )
 
             if success:
                 success_count += 1
-                # Append to CSV immediately after each successful processing
                 if summary_row is not None:
-                    import pandas as pd
                     df_row = pd.DataFrame([summary_row])
                     df_row.to_csv(csv_path, mode='a', header=write_header, index=False)
-                    write_header = False  # Only write header once
+                    write_header = False
+
+                # Accumulate synchronized data for batch plots.
+                if data_cache:
+                    for label, data in data_cache.items():
+                        signal_cache.setdefault(label, []).append(data)
+                    n_cached_tracks += 1
+                    last_comparator = comparator
             else:
                 failed_files.append(trackid)
                 if verbose:
                     print(f"FAILED: {trackid}")
+
+        # Generate batch plots and stats from concatenated signals
+        if signal_cache and n_cached_tracks > 0 and last_comparator is not None:
+            print("\nGenerating batch plots...")
+            concat_data = {label: np.concatenate(arrays)
+                           for label, arrays in signal_cache.items()}
+            last_comparator.plot_scatterplot_matrix_compact(
+                data=concat_data,
+                save_path=run_summary_dir / 'batch_scatter.png',
+                max_points=10000, point_size=1.5, point_alpha=0.2,
+                title=f'Batch scatter — {n_cached_tracks} tracks',
+            )
+            last_comparator.plot_scatterplot_matrix_compact(
+                data=concat_data,
+                save_path=run_summary_dir / 'batch_scatter_correlation.png',
+                max_points=10000, point_size=1.5, point_alpha=0.2,
+                title=f'Batch scatter — {n_cached_tracks} tracks',
+                style='correlation',
+            )
+            last_comparator.plot_correlation_matrix(
+                data=concat_data,
+                save_path=run_summary_dir / 'batch_correlation_matrix.png',
+                title=f'Batch correlation — {n_cached_tracks} tracks',
+            )
+
+            # Write batch-level stats row to the summary CSV
+            batch_row = {'trackid': 'BATCH_ALL', 'n_tracks': n_cached_tracks}
+            labels_list = list(concat_data.keys())
+            for i, l1 in enumerate(labels_list):
+                for j, l2 in enumerate(labels_list):
+                    if i < j:
+                        pair_clean = f'{l1} vs {l2}'.replace(' vs ', '_vs_').replace(' ', '_')
+                        r, p = pearsonr(concat_data[l1], concat_data[l2])
+                        rho, _ = spearmanr(concat_data[l1], concat_data[l2])
+                        batch_row[f'{pair_clean}_pearson'] = round(r, 4)
+                        batch_row[f'{pair_clean}_pearson_p'] = round(p, 4)
+                        batch_row[f'{pair_clean}_spearman'] = round(rho, 4)
+                        batch_row[f'{pair_clean}_N'] = len(concat_data[l1])
+            if csv_path.exists():
+                existing_cols = pd.read_csv(csv_path, nrows=0).columns.tolist()
+                batch_df = pd.DataFrame([batch_row]).reindex(columns=existing_cols)
+                batch_df.to_csv(csv_path, mode='a', header=False, index=False)
+            print(f"Batch stats row appended to {csv_path}")
 
         # Final summary
         print(f"\n{'='*60}")
@@ -519,7 +607,7 @@ Examples:
             print(f"Processing single file: {args.trackid}")
             print(f"File path: {hdf5_file}")
 
-        success, _ = process_single_file(str(hdf5_file), verbose=verbose)
+        success, _, _, _ = process_single_file(str(hdf5_file), verbose=verbose)
 
         if not success:
             print(f"Failed to process {args.trackid}")

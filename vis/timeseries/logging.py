@@ -281,10 +281,10 @@ class ProcessingLog:
             for pair_key, corr_data in correlations.items():
                 self.statistics_info['correlations'][pair_key] = {
                     'pearson': float(corr_data['pearson']),
-                    'pearson_p_corrected': float(corr_data['pearson_p_corrected']),
+                    'pearson_p': float(corr_data['pearson_p']),
                     'spearman': float(corr_data['spearman']),
-                    'spearman_p_corrected': float(corr_data['spearman_p_corrected']),
-                    'n_effective': float(corr_data['n_effective'])
+                    'spearman_p': float(corr_data['spearman_p']),
+                    'n_actual': int(corr_data['n_actual'])
                 }
 
         # Record silhouette scores

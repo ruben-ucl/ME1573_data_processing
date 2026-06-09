@@ -59,6 +59,7 @@ class TimeSeriesComparator(AlignmentMixin, StatisticsMixin, PlottingMixin):
         # Initialize data storage
         self.raw_data: Dict[str, np.ndarray] = {}
         self.processed_data: Dict[str, np.ndarray] = {}
+        self.pre_norm_data: Dict[str, np.ndarray] = {}  # Processed but not normalised
         self.full_processed_data: Dict[str, np.ndarray] = {}
         self.original_processed_data: Dict[str, np.ndarray] = {}  # For cropping/restoration
         self.time_vectors: Dict[str, np.ndarray] = {}
@@ -180,6 +181,8 @@ class TimeSeriesComparator(AlignmentMixin, StatisticsMixin, PlottingMixin):
             dataset_name = self.alignment_info.get(label, {}).get('dataset_name', None)
             processed = self.processor.process_signal(data, sampling_rate, label=label, group=group, dataset_name=dataset_name)
             self.processed_data[label] = processed
+            if label in self.processor.pre_norm_data:
+                self.pre_norm_data[label] = self.processor.pre_norm_data[label]
 
             if preserve_full_processed:
                 self.full_processed_data[label] = processed.copy()
@@ -230,6 +233,7 @@ class TimeSeriesComparator(AlignmentMixin, StatisticsMixin, PlottingMixin):
         if any(m in ['gradient', 'second_derivative'] for m in methods) and len(self.processor.gradient_diagnostics) > 0:
             self.plot_gradient_diagnostics(save_path=output_path / 'gradient_diagnostics.png')
 
+        self.plot_timeseries(save_path=output_path / 'timeseries.png')
         self.plot_statistics_summary(save_path=output_path / 'statistics_summary.png')
         self.plot_correlation_matrix(save_path=output_path / 'correlation_matrix.png')
         self.plot_autocorrelation(save_path=output_path / 'autocorrelation.png')
@@ -249,6 +253,9 @@ class TimeSeriesComparator(AlignmentMixin, StatisticsMixin, PlottingMixin):
 
             self.plot_scatterplot_matrix(save_path=output_path / 'scatterplot_matrix.png')
             self.plot_scatterplot_matrix_compact(save_path=output_path / 'scatterplot_matrix_compact.png')
+            self.plot_scatterplot_matrix_compact(save_path=output_path / 'scatterplot_matrix_correlation.png',
+                                                 style='correlation')
+            self.plot_lag_correlation(max_lag_ms=0.3, save_path=output_path / 'lag_correlation')
 
         print("\n✓ Report generation complete")
 
@@ -290,10 +297,11 @@ class TimeSeriesComparator(AlignmentMixin, StatisticsMixin, PlottingMixin):
             for pair_key, corr_data in self.correlations.items():
                 # Clean up pair key for column name (replace ' vs ' with '_vs_')
                 pair_clean = pair_key.replace(' vs ', '_vs_').replace(' ', '_')
+                row_data[f"{pair_clean}_N"] = corr_data['n_actual']
                 row_data[f"{pair_clean}_pearson"] = corr_data['pearson']
                 row_data[f"{pair_clean}_spearman"] = corr_data['spearman']
-                row_data[f"{pair_clean}_pearson_p"] = corr_data['pearson_p_corrected']
-                row_data[f"{pair_clean}_spearman_p"] = corr_data['spearman_p_corrected']
+                row_data[f"{pair_clean}_pearson_p"] = corr_data['pearson_p']
+                row_data[f"{pair_clean}_spearman_p"] = corr_data['spearman_p']
 
         # Add silhouette scores if available
         if hasattr(self, 'silhouette_scores') and self.silhouette_scores:

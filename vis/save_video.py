@@ -23,7 +23,7 @@ INTENDED CHANGES
 '''
 """Controls"""
 
-input_dset_name = 'ff_corrected'
+input_dset_name = 'bs-f40_lagrangian'
 
 binary_dset_name = None
 binary_overlay_mode = 'outline'     # 'outline' or 'fill'
@@ -33,7 +33,7 @@ output_name = f'{input_dset_name}{overlay_suffix}'
 
 upscale_factor = 3 # int or None
 overlay = True # bool
-capture_framerate = 504000 # fps
+capture_framerate = 40000 # fps
 output_framerate = 30 # fps
 text_colour = 'white'   # 'black' or 'white'
 

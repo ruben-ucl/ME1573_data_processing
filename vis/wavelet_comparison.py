@@ -31,7 +31,7 @@ DEBUG = True
 
 # Wavelets to test - organized by type
 WAVELETS_TO_TEST = {
-    'Recommended Trio': ['cmor2.5-0.5', 'mexh', 'gaus2'],
+    'Recommended Trio': ['cmor1.5-1.0', 'mexh', 'gaus2'],
     'Frequency B-Splines': ['fbsp1-1.5-1.0', 'fbsp4-0.6-1.0'],
     'Other Interesting': ['morl', 'shan1.5-1.0', 'cgau8'],
 }
@@ -125,7 +125,7 @@ def plot_cwt_result(cwtmatr, freqs, time, vmax, ax, title):
         return
     
     t_ax, f_ax = np.meshgrid(time*1000, freqs/1000)
-    pcm = ax.pcolormesh(t_ax, f_ax, cwtmatr, cmap='jet', vmax=vmax)
+    pcm = ax.pcolormesh(t_ax, f_ax, cwtmatr, cmap='inferno', vmax=vmax)
     ax.set_yscale('log', base=2)
     ax.set_ylim(1, 50)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter('%.0f'))
@@ -167,7 +167,7 @@ def create_wavelet_comparison_figure():
         sampling_rate = round(1/sampling_period, 7)
         
         # Crop signals from 0 to 5 ms
-        crop_start = 0.0  # seconds
+        crop_start = 0.0005  # seconds
         crop_end = 0.005  # 5 ms in seconds
         
         # Find indices for cropping

@@ -25,22 +25,22 @@ figsize = (3.15, 2.5) # page width = 6.3
 # figsize = (4, 4)
 dpi = 300
 projection = '2d'
-plot_bg = 'w'
+plot_bg = None
 
 pop_nans = True                     # bool
 regime_point_colours = False         # bool
-regime_point_shapes = True          # bool
+regime_point_shapes = False          # bool
 colour_points_by_z = False          # bool
 label_points = False                # bool
 point_stems_3d = False              # bool
 include_hline = None                # float
 include_error_bars = None    # string or None
-include_legend = True              # bool
+include_legend = False              # bool
 
-include_curve_fit = True           # bool
+include_curve_fit = False           # bool
 include_surface_fit = False         # bool
 
-axis_sci_not = 'x'                 # None, 'x', 'y' or 'both'
+axis_sci_not = None                 # None, 'x', 'y' or 'both'
 LED_contours = False                # bool
 include_contours = False            # bool
 contour_cmap = 'Reds'              # string
@@ -58,30 +58,30 @@ contour_line_color = 'k'            # string
 ### X-axis settings ###
 #----------------------
 if True:
-    plotx = 'MP_vol'
+    plotx = 'scan_speed'
     # xlim = [150, 1300]
     # xlim = [0, 0.4]
-    # xlim = [300, 2100]                      # scan speed
-    # xticks = [400, 800, 1200, 1600, 2000]   # scan speed
+    xlim = [300, 2100]                      # scan speed
+    xticks = [400, 800, 1200, 1600, 2000]   # scan speed
     # xticks = [40, 50, 60, 70, 80, 90]
     # xticks = [10, 20, 30, 40]
-    xlim = None
-    xticks = None
+    # xlim = None
+    # xticks = None
 
 ### Y-axis settings ###
 #----------------------
 if True:
-    ploty = 'melting_efficiency'
+    ploty = 'power'
     # ylim = [150, 1400]
     # ylim = [1200, 6200]
     # ylim = [-6, 86]
     # ylim= [-0.1, 1.1]
-    # ylim = [235, 515]                           # power
-    # yticks = [250, 300, 350, 400, 450, 500]     # power
+    ylim = [235, 515]                           # power
+    yticks = [250, 300, 350, 400, 450, 500]     # power
     # yticks = [30, 45, 60, 75, 90]
     # yticks = [0, 40, 80]
-    ylim = None
-    yticks = None
+    # ylim = None
+    # yticks = None
 
 ### Z-axis settings ###
 #----------------------
@@ -161,6 +161,7 @@ def set_up_figure(col_dict):
     fig = plt.figure(figsize=figsize, dpi=dpi, tight_layout=True)
     ax = fig.add_subplot(projection=proj_dict[projection])
     if plot_bg != None: ax.set_facecolor(plot_bg)
+    else: fig.set_alpha(0.0)
     
     ax.set_xlabel(col_dict[plotx][1])
     if xlim != None: ax.set_xlim(xlim[0], xlim[1])
@@ -242,8 +243,8 @@ def plot_data(fig, ax, log_red, marker_dict, col_dict):
                                  c = z if colour_points_by_z == True else marker_dict[regime]['c'],
                                  marker = marker_dict[regime]['m'],
                                  edgecolors = 'k',
-                                 linewidths = 0.5,
-                                 s = 30,      # 30 for half page width figure
+                                 linewidths = 0.7,
+                                 s = 20,      # 30 for half page width figure
                                  cmap = 'Reds',
                                  vmin = 70,
                                  vmax = 120

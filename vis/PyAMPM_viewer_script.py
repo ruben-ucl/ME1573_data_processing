@@ -195,11 +195,11 @@ def readAMPMdat(datFolder, datFile): # Equivalent of ReadAMPMDataFast on Matlab
 # datFolder = Path(__location__)
 
 # Custom path (uncomment)
-custom_path = 'C:/Users/rlamb/Dropbox (UCL)/BeamtimeData/ME-1573 - ESRF ID19/ME1573_AMPM_data'
+custom_path = 'F:\Lab validation\'
 datFolder = Path(custom_path)
 
 # File name to load
-datFile = '0103_AMPM_1_L4_100K_2022-01-26_06-22-31.dat'
+datFile = 'AMPM_1_L4_100K_2025-11-10_16-56-34.dat'
 
 ft, fData, fsampleFreq = readAMPMdat(datFolder, datFile)
 
@@ -213,7 +213,7 @@ ft, fData, fsampleFreq = readAMPMdat(datFolder, datFile)
 fig, ax = plt.subplots(figsize=(16,9))
 
 if fsampleFreq == 100000: # For 100K files
-    ind = 15 #Channel index (see above)
+    ind = 13 #Channel index (see above)
     ax.plot(ft, fData[ind])
     # ax.plot(np.subtract(ft[start:], ft[start]), fData[ind][start:])
     ax.set_ylabel(ChannelNames[ind])
