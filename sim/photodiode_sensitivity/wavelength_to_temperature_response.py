@@ -1,115 +1,141 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 from scipy.interpolate import interp1d
 from scipy.integrate import simpson
+from scipy.signal import medfilt
 
 # ── Constants ────────────────────────────────────────────────────────────────
 h  = 6.626e-34   # Planck constant (J·s)
 c  = 3.0e8       # Speed of light (m/s)
 kB = 1.381e-23   # Boltzmann constant (J/K)
 
-# ── 1. Responsivity data ─────────────────────────────────────────────────────
-CSV_FILE = "InGaAs.csv"   # <-- change this to your filename
+# ── 1. Detector definitions ───────────────────────────────────────────────────
+DETECTORS = [
+    {"csv": "sim/photodiode_sensitivity/Si.csv",     "label": "Si",     "color": "#1DB954"},
+    {"csv": "sim/photodiode_sensitivity/InGaAs.csv", "label": "InGaAs", "color": "#00B4AE"},
+]
 
-import pandas as pd
-df = pd.read_csv(CSV_FILE, header=None, names=["wavelength_nm", "responsivity"])
-df = df.sort_values("wavelength_nm").dropna()
-
-# ── Unit check: if wavelength values are in microns (i.e. all < 100),
-#    convert to nm. Adjust this if your CSV is already in nm.
-wavelength_nm = df["wavelength_nm"].values
-if wavelength_nm.max() < 100:
-    print(f"Wavelength values appear to be in µm (max={wavelength_nm.max():.2f}) — converting to nm")
-    wavelength_nm = wavelength_nm * 1000
-
-responsivity = df["responsivity"].values
-
-# ── 2. Interpolate responsivity onto a fine wavelength grid ──────────────────
-lam_min = wavelength_nm.min()
-lam_max = wavelength_nm.max()
-lam_nm  = np.linspace(lam_min, lam_max, 2000)          # fine grid (nm)
-lam_m   = lam_nm * 1e-9                                 # convert to metres
-
-R_interp = interp1d(wavelength_nm, responsivity,
-                    kind='cubic', bounds_error=False, fill_value=0.0)
-R = R_interp(lam_nm)
-R = np.clip(R, 0, None)                                 # no negative responsivity
+# ── 2. Load and process responsivity data ────────────────────────────────────
+def load_responsivity(csv_file):
+    df = pd.read_csv(csv_file, header=None, names=["wavelength", "responsivity"])
+    df = df.sort_values("wavelength").dropna()
+    wl_um = df["wavelength"].values
+    if wl_um.max() > 100:  # values are in nm, convert to µm
+        print(f"{csv_file}: wavelengths appear to be in nm — converting to µm")
+        wl_um = wl_um / 1000
+    resp = medfilt(df["responsivity"].values, [5])
+    return wl_um, resp
 
 # ── 3. Planck spectral radiance ──────────────────────────────────────────────
 def planck(lam_m, T):
     """Spectral radiance B(λ, T) in W·sr⁻¹·m⁻²·m⁻¹"""
     return (2*h*c**2 / lam_m**5) / (np.exp(h*c / (lam_m*kB*T)) - 1)
 
-# ── 4. Compute signal S(T) and sensitivity dS/dT ────────────────────────────
-T_range = np.linspace(600, 3500, 500)                   # adjust range as needed
-S = np.zeros_like(T_range)
+# ── 4. Compute signal S(T) and sensitivity dS/dT for each detector ───────────
+T_plot  = [600, 1200, 1800, 2400, 3000, 3600]
+T_range = np.linspace(T_plot[0], T_plot[-1], 500)
 
-for i, T in enumerate(T_range):
-    B = planck(lam_m, T)
-    S[i] = simpson(B * R, x=lam_m)                      # weighted integral
+for det in DETECTORS:
+    wl_um, resp_raw = load_responsivity(det["csv"])
+    lam_um = np.linspace(wl_um.min(), wl_um.max(), 2000)
+    lam_m  = lam_um * 1e-6
 
-# Normalise S to its maximum for easier plotting
-S_norm = S / S.max()
+    R = np.clip(interp1d(wl_um, resp_raw, kind='linear',
+                         bounds_error=False, fill_value=0.0)(lam_um), 0, None)
 
-# Sensitivity: dS/dT (numerical derivative)
-dSdT      = np.gradient(S,      T_range)
-dSdT_norm = np.gradient(S_norm, T_range)
+    S = np.array([simpson(planck(lam_m, T) * R, x=lam_m) for T in T_range])
 
-# ── 5. Plots ─────────────────────────────────────────────────────────────────
-fig, axes = plt.subplots(3, 1, figsize=(8, 11))
-fig.suptitle("Photodiode Blackbody Temperature Sensitivity", fontsize=13)
+    det.update({"lam_um": lam_um, "lam_m": lam_m,
+                "lam_min": wl_um.min(), "lam_max": wl_um.max(),
+                "R": R, "S": S})
 
-# — Plot 1: Weighted product B(λ,T)·R(λ) + responsivity ————————————————————
-ax1 = axes[0]
+# ── 5. Normalise S(T) individually; group-normalise dS/dT ───────────────────
+for det in DETECTORS:
+    S_norm = det["S"] / det["S"].max()
+    det["S_norm"]  = S_norm
+    det["dSdT"]    = np.gradient(S_norm, T_range)
+
+dSdT_ref = max(np.abs(det["dSdT"]).max() for det in DETECTORS)
+for det in DETECTORS:
+    det["dSdT_norm"] = det["dSdT"] / dSdT_ref
+
+# ── 7. Wavelength grid spanning both detectors ───────────────────────────────
+lam_global_um = np.linspace(min(d["lam_min"] for d in DETECTORS),
+                             max(d["lam_max"] for d in DETECTORS), 2000)
+lam_global_m  = lam_global_um * 1e-6
+
+# ── 8. Plots ─────────────────────────────────────────────────────────────────
+plt.rcParams.update({
+    'font.size':        10,
+    'axes.labelsize':   10,
+    'axes.titlesize':   10,
+    'xtick.labelsize':   9,
+    'ytick.labelsize':   9,
+    'legend.fontsize':   9,
+})
+
+fig = plt.figure(figsize=(6.30, 6.3))   # A4 width minus 25 mm margins, × height
+fig.suptitle("Photodiode Blackbody Temperature Sensitivity", fontsize=11)
+
+gs     = GridSpec(2, 1, figure=fig, hspace=0.22, height_ratios=[1, 1])
+gs_bot = gs[1].subgridspec(2, 1, hspace=0.08)
+ax1 = fig.add_subplot(gs[0])
+ax2 = fig.add_subplot(gs_bot[0])
+ax3 = fig.add_subplot(gs_bot[1], sharex=ax2)
+plt.setp(ax2.get_xticklabels(), visible=False)
+
+# — Plot 1: Planck curves + responsivity windows ————————————————————————————
 ax1b = ax1.twinx()
 
-for T, col in [(800, '#4477AA'), (1200, '#66CCEE'), (1800, '#CCBB44'),
-               (2400, '#EE6677'), (3200, '#AA3377')]:
-    B = planck(lam_m, T)
-    BR = B * R
-    # Normalise only over the diode's wavelength window so the
-    # Planck tail outside the band doesn't collapse everything to zero
-    peak = BR.max()
-    BR_norm = BR / peak if peak > 0 else BR
-    # Suppress values that are truly negligible (< 0.1% of peak)
-    BR_norm[BR_norm < 1e-3] = np.nan
-    ax1b.plot(lam_nm, BR_norm, color=col, alpha=0.6, linewidth=1.4,
-              label=f'{T} K')
+cmap = plt.colormaps['plasma'].resampled(len(T_plot))
+for i, T in enumerate(T_plot):
+    B = planck(lam_global_m, T)
+    ax1b.plot(lam_global_um, B * 1e-6, color=cmap(i), alpha=0.9,
+              linewidth=1.4, label=f'{T} K')
 
-ax1.plot(lam_nm, R, 'k-', linewidth=2, label='Responsivity R(λ)', zorder=5)
-ax1.set_xlabel('Wavelength (nm)')
-ax1.set_ylabel('Responsivity (normalised)', color='k')
-ax1b.set_ylabel('B(λ,T)·R(λ) (normalised)', color='grey')
-ax1b.tick_params(axis='y', labelcolor='grey')
-ax1b.set_ylim(bottom=0)
-ax1.set_xlim(lam_min, lam_max)
+for det in DETECTORS:
+    ax1.fill_between(det["lam_um"], det["R"], alpha=0.2, color=det["color"])
+    ax1.plot(det["lam_um"], det["R"], color=det["color"], linewidth=1.5)
+    x_mid = (det["lam_um"].min() + det["lam_um"].max()) / 2
+    ax1.text(x_mid, det["R"].max() * 0.45, det["label"],
+             color=det["color"], fontweight='bold',
+             ha='center', va='center',
+             bbox=dict(facecolor='white', edgecolor='none', alpha=1.0, pad=3))
+
+ax1.set_xlabel('Wavelength (µm)')
+ax1.set_ylabel(r'Responsivity, $R(\lambda)$ [A/W]')
+ax1b.set_ylabel(r'Spectral radiance, $B(\lambda, T)$' + '\n[W·sr⁻¹·m⁻²·µm⁻¹]')
+ax1b.set_yscale('log')
+ax1b.tick_params(axis='y', labelcolor='black')
+ax1b.set_ylim(top=max(B)*20*1e-6)
+ax1.set_xlim(lam_global_um.min(), lam_global_um.max())
 ax1.set_ylim(bottom=0)
-lines1, labels1 = ax1.get_legend_handles_labels()
-lines2, labels2 = ax1b.get_legend_handles_labels()
-ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=8, loc='upper right')
-ax1.set_title("Effective spectral contribution B(λ,T)·R(λ) with responsivity overlay")
-ax1.grid(True, alpha=0.3)
+_, labels2 = ax1b.get_legend_handles_labels()
+ax1.legend(*ax1b.get_legend_handles_labels(), loc='lower right', ncol=2, framealpha=0.7)
 
 # — Plot 2: Integrated signal S(T) ————————————————————————————————————————————
-ax2 = axes[1]
-ax2.plot(T_range, S_norm, color='steelblue', linewidth=2)
-ax2.set_xlabel('Temperature (K)')
-ax2.set_ylabel('Signal S(T) (normalised)')
-ax2.set_title("Integrated photodiode signal vs blackbody temperature")
-ax2.grid(True, alpha=0.3)
-ax2.set_xlim(T_range[0], T_range[-1])
+for det in DETECTORS:
+    ax2.plot(T_range, det["S_norm"], color=det["color"], linewidth=2, label=det["label"])
+ax2.set_ylabel('S(T) [norm.]')
+ax2.set_xlim(T_plot[0], T_plot[-1])
+ax2.set_xticks(T_plot)
+ax2.text(0.97, 0.03, r'$S(T) = \int B(\lambda,T)\cdot R(\lambda)\,\mathrm{d}\lambda$',
+         transform=ax2.transAxes, va='bottom', ha='right', fontsize=9)
 
 # — Plot 3: Sensitivity dS/dT ——————————————————————————————————————————————
-ax3 = axes[2]
-ax3.plot(T_range, dSdT_norm * 1e-3, color='crimson', linewidth=2)  # scale for readability
-ax3.set_xlabel('Temperature (K)')
-ax3.set_ylabel('dS/dT (normalised, ×10⁻³ K⁻¹)')
-ax3.set_title("Temperature sensitivity dS/dT")
-ax3.grid(True, alpha=0.3)
-ax3.set_xlim(T_range[0], T_range[-1])
-ax3.axhline(0, color='k', linewidth=0.8, linestyle='--')
+for det in DETECTORS:
+    ax3.plot(T_range, det["dSdT_norm"], color=det["color"],
+             linewidth=2, label=det["label"])
+ax3.set_xlabel('Temperature [K]')
+ax3.set_ylabel('dS/dT [norm.]')
 
-plt.tight_layout()
-plt.savefig("photodiode_temp_sensitivity.png", dpi=150, bbox_inches='tight')
+ax3.legend(loc='lower right')
+ax3.set_xlim(T_plot[0], T_plot[-1])
+ax3.set_xticks(T_plot)
+
+
+fig.subplots_adjust(left=0.12, right=0.82, top=0.93, bottom=0.08)
+plt.savefig("photodiode_temp_sensitivity.png", dpi=600, bbox_inches='tight')
 plt.show()
