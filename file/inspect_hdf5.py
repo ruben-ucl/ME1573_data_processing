@@ -1,5 +1,4 @@
 import h5py, glob, os, sys
-import pandas as pd
 import numpy as np
 from pathlib import Path
 
@@ -7,7 +6,7 @@ sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from tools import get_paths
 
 __author__ = 'Rubén Lambert-Garcia'
-__version__ = 'v1.0'
+__version__ = 'v2.0'
 
 '''
 CHANGELOG
@@ -16,103 +15,130 @@ CHANGELOG
     v1.0 - multilevel tables for displaying up to two levels of data subgroups
          - improved control loop for automatically deleting a dataset from all files
          - added loop break with 'x' input
-           
-INTENDED CHANGES
-    - 
-    
+    v1.1 - added purge_kh mode
+    v2.0 - unified three-mode system: one_by_one | from_list | from_all
+           any dataset or group can be targeted via TARGET
 '''
 
-# Input data informaton
-filepath = get_paths()['hdf5']
-    
-repeat_for_all = True
-dset_to_delete_all = 'bs-p1'
-# dset_to_delete_all = 'bs-p10-s37_lagrangian_bin'
-# dset_to_delete_all = 'bs-p10-s37'
+# ── Mode ──────────────────────────────────────────────────────────────────────
+MODE   = 'one_by_one'   # 'one_by_one' | 'from_list' | 'from_all'
+TARGET = 'keyhole_bin'           # dataset or group to delete (used in from_list / from_all)
+
+# Trackids to operate on — only used when MODE == 'from_list'
+TRACKIDS = ['0301_01', '0301_03', '0301_05', '0302_01',
+            '0304_04', '0306_02', '0307_01', '0307_06',
+            '0504_01', '0504_02', '0504_06', '0506_04',
+            '0506_05', '0507_02', '0507_03', '0507_05',
+            '0507_06', '0516_05'
+            ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+hdf5_dir = Path(get_paths()['hdf5'])
 
 col_w = [50, 25, 15, 10]
 total_w = np.sum(col_w) + 3
 col_format = '{:<'+str(col_w[0])+'} {:<'+str(col_w[1])+'} {:<'+str(col_w[2])+'} {:<'+str(col_w[3])+'}'
-tab_rule = '-'*total_w
+tab_rule = '-' * total_w
 
-# Do not modify
-global skip_input
-skip_input = False
+# ── Shared helpers ────────────────────────────────────────────────────────────
 
-# Iterate through files and datasets to perform filtering and thresholding
+def print_contents(f):
+    print(f'\n{f.filename}  —  datasets:\n{tab_rule}')
+    props = {}
+    for i in f.keys():
+        item = f[i]
+        try:
+            props[i] = [str(item.shape), str(item.dtype), str(round(item.nbytes / 1e9, 6))]
+        except AttributeError:
+            props[i + '/'] = ['', 'Group', '']
+            for j in f[i].keys():
+                sub = f[i][j]
+                try:
+                    props[f'    {j}'] = [str(sub.shape), str(sub.dtype), str(round(sub.nbytes / 1e9, 6))]
+                except AttributeError:
+                    props[f'    {j}/'] = ['', 'Sub-group', '']
+                    for k in f[i][j].keys():
+                        subsub = f[i][j][k]
+                        try:
+                            props[f'        {k}'] = [str(subsub.shape), str(subsub.dtype), str(round(subsub.nbytes / 1e9, 6))]
+                        except AttributeError:
+                            pass
+    print(col_format.format('Name', 'Shape', 'Datatype', 'Gigabytes'))
+    print(tab_rule)
+    for name, (shape, dtype, nb) in props.items():
+        print(col_format.format(name, shape, dtype, nb))
+
+def delete_target(f, target):
+    if target in f:
+        del f[target]
+        return True
+    return False
+
+# ── one_by_one mode ───────────────────────────────────────────────────────────
+
+def run_one_by_one():
+    for path in sorted(hdf5_dir.glob('*.h*5')):
+        with h5py.File(path, 'a') as f:
+            while True:
+                print_contents(f)
+                cmd = input("\nDataset/group to delete, 'c' to continue, 'x' to exit: ").strip()
+                if cmd == 'x':
+                    print('Done.')
+                    return
+                elif cmd == 'c':
+                    break
+                elif cmd in f:
+                    del f[cmd]
+                    print(f"Deleted '{cmd}'.")
+                else:
+                    print(f"'{cmd}' not found.")
+    print('Done.')
+
+# ── from_list / from_all shared batch logic ───────────────────────────────────
+
+def run_batch(paths, target):
+    if not paths:
+        print('No files to process.')
+        return
+
+    print(f"Will delete '{target}' from {len(paths)} file(s):")
+    for p in paths:
+        print(f'  {p.stem}')
+    confirm = input('\nProceed? (y/n): ').strip().lower()
+    if confirm != 'y':
+        print('Aborted.')
+        return
+
+    deleted, skipped = [], []
+    for path in paths:
+        if not path.exists():
+            print(f'  {path.stem}: file not found, skipping')
+            skipped.append(path.stem)
+            continue
+        with h5py.File(path, 'a') as f:
+            if delete_target(f, target):
+                print(f'  {path.stem}: deleted')
+                deleted.append(path.stem)
+            else:
+                print(f"  {path.stem}: '{target}' not found, skipping")
+                skipped.append(path.stem)
+
+    print(f'\nDeleted: {len(deleted)}  |  Skipped: {len(skipped)}')
+    print('Done.')
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 def main():
-    for file in sorted(glob.glob(str(Path(filepath, '*.h*5')))):
-        with h5py.File(file, 'a') as f:
-            status = 0           # 0 = stay on current file, 1 = continue to next file, 2 = exit
-            while status == 0:
-                status = inspect_and_delete(f)
-            if status == 2:
-                break
-            else:
-                pass
-                
-    print('\nDone')
-        
-def inspect_and_delete(f):
-    if globals()['skip_input'] != True:
-        print()
-        print(f, f' Datasets:\n{tab_rule}')
-        dset_props = {}
-        for i in f.keys():
-            dset = f[i]
-            try:
-                dset_props[i] = [str(dset.shape), str(dset.dtype), str(round(dset.nbytes/(10**9), 6))]
-            except AttributeError:
-                dset_props[i+'/'] = ['', 'Group', '']
-                for j in f[i].keys():
-                    subset = f[i][j]
-                    try:
-                        dset_props[f'    {j}'] = [str(subset.shape), str(subset.dtype), str(round(subset.nbytes/(10**9), 6))]
-                    except AttributeError:
-                        dset_props[f'    {j}/'] = ['', 'Sub-group', '']
-                        for k in f[i][j].keys():
-                            subsubset = f[i][j][k]
-                            try:
-                                dset_props[f'        {k}'] = [str(subsubset.shape), str(subsubset.dtype), str(round(subsubset.nbytes/(10**9), 6))]
-                            except AttributeError:
-                                pass
-        print(col_format.format('Name', 'Shape', 'Datatype', 'Gigabytes'))
-        print(tab_rule)
-        for set_name, vals in dset_props.items():
-            shape, dtype, nbytes = vals
-            print(col_format.format(set_name, shape, dtype, nbytes))
+    if MODE == 'one_by_one':
+        run_one_by_one()
+    elif MODE == 'from_list':
+        paths = [hdf5_dir / f'{tid}.hdf5' for tid in TRACKIDS]
+        run_batch(paths, TARGET)
+    elif MODE == 'from_all':
+        paths = sorted(hdf5_dir.glob('*.h*5'))
+        run_batch(paths, TARGET)
     else:
-        print(f)
-        
-    try:
-        if repeat_for_all != True:
-            dset_to_delete = input('\nEnter name of dataset you would like to delete, \'c\' to continue or \'x\' to exit.\n')
-            if dset_to_delete == 'c':
-                return 1
-            elif dset_to_delete =='x':
-                return 2
-            else:
-                del f[dset_to_delete]
-                cont = input('Move on to next file? (y/n)\n')
-            if cont == 'n':
-                return 0
-            else:
-                return 1
-        else:
-            if globals()['skip_input'] != True:
-                confirm_del = input(f'Are you sure you want to delete all datasets \'{dset_to_delete_all}\'? (y/n)\n')
-                if  confirm_del == 'y':
-                    globals()['skip_input'] = True
-            if globals()['skip_input'] == True:
-                del f[dset_to_delete_all]
-            else:
-                return 2
-    except KeyError:
-        if repeat_for_all == False:
-            print('\nInput not recognised, try again.')
-            return 0
-        else:
-            print('Dataset deleted')
-            return 1
-            
+        print(f"Unknown MODE '{MODE}'. Choose: one_by_one | from_list | from_all")
+
 main()
