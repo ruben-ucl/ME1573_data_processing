@@ -10,7 +10,7 @@ from scipy.interpolate import griddata
 from scipy.ndimage import gaussian_filter
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from tools import get_logbook, define_collumn_labels
+from tools import get_logbook, define_column_labels
 
 __author__ ='Rubén Lambert-Garcia'
 __version__ = '1.0'
@@ -677,7 +677,7 @@ def print_data_summary(x, y, z, z2, z3):
 def main():
     log_red = filter_logbook()
     marker_dict = define_point_formats()
-    col_dict = define_collumn_labels()
+    col_dict = define_column_labels()
     fig, axs = set_up_figure(col_dict)
     x, y, z, z2, z3 = plot_data(axs[0], log_red, marker_dict, col_dict)
     data = np.stack((x, y, z, z2, z3), axis=0)

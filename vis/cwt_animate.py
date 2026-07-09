@@ -10,7 +10,7 @@ from scipy.signal import savgol_filter
 print = functools.partial(print, flush=True)
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 
-from tools import get_paths, get_cwt_scales, get_substrate_surface_coords, define_collumn_labels
+from tools import get_paths, get_cwt_scales, get_substrate_surface_coords, define_column_labels
 
 # ─── Command Line Arguments ────────────────────────────────────────────────────
 
@@ -201,7 +201,7 @@ print(f'X-ray crop rows: {crop_start}–{crop_end}')
 
 # ─── Figure Setup — static elements ───────────────────────────────────────────
 
-series_label = define_collumn_labels().get(series, [None, series])[1]
+series_label = define_column_labels().get(series, [None, series])[1]
 
 fig = plt.figure(figsize=[7, 7], dpi=150)
 # Outer: x-ray on top, signal+CWT group below — gap between sections controlled

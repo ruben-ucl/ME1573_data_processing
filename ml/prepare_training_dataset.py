@@ -40,7 +40,7 @@ import json
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tools import get_logbook, filter_logbook_tracks, define_collumn_labels
+from tools import get_logbook, filter_logbook_tracks, define_column_labels
 from ml.config import get_default_cwt_data_dir
 
 
@@ -149,7 +149,7 @@ def join_with_logbook(df, logbook):
     Returns:
         DataFrame with laser_power and scan_speed columns added
     """
-    # Logbook uses 'trackid' (not 'track_id') and column names from define_collumn_labels():
+    # Logbook uses 'trackid' (not 'track_id') and column names from define_column_labels():
     # 'Avg. power [W]' for laser power
     # 'Scan speed [mm/s]' for scan speed
 
@@ -1110,7 +1110,7 @@ def select_test_tracks_preserve_diversity(df, logbook, test_fraction=0.2, min_sa
         tuple: (train_tracks, test_tracks) - lists of track IDs
     """
     # Get column mapping dictionary
-    col_dict = define_collumn_labels()
+    col_dict = define_column_labels()
 
     # Check which columns are missing and need to be added from logbook
     required_cols = ['laser_power', 'scan_speed', 'base_type', 'material', 'laser_mode', 'regime']
@@ -1257,7 +1257,7 @@ def select_test_tracks_random_search(df, logbook, test_fraction=0.2, seed=42,
     max_windows = int(total_windows * (test_fraction + window_tolerance))
 
     # Get regime info
-    col_dict = define_collumn_labels()
+    col_dict = define_column_labels()
     regime_col = col_dict['regime'][0]
     logbook_regime = logbook[['trackid', regime_col]].copy()
     logbook_regime.rename(columns={regime_col: 'regime'}, inplace=True)
@@ -2131,7 +2131,7 @@ def prepare_dataset_variant(df_filtered, args, logbook, active_filters, label_pa
         print(f"  Test windows: {len(df_test)}")
 
         # Validate test set diversity
-        col_dict = define_collumn_labels()
+        col_dict = define_column_labels()
         regime_col = col_dict['regime'][0]  # 'Melting regime'
         logbook_regime = logbook[['trackid', regime_col]].copy()
         logbook_regime.rename(columns={regime_col: 'regime'}, inplace=True)

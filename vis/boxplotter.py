@@ -9,7 +9,7 @@ import numpy as np
 import sys, os, textwrap
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from tools import get_logbook, define_collumn_labels
+from tools import get_logbook, define_column_labels
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -524,7 +524,7 @@ def filter_logbook(log):
 def main():
     log = get_logbook()
     df = filter_logbook(log)
-    col_dict = define_collumn_labels()
+    col_dict = define_column_labels()
     
     # Select data to analyse
     data_label = 'MP_vol'
