@@ -71,10 +71,216 @@ def get_logbook_data(logbook, trackid, layer_n=1):  # Get scan speed and framera
     
     return track_data
 
-def define_collumn_labels():
+_HDF5_DEFAULT_TRIM = {
+    'KH':   0,
+    'AMPM': 500,
+}
+
+def read_hdf5_signal(trackid, hdf5_dir, group, dataset, trim=None):
+    import h5py
+    if trim is None:
+        trim = _HDF5_DEFAULT_TRIM.get(group, 0)
+    path = Path(hdf5_dir) / f'{trackid}.hdf5'
+    if not path.exists():
+        print(f'WARNING: HDF5 file not found for {trackid}: {path}')
+        return np.array([])
+    with h5py.File(path, 'r') as f:
+        try:
+            data = np.array(f[f'{group}/{dataset}'], dtype=float)
+        except KeyError:
+            print(f'WARNING: {group}/{dataset} not found in {path.name}')
+            return np.array([])
+    if trim > 0 and len(data) > 2 * trim:
+        data = data[trim:-trim]
+    return data
+
+def get_excluded_trackids():
+    """
+    Return the list of trackids excluded from all analyses due to corrupted
+    photodiode signal data (sessions 0514–0516).
+
+    Import and use this in any script that iterates over HDF5 files or
+    photodiode signals, e.g.:
+
+        from tools import get_excluded_trackids
+        excluded = get_excluded_trackids()
+        if trackid in excluded:
+            continue
+    """
+    return [
+        '0514_02', '0514_04', '0514_05',
+        '0515_01', '0515_02', '0515_03', '0515_04', '0515_05', '0515_06',
+        '0516_01', '0516_02', '0516_03', '0516_04', '0516_05', '0516_06',
+    ]
+
+def fmt_sigfigs_padded(values, sigfigs):
+    if sigfigs is None:
+        return [str(v) for v in values]
+    if all(float(v) == int(float(v)) for v in values):
+        return [str(int(float(v))) for v in values]
+    formatted = [f'{v:.{sigfigs}g}' for v in values]
+    def _dp(s):
+        return len(s.split('.')[1]) if '.' in s else 0
+    max_dp = max(_dp(s) for s in formatted)
+    padded = []
+    for s in formatted:
+        if max_dp == 0:
+            padded.append(s)
+        elif '.' in s:
+            padded.append(s + '0' * (max_dp - _dp(s)))
+        else:
+            padded.append(s + '.' + '0' * max_dp)
+    return padded
+
+def apply_filter(df, col, op, val, atol=0.02):
+    if   op == '==': return df[col] == val
+    elif op == '!=': return df[col] != val
+    elif op == '>':  return df[col] >  val
+    elif op == '<':  return df[col] <  val
+    elif op == '~=': return np.isclose(df[col], val, atol=atol, rtol=0)
+    else: raise ValueError(f'Unknown filter operator: {op!r}')
+    
+DEFAULT_LOGBOOK_FILTERS = {
+    'layer': 1,
+    'base_type': 'powder',
+    'material': 'AlSi10Mg',
+    'laser_mode': 'cw',
+}
+
+def filter_logbook_tracks(logbook, filters_dict='default'):
+    """
+    Filter logbook tracks based on specified criteria.
+
+    Args:
+        logbook (pd.DataFrame): Logbook DataFrame from get_logbook()
+        filters_dict (dict, optional): Dictionary of filter conditions. Supported keys:
+            Semantic shorthand keys (translated internally to logbook columns):
+            - 'material' (str or list): 'AlSi10Mg', 'Al7A77', 'Al', 'Ti64'
+            - 'layer' (int or list): 1, 2, etc.
+            - 'laser_mode' (str or list): 'cw' or 'pwm'
+            - 'base_type' (str or list): 'powder' or 'welding'
+            - 'substrate_no' (str or list): '514', '515', '0514', 's0514', etc.
+            - 'regime' (str or list): exact regime name, or keywords 'keyhole', 'not_cond'
+            - 'beamtime' (int or list): 1, 2, 3, 6
+            - 'pores_threshold' (int): minimum n_pores (exclusive lower bound)
+            - 'travel_direction' (str or list): 'L-R' or 'R-L'
+            Arbitrary column filters (passed directly to apply_filter):
+            - 'trackids' (list): explicit list of trackids to keep (all others excluded)
+            - 'custom' (list of dicts): [{'col': logbook_col, 'op': op, 'val': val,
+                                          'atol': 0.02 (optional), 'label': str (optional)}]
+              Operators: '==', '!=', '>', '<', '~=' (approximate equality)
+
+    Returns:
+        tuple: (filtered_logbook, active_filters)
+    """
+    if filters_dict == 'default':
+        filters_dict = DEFAULT_LOGBOOK_FILTERS
+    elif filters_dict is None:
+        filters_dict = {}
+
+    mask = pd.Series([True] * len(logbook), index=logbook.index)
+    active_filters = []
+
+    def _or_mask(values, col, op='==', label_fn=str):
+        sub = pd.Series([False] * len(logbook), index=logbook.index)
+        for v in values:
+            sub |= apply_filter(logbook, col, op, v)
+            active_filters.append(label_fn(v))
+        return sub
+
+    # Simple semantic filters: key → (logbook_column, label_fn)
+    _SEMANTIC = {
+        'material': ('Substrate material', str),
+        'layer':    ('Layer',              lambda v: f'L{v}'),
+        'beamtime': ('Beamtime',           str),
+    }
+    for key, (col, label_fn) in _SEMANTIC.items():
+        if key in filters_dict:
+            values = filters_dict[key] if isinstance(filters_dict[key], list) else [filters_dict[key]]
+            mask &= _or_mask(values, col, label_fn=label_fn)
+
+    # Laser mode filter (semantic: 'cw'/'pwm' → Point jump delay column)
+    if 'laser_mode' in filters_dict:
+        modes = filters_dict['laser_mode'] if isinstance(filters_dict['laser_mode'], list) else [filters_dict['laser_mode']]
+        for mode in modes:
+            if mode.lower() == 'cw':
+                mask &= apply_filter(logbook, 'Point jump delay [us]', '==', 0)
+                active_filters.append('cw')
+            elif mode.lower() == 'pwm':
+                mask &= apply_filter(logbook, 'Point jump delay [us]', '!=', 0)
+                active_filters.append('pwm')
+
+    # Base type filter (semantic: 'powder'/'welding' → Powder material column)
+    if 'base_type' in filters_dict:
+        base_types = filters_dict['base_type'] if isinstance(filters_dict['base_type'], list) else [filters_dict['base_type']]
+        for base_type in base_types:
+            if base_type.lower() == 'powder':
+                mask &= apply_filter(logbook, 'Powder material', '!=', 'None')
+                active_filters.append('powder')
+            elif base_type.lower() == 'welding':
+                mask &= apply_filter(logbook, 'Powder material', '==', 'None')
+                active_filters.append('welding')
+
+    # Substrate number filter (with string normalisation)
+    if 'substrate_no' in filters_dict:
+        substrate_nos = filters_dict['substrate_no'] if isinstance(filters_dict['substrate_no'], list) else [filters_dict['substrate_no']]
+        sub = pd.Series([False] * len(logbook), index=logbook.index)
+        for substrate_no in substrate_nos:
+            s = str(substrate_no).replace('s', '').zfill(4)
+            sub |= apply_filter(logbook, 'Substrate No.', '==', s)
+            active_filters.append(f's{s}')
+        mask &= sub
+
+    # Melting regime filter (with special keywords)
+    if 'regime' in filters_dict:
+        regimes = filters_dict['regime'] if isinstance(filters_dict['regime'], list) else [filters_dict['regime']]
+        sub = pd.Series([False] * len(logbook), index=logbook.index)
+        for regime in regimes:
+            if regime.lower() == 'keyhole':
+                sub |= logbook['Melting regime'].str.contains('keyhole', case=False, na=False)
+                active_filters.append('keyhole')
+            elif regime.lower() == 'not_cond':
+                sub |= (logbook['Melting regime'] != 'conduction') & logbook['Melting regime'].notna()
+                active_filters.append('not_conduction')
+            else:
+                sub |= apply_filter(logbook, 'Melting regime', '==', regime)
+                active_filters.append(regime)
+        mask &= sub
+
+    # Pores threshold filter
+    if 'pores_threshold' in filters_dict:
+        t = filters_dict['pores_threshold']
+        mask &= apply_filter(logbook, 'n_pores', '>', t)
+        active_filters.append(f'pores>{t}')
+
+    # Travel direction filter
+    if 'travel_direction' in filters_dict:
+        directions = filters_dict['travel_direction'] if isinstance(filters_dict['travel_direction'], list) else [filters_dict['travel_direction']]
+        for direction in directions:
+            active_filters.append(direction)
+
+    # Explicit trackid list filter
+    if 'trackids' in filters_dict:
+        ids = filters_dict['trackids']
+        mask &= logbook['trackid'].isin(ids)
+        active_filters.append(f'trackids={ids}')
+
+    # Custom arbitrary filters: [{'col': ..., 'op': ..., 'val': ..., 'atol': ..., 'label': ...}]
+    if 'custom' in filters_dict:
+        for f in filters_dict['custom']:
+            mask &= apply_filter(logbook, f['col'], f['op'], f['val'], f.get('atol', 0.02))
+            active_filters.append(f.get('label', f'{f["col"]}{f["op"]}{f["val"]}'))
+
+    return logbook[mask].copy(), active_filters
+
+def define_column_labels():
     # Dict item structure:
     # label: [logbook header, axis label]
-    col_dict = {'power':            ['Avg. power [W]',
+    col_dict = {
+        'avg_power':                ['Avg. power [W]',
+                                     'Avg. Power [W]'
+                                     ],
+        'power':                    ['Power [W]',
                                      'Power [W]'
                                      ],
         'pt_dist':                  ['Point distance [um]',
@@ -89,14 +295,23 @@ def define_collumn_labels():
         'LED':                      ['LED [J/m]',
                                      'LED [J m$^{-1}$]'
                                      ],
+        'VED':                      ['VED [mJ/mm3]',
+                                     'VED [mJ mm$^{-3}$]'
+                                     ],
         'regime':                   ['Melting regime',
                                      'Melting regime'
                                      ],
         'laser_power':              ['Avg. power [W]',
                                      'Laser power [W]'
                                      ],
+        'duty_cycle':               ['Duty cycle',
+                                     'Duty cycle'
+                                     ],
         'material':                 ['Substrate material',
                                      'Material'
+                                     ],
+        'powder_material':          ['Powder material',
+                                     'Powder material'
                                      ],
         'base_type':                ['Base condition',
                                      'Base type'
@@ -107,9 +322,9 @@ def define_collumn_labels():
         'n_pores':                  ['n_pores',
                                      'Keyhole pore count'
                                      ],
-        'pore_density':              ['pore_density [/mm3]',
-                                      'Keyhole porosity [/mm$^3$]'
-                                      ],
+        'pore_density':             ['pore_density [/mm3]',
+                                     'Keyhole porosity [/mm$^3$]'
+                                     ],
         'pore_vol':                 ['pore_vol_mean [um^3]',
                                      'Mean pore volume [μm$^3$]'
                                      ],
@@ -131,14 +346,26 @@ def define_collumn_labels():
         'MP_depth':                 ['melt_pool_depth [um]',
                                      'Melt pool depth [μm]'
                                      ],
+        'MP_depth_err':             ['per_regime_MP_depth_error',
+                                     'Melt pool depth error [μm]'
+                                     ],
         'MP_length':                ['melt_pool_length [um]',
                                      'Melt pool length [μm]'
+                                     ],
+        'MP_length_err':            ['per_regime_MP_length_error',
+                                     'Melt pool length error [μm]'
                                      ],
         'MP_width':                 ['track_width_mean [um]',
                                      'Melt pool width [μm]'
                                      ],
+        'MP_width_err':             ['track_width_sterr [um]',
+                                     'Melt pool width SE [μm]'
+                                     ],
         'track_height':             ['track_height [um]',
                                      'Track height [μm]'
+                                     ],
+        'track_height_err':         ['track_height_err [um]',
+                                     'Track height error [μm]'
                                      ],
         'MP_vol':                   ['total_melt_volume [mm^3]',
                                      r'Melt pool volume, $\it{V}$ [mm$^3$]'
@@ -151,6 +378,9 @@ def define_collumn_labels():
                                      ],
         'melting_efficiency':       ['melting_efficiency',
                                      r'Melting efficiency, $\it{η}$'
+                                     ],
+        'melting_efficiency_err':   ['melting_efficiency_error',
+                                     r'Melting efficiency error, $\it{e_{η}}$'
                                      ],
         'R':                        ['R [mm/s]',
                                      'Solidification rate, R [mm s$^{-1}$]'
@@ -180,10 +410,7 @@ def define_collumn_labels():
                                      'Cooling rate @ rear tip [K s$^{-1}$]'
                                      ],
         'KH_depth':                 ['keyhole_max_depth_mean [um]',
-                                     'Keyhole depth [μm]'
-                                     ],
-        'max_depth':                ['keyhole_max_depth_mean [um]',
-                                     'Keyhole depth [μm]'
+                                     'Keyhole depth\n[μm]'
                                      ],
         'KH_depth_sd':              ['keyhole_max_depth_sd [um]',
                                      'Keyhole depth std. dev. [μm]'
@@ -225,22 +452,76 @@ def define_collumn_labels():
                                      'FKW angle sample count'
                                      ],
         'norm_H_prod':              ['Normalised enthalpy product',
-                                     r'Normalised enthalpy product, $\it{\Delta H/h_m \dot L_{th}^*}$'
+                                     r'Normalised enthalpy product, $\it{\Delta H h_m^{-1} L_{th}^*}$'
                                      ],
         'KH_AR':                    ['keyhole_aspect_ratio',
                                      'Keyhole aspect ratio'
                                      ],
-        'PD_1_mean':                ['PD_1_mean [bits]',
-                                     'PD 1 mean signal intensity'
-                                     ],
-        'PD_1_std':                 ['PD_1_std [bits]',
-                                     'PD 1 signal intensity st. dev.'
+        'PD_1_n':                   ['PD_1_n',
+                                     'PD1 sample count'
                                      ],
         'PD_1_min':                 ['PD_1_min [bits]',
-                                     'PD 1 signal intensity min.'
+                                     'PD1 signal intensity min.'
+                                     ],
+        'PD_1_q25':                 ['PD_1_q25 [bits]',
+                                     'PD1 signal intensity Q1'
+                                     ],
+        'PD_1_median':              ['PD_1_median [bits]',
+                                     'PD1 signal intensity median'
+                                     ],
+        'PD_1_q75':                 ['PD_1_q75 [bits]',
+                                     'PD1 signal intensity Q3'
                                      ],
         'PD_1_max':                 ['PD_1_max [bits]',
-                                     'PD 1 signal intensity max.'
+                                     'PD1 signal intensity max.'
+                                     ],
+        'PD_1_iqr':                 ['PD_1_iqr [bits]',
+                                     'PD1 signal intensity IQR'
+                                     ],
+        'PD_1_mean':                ['PD_1_mean [bits]',
+                                     'PD1 mean signal intensity'
+                                     ],
+        'PD_1_std':                 ['PD_1_std [bits]',
+                                     'PD1 signal intensity st. dev.'
+                                     ],
+        'PD_1_se':                  ['PD_1_se [bits]',
+                                     'PD1 signal intensity st. error'
+                                     ],
+        'PD_1_skewness':            ['PD_1_skewness',
+                                     'PD1 signal skewness'
+                                     ],
+        'PD_2_n':                   ['PD_2_n',
+                                     'PD2 sample count'
+                                     ],
+        'PD_2_min':                 ['PD_2_min [bits]',
+                                     'PD2 signal intensity min.'
+                                     ],
+        'PD_2_q25':                 ['PD_2_q25 [bits]',
+                                     'PD2 signal intensity Q1'
+                                     ],
+        'PD_2_median':              ['PD_2_median [bits]',
+                                     'PD2 signal intensity median'
+                                     ],
+        'PD_2_q75':                 ['PD_2_q75 [bits]',
+                                     'PD2 signal intensity Q3'
+                                     ],
+        'PD_2_max':                 ['PD_2_max [bits]',
+                                     'PD2 signal intensity max.'
+                                     ],
+        'PD_2_iqr':                 ['PD_2_iqr [bits]',
+                                     'PD2 signal intensity IQR'
+                                     ],
+        'PD_2_mean':                ['PD_2_mean [bits]',
+                                     'PD2 mean signal intensity'
+                                     ],
+        'PD_2_std':                 ['PD_2_std [bits]',
+                                     'PD2 signal intensity st. dev.'
+                                     ],
+        'PD_2_se':                  ['PD_2_se [bits]',
+                                     'PD2 signal intensity st. error'
+                                     ],
+        'PD_2_skewness':            ['PD_2_skewness',
+                                     'PD2 signal skewness'
                                      ],
         'Bo':                       ['Bo',
                                      'Bond number'
@@ -526,26 +807,6 @@ def get_cwt_scales(wavelet, num=512, fmin=1000, fmax=50000, sampling_rate=100000
 
         return scales, vmax
 
-def get_excluded_trackids():
-    """
-    Return the list of trackids excluded from all analyses due to corrupted
-    photodiode signal data (sessions 0514–0516).
-
-    Import and use this in any script that iterates over HDF5 files or
-    photodiode signals, e.g.:
-
-        from tools import get_excluded_trackids
-        excluded = get_excluded_trackids()
-        if trackid in excluded:
-            continue
-    """
-    return [
-        '0514_02', '0514_04', '0514_05',
-        '0515_01', '0515_02', '0515_03', '0515_04', '0515_05', '0515_06',
-        '0516_01', '0516_02', '0516_03', '0516_04', '0516_05', '0516_06',
-    ]
-
-
 def interpolate_low_quality_data(fkw_angle: np.ndarray, 
                                 n_points_fit: np.ndarray | None, 
                                 min_score: int = 3,
@@ -704,7 +965,6 @@ def interpolate_low_quality_data(fkw_angle: np.ndarray,
     
     return corrected_data, modified_mask
 
-
 def validate_timeseries_quality(fkw_angle: np.ndarray, 
                                n_points_fit: np.ndarray | None, 
                                min_score: int = 5,
@@ -805,170 +1065,6 @@ def validate_timeseries_quality(fkw_angle: np.ndarray,
         'percentage_modified': (total_modified / total_points * 100) if total_points > 0 else 0
     }
 
-DEFAULT_LOGBOOK_FILTERS = {
-    'layer': 1,
-    'base_type': 'powder',
-    'regime': 'not_cond',
-    'material': 'AlSi10Mg',
-    'laser_mode': 'cw',
-    'beamtime': 3,
-}
-
-def filter_logbook_tracks(logbook, filters_dict=None):
-    """
-    Filter logbook tracks based on specified criteria.
-
-    This function applies boolean filters to the logbook DataFrame to select
-    tracks matching the specified conditions. Extracted from dataset_labeller.py
-    for reuse in hyperparameter tuning pipeline.
-
-    Args:
-        logbook (pd.DataFrame): Logbook DataFrame from get_logbook()
-        filters_dict (dict, optional): Dictionary of filter conditions. Supported keys:
-            - 'material' (str or list): Substrate material(s) - 'AlSi10Mg', 'Al7A77', 'Al', 'Ti64'
-            - 'layer' (int or list): Layer number(s) - 1, 2, etc.
-            - 'laser_mode' (str or list): 'cw' (continuous wave) or 'pwm' (pulsed)
-            - 'base_type' (str or list): 'powder' or 'welding' (substrate only)
-            - 'substrate_no' (str or list): Substrate numbers - '514', '515', '504', etc.
-            - 'regime' (str or list): Melting regime with three special keywords plus exact matching:
-                * 'conduction' - exact match for conduction
-                * 'keyhole' - matches any regime containing 'keyhole' (unstable keyhole, quasi-stable keyhole, etc.)
-                * 'not_cond' - excludes conduction, matches all other regimes
-                * Any exact regime name (e.g., 'unstable keyhole', 'quasi-stable vapour depression')
-            - 'beamtime' (int or list): Beamtime number(s) - 1, 2, 3, 6, etc.
-            - 'pores_threshold' (int): Minimum number of pores (n_pores > threshold)
-            - 'travel_direction' (str or list): 'cw' (clockwise) or 'ccw' (counter-clockwise)
-
-    Returns:
-        tuple: (filtered_logbook, active_filters)
-            - filtered_logbook (pd.DataFrame): Filtered logbook DataFrame
-            - active_filters (list): List of filter names that were applied
-
-    Examples:
-        >>> logbook = get_logbook()
-        >>> # Filter for AlSi10Mg, Layer 1, continuous wave, powder base
-        >>> filtered_log, filters = filter_logbook_tracks(logbook, {
-        ...     'material': 'AlSi10Mg',
-        ...     'layer': 1,
-        ...     'laser_mode': 'cw',
-        ...     'base_type': 'powder'
-        ... })
-        >>> # Returns trackids matching all conditions and ['AlSi10Mg', 'L1', 'cw', 'powder']
-    """
-    if filters_dict is None:
-        filters_dict = {}
-
-    # Start with all tracks
-    mask = pd.Series([True] * len(logbook), index=logbook.index)
-    active_filters = []
-
-    # Material filter
-    if 'material' in filters_dict:
-        materials = filters_dict['material'] if isinstance(filters_dict['material'], list) else [filters_dict['material']]
-        material_mask = pd.Series([False] * len(logbook), index=logbook.index)
-        for material in materials:
-            material_mask |= (logbook['Substrate material'] == material)
-            active_filters.append(material)
-        mask &= material_mask
-
-    # Layer filter
-    if 'layer' in filters_dict:
-        layers = filters_dict['layer'] if isinstance(filters_dict['layer'], list) else [filters_dict['layer']]
-        layer_mask = pd.Series([False] * len(logbook), index=logbook.index)
-        for layer in layers:
-            layer_mask |= (logbook['Layer'] == layer)
-            active_filters.append(f'L{layer}')
-        mask &= layer_mask
-
-    # Laser mode filter (CW vs PWM)
-    if 'laser_mode' in filters_dict:
-        modes = filters_dict['laser_mode'] if isinstance(filters_dict['laser_mode'], list) else [filters_dict['laser_mode']]
-        for mode in modes:
-            if mode.lower() == 'cw':
-                mask &= (logbook['Point jump delay [us]'] == 0)
-                active_filters.append('cw')
-            elif mode.lower() == 'pwm':
-                mask &= (logbook['Point jump delay [us]'] != 0)
-                active_filters.append('pwm')
-
-    # Base type filter (powder vs welding/substrate)
-    if 'base_type' in filters_dict:
-        base_types = filters_dict['base_type'] if isinstance(filters_dict['base_type'], list) else [filters_dict['base_type']]
-        for base_type in base_types:
-            if base_type.lower() == 'powder':
-                mask &= (logbook['Powder material'] != 'None')
-                active_filters.append('powder')
-            elif base_type.lower() == 'welding':
-                mask &= (logbook['Powder material'] == 'None')
-                active_filters.append('welding')
-
-    # Substrate number filter
-    if 'substrate_no' in filters_dict:
-        substrate_nos = filters_dict['substrate_no'] if isinstance(filters_dict['substrate_no'], list) else [filters_dict['substrate_no']]
-        substrate_mask = pd.Series([False] * len(logbook), index=logbook.index)
-        for substrate_no in substrate_nos:
-            # Handle both '514' and 's0514' formats
-            substrate_no_str = str(substrate_no).replace('s', '').zfill(4) if 's' in str(substrate_no) else str(substrate_no).zfill(4)
-            substrate_mask |= (logbook['Substrate No.'] == substrate_no_str)
-            active_filters.append(f's{substrate_no_str}')
-        mask &= substrate_mask
-
-    # Melting regime filter
-    if 'regime' in filters_dict:
-        regimes = filters_dict['regime'] if isinstance(filters_dict['regime'], list) else [filters_dict['regime']]
-        regime_mask = pd.Series([False] * len(logbook), index=logbook.index)
-
-        for regime in regimes:
-            regime_lower = regime.lower()
-
-            # Special keywords
-            if regime_lower == 'conduction':
-                # Exact match for conduction
-                regime_mask |= (logbook['Melting regime'] == 'conduction')
-                active_filters.append('conduction')
-            elif regime_lower == 'keyhole':
-                # Any keyhole-related: includes 'keyhole', 'unstable keyhole', 'quasi-stable keyhole', 'keyhole flickering'
-                regime_mask |= logbook['Melting regime'].str.contains('keyhole', case=False, na=False)
-                active_filters.append('keyhole')
-            elif regime_lower == 'not_cond':
-                # Exclude conduction (includes keyhole and other regimes)
-                regime_mask |= (logbook['Melting regime'] != 'conduction') & logbook['Melting regime'].notna()
-                active_filters.append('not_conduction')
-            else:
-                # Exact match for any other regime value (e.g., 'unstable keyhole', 'quasi-stable vapour depression')
-                regime_mask |= (logbook['Melting regime'] == regime)
-                active_filters.append(regime)
-
-        mask &= regime_mask
-
-    # Beamtime filter
-    if 'beamtime' in filters_dict:
-        beamtimes = filters_dict['beamtime'] if isinstance(filters_dict['beamtime'], list) else [filters_dict['beamtime']]
-        beamtime_mask = pd.Series([False] * len(logbook), index=logbook.index)
-        for beamtime in beamtimes:
-            beamtime_mask |= (logbook['Beamtime'] == beamtime)
-            active_filters.append(beamtime)
-        mask &= beamtime_mask
-
-    # Pores threshold filter
-    if 'pores_threshold' in filters_dict:
-        threshold = filters_dict['pores_threshold']
-        mask &= (logbook['n_pores'] > threshold)
-        active_filters.append(f'pores>{threshold}')
-
-    # Travel direction filter (clockwise vs counter-clockwise)
-    if 'travel_direction' in filters_dict:
-        directions = filters_dict['travel_direction'] if isinstance(filters_dict['travel_direction'], list) else [filters_dict['travel_direction']]
-        # Note: This would require a 'Travel direction' column in the logbook
-        # Add logic here if this column exists
-        for direction in directions:
-            active_filters.append(direction)
-
-    # Apply combined filter mask
-    filtered_logbook = logbook[mask].copy()
-
-    return filtered_logbook, active_filters
-
 def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 80, fill = '|', printEnd = "\r"):
     """
     Call in a loop to create terminal progress bar
@@ -1066,7 +1162,7 @@ def generate_pv_map(trackids, output_path=None, highlight_trackids=None,
 
     # Get logbook data and column labels
     logbook = get_logbook()
-    col_dict = define_collumn_labels()
+    col_dict = define_column_labels()
 
     # Get column names from dictionary
     # col_dict format: {'key': [logbook_column_name, axis_label]}
@@ -1196,7 +1292,7 @@ def get_trackids_from_logbook(trackids):
         DataFrame with trackid, scan speed, power, and melting regime
     """
     logbook = get_logbook()
-    col_dict = define_collumn_labels()
+    col_dict = define_column_labels()
 
     # Get column names from dictionary
     scan_speed_col = col_dict['scan_speed'][0]
