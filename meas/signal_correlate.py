@@ -4,12 +4,12 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-from tools import get_paths, define_collumn_labels
+from tools import get_paths, define_column_labels
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
 path_dict = get_paths()
-label_dict = define_collumn_labels()
+label_dict = define_column_labels()
 folder = path_dict['hdf5']
 
 group1, time1, series1, colour1 = ('AMPM', 'Time', 'Photodiode1Bits', 'r')
