@@ -27,15 +27,15 @@ INTENDED CHANGES
 '''
 
 """Controls"""
-input_dset_name = 'keyhole_bin_nofilt'
+input_dset_name = 'keyhole_bin'
 save_mode = 'save' # Set to 'preview' or 'save'
 frame_mode = 'cropped' # Set to 'full_frame' or 'cropped'
 plot_keyholes = False
-ignore_first_n_frames = 70
-ignore_last_n_frames = 100
+ignore_first_n_frames = 0
+ignore_last_n_frames = 50
 
 um_per_pix = 4.3
-capture_framerate = 504000 # fps
+capture_framerate = 40000 # fps
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
@@ -62,6 +62,9 @@ def main():
         fname = Path(file).name
         print('\nReading file %s' % fname)
         trackid = fname[:5] + '0' + fname[-6]
+        if trackid != '0516_05':
+            print('Skipping')
+            continue
         with h5py.File(file, 'a') as f:
             try:
                 dset = f[input_dset_name]
