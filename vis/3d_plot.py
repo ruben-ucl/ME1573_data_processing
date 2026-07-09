@@ -1,15 +1,19 @@
-import functools, math, os, sys
+import functools, math, os, re, sys
 import numpy as np
 import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
 import scipy.optimize as optimize
-from scipy.interpolate import Rbf
+from scipy.interpolate import Rbf, griddata, RBFInterpolator, NearestNDInterpolator
+from scipy.ndimage import gaussian_filter
+from scipy.spatial import ConvexHull
+from matplotlib.ticker import MaxNLocator, ScalarFormatter
+from matplotlib.path import Path as mpl_Path
 from sklearn.metrics import r2_score
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from tools import get_logbook, define_collumn_labels
+from tools import get_logbook, define_column_labels, apply_filter, filter_logbook_tracks
 
 __author__ ='Rubén Lambert-Garcia'
 __version__ = '1.0'
@@ -18,45 +22,82 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 
 ###########################################################################################################################
 
-### Figure settings ###
-#----------------------
-font_size = 8
-figsize = (3.15, 2.5) # page width = 6.3
-# figsize = (4, 4)
-dpi = 300
-projection = '2d'
-plot_bg = None
+### Figure ###
+font_size  = 9
+figsize    = (3.15, 2.5)   # inch  (page width = 6.3)
+# figsize  = (4, 4)
+dpi        = 300
+projection = '3d'           # '2d' or '3d'
+plot_bg    = None           # background colour, or None for transparent
+save_figure = True
 
-pop_nans = True                     # bool
-regime_point_colours = False         # bool
-regime_point_shapes = False          # bool
-colour_points_by_z = False          # bool
-label_points = False                # bool
-point_stems_3d = False              # bool
-include_hline = None                # float
-include_error_bars = None    # string or None
-include_legend = False              # bool
+### Scatter points ###
+point_size = 20                 # Default 30
+regime_point_colours = False
+regime_point_shapes  = True
+colour_points_by_z   = False
+label_points         = False
+point_stems_3d       = False
 
-include_curve_fit = False           # bool
-include_surface_fit = False         # bool
+### Overlays ###
+include_hline    = None     # float or None
+include_curve_fit   = False
+include_surface_fit = False
+include_legend   = False
 
-axis_sci_not = None                 # None, 'x', 'y' or 'both'
-LED_contours = False                # bool
-include_contours = False            # bool
-contour_cmap = 'Reds'              # string
-contour_levels = 11                 # int
-contour_alpha = 0.7                 # float
-include_cbar = True                 # bool
-contour_extend = 'max'               # 'neither', 'min', 'max' or 'both'
-contour_line = None                 # float or None
-contour_label = r'$\eta$'        # string
-# contour_label = r'$\theta_{FKW}$'
-contour_unit = ''                  # string
-contour_text_loc = (1150, 470)      # tuple
-contour_line_color = 'k'            # string
+### Contours ###
+LED_contours          = False
+include_contours      = True
+contour_interpolation = 'rbf'               # 'rbf', 'cubic', or 'natural_neighbor' / 'natural_neighbour'
+rbf_kernel            = 'cubic' # 'thin_plate_spline', 'linear', 'cubic', 'gaussian'
+rbf_smoothing         = 2                 # 0 = exact fit; higher = looser/smoother
+rbf_epsilon           = 5                 # shape param for 'gaussian' — larger = more localised
+nn_sigma              = 7                  # Gaussian blur sigma for 'natural_neighbor' (grid cells; higher = smoother boundaries)
+contour_cmap          = 'inferno'
+contour_alpha         = 1.0
+cbar_n_ticks          = 5    # number of colorbar ticks (auto nice numbers via MaxNLocator)
+contour_subdivisions  = 3    # contour bands per tick interval; total = (cbar_n_ticks-1) × this
+cap_at_zlim           = False # clip auto ticks to zlim; False allows MaxNLocator to round beyond
+include_cbar          = True
+contour_extend        = 'neither'           # 'neither', 'min', 'max' or 'both'
+contour_line          = None                # draw a single contour line at this z value
+contour_label         = r'$\eta$'          # label for contour line
+# contour_label       = r'$\theta_{FKW}$'
+contour_unit          = ''
+contour_text_loc      = (1150, 470)
+contour_line_color    = 'k'
 
-### X-axis settings ###
-#----------------------
+### Data ###
+pop_nans         = True
+axis_sci_not     = []    # List with any combination of 'x', 'y', 'z' (or empty for none)
+yerr_col         = None     # col_dict key for y error bars, or None
+skip_tracks      = ['0106_02', '0106_03', '0106_06']
+
+### Regime contour order ###
+REGIME_ORDER = [            # low → high energy input; sets colour ordering in regime fill
+    'conduction',
+    'keyhole flickering',
+    'quasi-stable vapour depression',
+    'quasi-stable keyhole',
+    'unstable keyhole',
+]
+
+### Logbook filters ###
+LOGBOOK_FILTERS = {
+    'material':   'AlSi10Mg',
+    'layer':      1,
+    'base_type':  'powder',
+    # 'laser_mode': 'cw',
+    # 'regime':     'not_cond',
+    # 'substrate_no': '0514',
+    'custom': [
+        # {'col': 'Duty cycle', 'op': '~=', 'val': 1.0, 'label': 'dc=1.0'},
+        # {'col': 'Duty cycle', 'op': '~=', 'val': 0.89, 'label': 'dc=0.89'},
+        {'col': 'Duty cycle', 'op': '~=', 'val': 0.8, 'label': 'dc=0.8'},
+    ],
+}
+
+### X-axis ###
 if True:
     plotx = 'scan_speed'
     # xlim = [150, 1300]
@@ -68,89 +109,37 @@ if True:
     # xlim = None
     # xticks = None
 
-### Y-axis settings ###
-#----------------------
+### Y-axis ###
 if True:
     ploty = 'power'
     # ylim = [150, 1400]
     # ylim = [1200, 6200]
     # ylim = [-6, 86]
     # ylim= [-0.1, 1.1]
-    ylim = [235, 515]                           # power
+    ylim = [225, 515]                           # power
     yticks = [250, 300, 350, 400, 450, 500]     # power
     # yticks = [30, 45, 60, 75, 90]
     # yticks = [0, 40, 80]
     # ylim = None
     # yticks = None
 
-### Z-axis settings ###
-#----------------------
+### Z-axis (or contour variable) ###
 if True:
-    plotz = 'melting_efficiency'
-    zlim = [0.05, 0.3]
+    plotz = 'KH_depth'
+    zlim = [0, 400]
     # zlim = [30, 120]
-    # zticks = [0, 1, 2, 3]
-    # zlim = None
-    zticks = None
     # zlim = [0, 18000]                                                       # G
+    # zlim = [0, 5500000]                                                     # dT/dt
+    zticks = None               # explicit tick positions — overrides cbar_n_ticks
     # zticks = [0, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 18000] # G
-    # zticks = [140, 180, 220, 260, 300, 340, 380]  # R
-    # zlim = [0, 5500000] # dT/dt
+    # zticks = [140, 180, 220, 260, 300, 340, 380]                            # R
     # zticks = [0, 500000, 1000000, 1500000, 2000000, 2500000, 3000000, 3500000, 4000000, 4500000, 5000000, 5500000] # dT/dt
-    bins_per_tick = 1
-    if bins_per_tick != None and zticks != None: contour_levels = (len(zticks) - 1) * bins_per_tick + 1
 
 def filter_logbook():
     log = get_logbook()
-    
-    if True:
-        # filters for welding or powder melting
-        welding = log['Powder material'] == 'None'
-        powder = np.invert(welding)
-
-        # filters for CW or PWM laser mode
-        cw = log['Point jump delay [us]'] == 0
-        pwm = np.invert(cw)
-
-        # filter for Layer 1 tracks only
-        L1 = log['Layer'] == 1
-        
-        # filter for presence of KH pores
-        pores = log['n_pores'] > 2
-        
-        # filter by layer thickness
-        thin_layer = log['measured_layer_thickness [um]'] <= 80
-        very_thin_layer = log['measured_layer_thickness [um]'] <= 35
-        
-        # filter by scan speed
-        speed = log['Scan speed [mm/s]'] == 400
-        
-        # filter by beamtime
-        ltp1 = log['Beamtime'] == 1
-        ltp2 = log['Beamtime'] == 2
-        ltp3 = log['Beamtime'] == 3
-        
-        # filter by substrate
-        s0514 = log['Substrate No.'] == '0514'
-        s0515 = log['Substrate No.'] == '0515'
-
-        # filter by material
-        AlSi10Mg = log['Substrate material'] == 'AlSi10Mg'
-        Al7A77 = log['Substrate material'] == 'Al7A77'
-        Al = log['Substrate material'] == 'Al'
-        Ti64 = log['Substrate material'] == 'Ti64'
-        lit = np.logical_or(Ti64, Al7A77)
-        
-        # filter by regime
-        not_flickering = log['Melting regime'] != 'keyhole flickering'
-        not_cond = log['Melting regime'] != 'conduction'
-
-    # Apply combination of above filters to select parameter subset to plot
-    # log_red = log[np.logical_or(AlSi10Mg, lit) & L1 & cw & powder]
-    log_red = log[AlSi10Mg & L1 & cw & powder]
-    # print(log_red)
-    print(len(log_red))
-    return log_red
+    log_red, active_filters = filter_logbook_tracks(log, LOGBOOK_FILTERS)
+    log_red.reset_index(inplace=True)
+    return log_red, active_filters
 
 def set_up_figure(col_dict):
     proj_dict = {'2d': 'rectilinear',
@@ -161,7 +150,9 @@ def set_up_figure(col_dict):
     fig = plt.figure(figsize=figsize, dpi=dpi, tight_layout=True)
     ax = fig.add_subplot(projection=proj_dict[projection])
     if plot_bg != None: ax.set_facecolor(plot_bg)
-    else: fig.set_alpha(0.0)
+    else:
+        fig.patch.set_alpha(0.0)
+        ax.patch.set_alpha(0.0)
     
     ax.set_xlabel(col_dict[plotx][1])
     if xlim != None: ax.set_xlim(xlim[0], xlim[1])
@@ -172,9 +163,10 @@ def set_up_figure(col_dict):
     if yticks != None: ax.set_yticks(yticks)
     # ax.set_yticklabels(['N', 'S', 'A'])
     
-    if axis_sci_not != None:
-        ax.ticklabel_format(axis=axis_sci_not, style='sci', scilimits=(0,0))
-    
+    _sci_axes = set(axis_sci_not)
+    for _a in _sci_axes - {'z'}:
+        ax.ticklabel_format(axis=_a, style='sci', scilimits=(0,0))
+
     # Draw LED contours in P-V map background
     if projection == '2d' and LED_contours == True:
         S, P = np.mgrid[xlim[0]:xlim[1]+1, ylim[0]:ylim[1]+1]
@@ -184,12 +176,19 @@ def set_up_figure(col_dict):
             cbar = fig.colorbar(cs)
             cbar.ax.set_ylabel('LED [J/m]')
             cbar.set_ticks([100, 300, 500, 700, 900, 1100, 1300, 1500])
-            
-    elif projection == '3d':      
+
+    elif projection == '3d':
         ax.set_zlabel(col_dict[plotz][1])
         if zlim != None: ax.set_zlim(zlim[0], zlim[1])
         if zticks != None: ax.set_zticks(zticks)
-        
+        if 'z' in _sci_axes:
+            ax.ticklabel_format(axis='z', style='sci', scilimits=(0,0))
+
+    if projection == '2d':
+        ax.tick_params(labelsize=font_size - 1)
+        for spine in ax.spines.values():
+            spine.set_edgecolor('black')
+
     return fig, ax
 
 def define_point_formats():
@@ -225,6 +224,9 @@ def plot_data(fig, ax, log_red, marker_dict, col_dict):
         trackid = row['trackid']
         regime = row['Melting regime']
         
+        if trackid in skip_tracks:
+            continue
+
         # Do not plot point if regime not categorised
         if regime not in marker_dict:
             continue
@@ -243,8 +245,8 @@ def plot_data(fig, ax, log_red, marker_dict, col_dict):
                                  c = z if colour_points_by_z == True else marker_dict[regime]['c'],
                                  marker = marker_dict[regime]['m'],
                                  edgecolors = 'k',
-                                 linewidths = 0.7,
-                                 s = 20,      # 30 for half page width figure
+                                 linewidths = 0.5,
+                                 s = point_size,      # 30 for half page width figure
                                  cmap = 'Reds',
                                  vmin = 70,
                                  vmax = 120
@@ -257,8 +259,8 @@ def plot_data(fig, ax, log_red, marker_dict, col_dict):
                         ha = 'left',
                         fontsize = 'xx-small',
                         )
-            if include_error_bars != None:
-                err = row[col_dict[include_error_bars][0]]
+            if yerr_col is not None:
+                err = row[col_dict[yerr_col][0]]
                 ax.errorbar(x, y, xerr=None, yerr=err, ecolor='k', elinewidth=0.6, capsize=3.2, capthick=0.6, zorder=0)
             
         elif projection == '3d':            
@@ -301,12 +303,61 @@ def remove_nan_values(data):
     print(f'Removed {len(nan_indices)} datapoints that contained NaN values')        
     return output_data
 
-def draw_contours(fig, ax, col_dict, xx, yy, zz, zlim, contour_levels, zticks, label_var, contour_extend=None, cmap='Greys', alpha=1):
-    levels = np.linspace(zlim[0], zlim[1], contour_levels) if zlim != None else np.linspace(min(zz), max(zz), contour_levels)
-    contours = ax.tricontourf(xx, yy, zz, levels=levels, cmap=cmap, zorder=0, extend=contour_extend, alpha=alpha)
+def draw_contours(fig, ax, col_dict, xx, yy, zz, zlim, contour_subdivisions, zticks, label_var, contour_extend=None, cmap='Greys', alpha=1, hull_xy=None, cbar_tick_labels=None):
+    x_min, x_max = (xlim[0], xlim[1]) if xlim is not None else (min(xx), max(xx))
+    y_min, y_max = (ylim[0], ylim[1]) if ylim is not None else (min(yy), max(yy))
+    grid_x, grid_y = np.mgrid[x_min:x_max:200j, y_min:y_max:200j]
+    if contour_interpolation == 'rbf':
+        try:
+            rbf = RBFInterpolator(np.column_stack([xx, yy]), zz, kernel=rbf_kernel, smoothing=rbf_smoothing, epsilon=rbf_epsilon)
+        except np.linalg.LinAlgError:
+            fallback = max(rbf_smoothing, 0.5)
+            print(f'RBF singular matrix with smoothing={rbf_smoothing}, retrying with smoothing={fallback}')
+            rbf = RBFInterpolator(np.column_stack([xx, yy]), zz, kernel=rbf_kernel, smoothing=fallback, epsilon=rbf_epsilon)
+        grid_z = rbf(np.column_stack([grid_x.ravel(), grid_y.ravel()])).reshape(grid_x.shape)
+    elif contour_interpolation in ('natural_neighbor', 'natural_neighbour'):
+        # Voronoi partition (each grid cell takes the value of its nearest data point),
+        # then Gaussian blur to smooth the hard boundaries between regions.
+        nn = NearestNDInterpolator(np.column_stack([xx, yy]), zz)
+        grid_z = nn(np.column_stack([grid_x.ravel(), grid_y.ravel()])).reshape(grid_x.shape)
+        grid_z = gaussian_filter(grid_z.astype(float), sigma=nn_sigma)
+    else:
+        grid_z = griddata((xx, yy), zz, (grid_x, grid_y), method='cubic')
+
+    # Mask grid to convex hull of all scatter points to suppress extrapolation
+    hx, hy = hull_xy if hull_xy is not None else (xx, yy)
+    hull_pts = np.column_stack([hx, hy])
+    hull_path = mpl_Path(hull_pts[ConvexHull(hull_pts).vertices])
+    outside = ~hull_path.contains_points(np.column_stack([grid_x.ravel(), grid_y.ravel()]))
+    grid_z[outside.reshape(grid_x.shape)] = np.nan
+    v_min = zlim[0] if zlim is not None else np.nanmin(grid_z)
+    v_max = zlim[1] if zlim is not None else np.nanmax(grid_z)
+    if cbar_tick_labels is not None and zticks is not None:
+        # Discrete/categorical colormap (regime): zticks are the band boundaries
+        levels = zticks
+        tick_positions = None
+    else:
+        if zticks is not None:
+            tick_positions = np.array(zticks)
+        else:
+            tp = MaxNLocator(nbins=cbar_n_ticks - 1).tick_values(v_min, v_max)
+            tick_positions = tp[(tp >= v_min) & (tp <= v_max)] if cap_at_zlim else tp
+        levels = np.concatenate([np.linspace(tick_positions[i], tick_positions[i + 1], contour_subdivisions + 1)[:-1]
+                                 for i in range(len(tick_positions) - 1)] + [tick_positions[-1:]])
+    contours = ax.contourf(grid_x, grid_y, grid_z, levels=levels, cmap=cmap, zorder=0, extend=contour_extend, alpha=alpha)
     if include_cbar == True:
-        cbar = fig.colorbar(contours, location='right', ticks=zticks, label=col_dict[label_var][1], shrink=1)
-        if zticks != None: cbar.set_ticks(zticks)
+        cbar = fig.colorbar(contours, location='right', label=col_dict[label_var][1], shrink=1)
+        if cbar_tick_labels is not None:
+            cbar.set_ticks(np.arange(len(cbar_tick_labels)))
+            cbar.set_ticklabels(cbar_tick_labels, fontsize=font_size - 1)
+        else:
+            cbar.set_ticks(tick_positions)
+        if 'z' in set(axis_sci_not):
+            fmt = ScalarFormatter(useMathText=True)
+            fmt.set_scientific(True)
+            fmt.set_powerlimits((0, 0))
+            cbar.formatter = fmt
+            cbar.update_ticks()
     
     if contour_line != None:
         if contour_text_loc[0] == None: contour_text_loc[0], contour_text_loc[1] = ((max(xx)+min(xx))/2, (max(yy)+min(yy))/2)
@@ -332,7 +383,9 @@ def curve_function(x, a, b, c, d):
     # return a*x**b
     # return a*(1-b**(-c*x))+d
     # return a/(1+np.exp(-b*(x-c)))
-    return a+b*np.log10(x)
+    # return a+b*np.log(x)
+    return 0.3 * (1 - np.exp(-x/b))
+    # return a * (x**b / (c + x**b))
 
 def draw_curve_fit(ax, xx, yy):
     # Remove value pairs that include NaN entries
@@ -349,14 +402,16 @@ def draw_curve_fit(ax, xx, yy):
     ss_res = np.sum(residuals**2)
     ss_tot = np.sum((yy-np.mean(yy))**2)
     r2 = 1 - (ss_res/ss_tot)
-    a, b, c, d = [round(e, 3) for e in popt]
+    a, b, c, d = [round(e, 2) for e in popt]
     ax.text(0.45, 0.55,
-            # r'$\theta_{FKW} = tan^{-1}\left[a \dot \left(\frac{\Delta H}{h_m} \dot L_{th}^*+b\right)\right]$'+f'\na = {a}, b = {b}\nR\u00b2 = {round(r2, 3)}', 
-            fr'$\eta={a}+{b}\log(V)$'
+            # r'$\theta_{FKW} = tan^{-1}\left[a \dot \left(\frac{\Delta H}{h_m} \dot L_{th}^*+b\right)\right]$'+f'\na = {a}, b = {b}\nR\u00b2 = {round(r2, 3)}' 
+            # fr'$\eta={a}+{b}\log(V)$'
+            fr'$\eta={a}\frac{{V^{{{b}}}}}{{{c}+V^{{{b}}}}}$'
             '\n'
-            '$\it{R\u00b2} = $' f'${round(r2, 2):1.2f}$',
+            '$\it{R\u00b2} = $' + f'${round(r2, 2):1.2f}$',
             fontsize = 'small',
-            transform=ax.transAxes
+            transform=ax.transAxes,
+            color='k'
             )
     ax.plot(X, Y, 'k--', lw=0.75, zorder=0)
 
@@ -429,23 +484,39 @@ def print_data_summary(xx, yy, zz):
     print()
     print(col_format.format('Axis', 'Min', 'Mean', 'Max'))
     print(tab_rule)
-    print(col_format.format('x', round(min(xx), 2), round(np.mean(xx), 2), round(max(xx), 2)))
-    print(col_format.format('y', round(min(yy), 2), round(np.mean(yy), 2), round(max(yy), 2)))
-    print(col_format.format('z', round(min(zz), 2), round(np.mean(zz), 2), round(max(zz), 2)))
+    print(col_format.format('x', round(min(xx), 4), round(np.mean(xx), 4), round(max(xx), 4)))
+    print(col_format.format('y', round(min(yy), 4), round(np.mean(yy), 4), round(max(yy), 4)))
+    print(col_format.format('z', round(min(zz), 4), round(np.mean(zz), 4), round(max(zz), 4)))
 
 def main():
-    log_red = filter_logbook()
+    log_red, active_filters = filter_logbook()
     marker_dict = define_point_formats()
-    col_dict = define_collumn_labels()
+    col_dict = define_column_labels()
     fig, ax = set_up_figure(col_dict)
+
     xx, yy, zz = plot_data(fig, ax, log_red, marker_dict, col_dict)
-    
+    xx_all, yy_all = xx[:], yy[:]  # full scatter positions before NaN removal
+
+    if plotz == 'regime':
+        _regime_int = {r: i for i, r in enumerate(REGIME_ORDER)}
+        zz = [_regime_int.get(r, np.nan) for r in zz]
+
     if pop_nans == True:
         data = (xx, yy, zz)
         (xx, yy, zz) = remove_nan_values(data)
-        
+
     if include_contours == True and projection == '2d':
-        draw_contours(fig, ax, col_dict, xx, yy, zz, zlim, contour_levels, zticks, label_var=plotz, contour_extend=contour_extend, cmap=contour_cmap, alpha=contour_alpha)
+        if plotz == 'regime':
+            _regime_colors = [marker_dict[r]['c'] for r in REGIME_ORDER if r in marker_dict]
+            _cmap   = mpl.colors.ListedColormap(_regime_colors)
+            _zticks = np.arange(-0.5, len(_regime_colors))
+            _extend = 'neither'
+            _tick_labels = [r for r in REGIME_ORDER if r in marker_dict]
+        else:
+            _cmap, _zticks, _extend, _tick_labels = contour_cmap, zticks, contour_extend, None
+        draw_contours(fig, ax, col_dict, xx, yy, zz, zlim, contour_subdivisions, _zticks,
+                      label_var=plotz, contour_extend=_extend, cmap=_cmap,
+                      alpha=contour_alpha, hull_xy=(xx_all, yy_all), cbar_tick_labels=_tick_labels)
     
     if include_hline != None and projection == '2d':
         draw_hline(ax, include_hline)
@@ -463,6 +534,16 @@ def main():
     
     print_data_summary(xx, yy, zz)
     
+    if save_figure:
+        err_part = '_err_bars' if yerr_col is not None else ''
+        safe_filters = re.sub(r'[<>:"/\\|?*\s]', '', '_'.join(str(f) for f in active_filters))
+        fname = f'{plotx}_vs_{ploty}_vs_{plotz}_{safe_filters}{err_part}'
+        out_dir = Path(__file__).parent / Path(__file__).stem
+        out_dir.mkdir(exist_ok=True)
+        transparent = plot_bg is None
+        plt.savefig(out_dir / f'{fname}.pdf', bbox_inches='tight', transparent=transparent)
+        plt.savefig(out_dir / f'{fname}.png', dpi=dpi, bbox_inches='tight', transparent=transparent)
+        print(f'\nFigure saved: {out_dir / fname}.[pdf/png]')
     plt.show()
     
 if __name__ == '__main__':
