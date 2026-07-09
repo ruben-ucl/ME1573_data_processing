@@ -40,7 +40,7 @@ machine = AdditiveMachine()
 
 # Define chosen parameters
 bead_length = 0.004 # m
-machine.laser_power = 300 # W
+machine.laser_power = 400 # W
 machine.scan_speed = 0.8 # m/s
 machine.heater_temperature = 20 # deg C
 # machine.layer_thickness = 10.1 * 1e-6 # m     <--- Weld approximation
@@ -86,6 +86,8 @@ df.plot(
     xlabel="Bead Length (mm)",
     title="Melt Pool Dimensions vs Bead Length",
 )
+
+plt.savefig(f"ansys_additive_{machine.laser_power}W_{machine.scan_speed}m_s_{machine.layer_thickness*1e6}_um_layer.png", dpi=300)
 plt.show()
 
 # Plot thermal history

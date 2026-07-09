@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 # Add parent directory to path for tools import
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from tools import get_paths, get_logbook, get_logbook_data, filter_logbook_tracks, get_regime_marker_dict, define_collumn_labels
+from tools import get_paths, get_logbook, get_logbook_data, filter_logbook_tracks, get_regime_marker_dict, define_column_labels
 
 
 def load_batch_summary(csv_path):
@@ -221,7 +221,7 @@ def categorize_column(column_name):
 
 def get_ylabel_from_column(column):
     """
-    Get proper y-axis label for a column using define_collumn_labels().
+    Get proper y-axis label for a column using define_column_labels().
 
     Args:
         column (str): Column name from batch_summary.csv
@@ -229,7 +229,7 @@ def get_ylabel_from_column(column):
     Returns:
         str: Proper axis label with units
     """
-    col_dict = define_collumn_labels()
+    col_dict = define_column_labels()
 
     # Pattern matching priority:
     # 1. For statistics (signal_metric): extract signal and combine with metric
@@ -379,7 +379,7 @@ def create_regime_plot(df, column, plot_type, output_path, dpi=600):
     if display_name is None:
         display_name = column.replace('_', ' ').title()
 
-    # Get proper y-axis label from define_collumn_labels()
+    # Get proper y-axis label from define_column_labels()
     ylabel = get_ylabel_from_column(column)
 
     ax.set_title(display_name, fontweight='bold')

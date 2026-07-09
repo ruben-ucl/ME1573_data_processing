@@ -10,16 +10,23 @@ from tools import get_paths, get_substrate_mask, view_histogram
 
 print = functools.partial(print, flush=True) # Re-implement print to fix issue where print statements do not show in console until after script execution completes
 
-input_dset_name = 'bs-p10-s37_lagrangian_bin'
-output_dset_name = 'keyhole_bin_nofilt'
+input_dset_name = 'bs-f40_lagrangian_meltpool_bin'
+output_dset_name = 'keyhole_bin'
 mode = 'cropped'    # Set to 'cropped' or 'full_frame'
-save_output = True
-preview = False
-mask_top_n_rows = 2 # 4
+save_output = False
+preview = True
+mask_top_n_rows = 4 # 4
 
 # Read data folder path from .txt file
 filepath = get_paths()['hdf5']
 
+track_list = ['0301_01', '0301_03', '0301_05', '0302_01',
+               '0304_04', '0306_02', '0307_01', '0307_06',
+               '0504_01', '0504_02', '0504_06', '0506_04',
+               '0506_05', '0507_02', '0507_03', '0507_05',
+               '0507_06', '0516_05'
+               ]
+               
 substrate_surface_measurements_fpath = Path(filepath, 'substrate_surface_measurements', 'substrate_surface_locations.csv')
 
 def morpho_ops(dset, trackid, f1=0, f2=-1):
@@ -109,6 +116,9 @@ def main():
         print('\nReading %s: %s' % (fname, input_dset_name)) 
         trackid = fname[:5] + '0' + fname[-6]
         with h5py.File(f, 'a') as file:
+            if track_list and trackid not in track_list:
+                print('Skipping - track not on list')
+                continue
             if output_dset_name not in file:
                 dset = file[input_dset_name]
                 print('shape: %s, dtype: %s'% (dset.shape, dset.dtype))

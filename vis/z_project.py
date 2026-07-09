@@ -32,7 +32,7 @@ filepath = get_paths()['hdf5']
 input_dset_name = 'bs-p1_lagrangian'
 
 frame_reduction_factor = 1                              # Set to 1 to use all frames
-filter_radius = None                                    # Median filter radius, set to None for no filter
+filter_radius = 2                                    # Median filter radius, set to None for no filter
 norm = True
 equalize = True
 mode = 'save'                                           # Set to 'view' or 'save'

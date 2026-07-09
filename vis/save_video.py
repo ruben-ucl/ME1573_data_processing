@@ -96,7 +96,7 @@ def create_video_from_dset(dset, vid_filename, output_folder, binary_dset=None, 
     out.release()
 
 def create_overlay(i, frame, fontscale=1, scalebar_length=200, scale_txt_from_right=160, bottom_margin=20, left_margin=20):
-    '''
+    """
     For full frame video:
     fontscale = 1
     scalebar_length = 200
@@ -117,7 +117,7 @@ def create_overlay(i, frame, fontscale=1, scalebar_length=200, scale_txt_from_ri
     scale_txt_from_right = 110
     bottom_margin = 15
     left_margin = 5
-    '''
+    """
     fontscale = 0.8 # with upscale_factor = 3
     scalebar_length = 200
     scale_txt_from_right = 110
