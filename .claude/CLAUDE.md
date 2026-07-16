@@ -213,6 +213,25 @@ process = subprocess.Popen(
   python ml/script_name.py  # Not cd ml && python script_name.py
   ```
 
+#### Conda Env Wrong/Missing Python, or SSL/DLL Errors During `conda install`/`pip install` (Windows Git Bash)
+- **Symptoms**:
+  - A script fails with a Python-2-style `SyntaxError` on valid Python 3 syntax (e.g. f-strings) — means bare `python` resolved to an unrelated system install (e.g. `/c/Python27/python`), not the intended conda env.
+  - `conda install`/`conda run -n <env> pip install ...` fails instantly with `CondaHTTPError: HTTP 000 CONNECTION FAILED` even though the network is fine (`curl` to the same URL succeeds).
+- **Root cause**: In Git Bash, `.bashrc` sources `conda.sh` (defines the `conda` shell function) but does **not** put Anaconda on `PATH` — that only happens on `conda activate`. Without activation, bare `python`/`pip` fall through to whatever else is on `PATH` (e.g. a standalone Python 2.7), and conda's own base-env Python can't load `_ssl.pyd` because `Anaconda3/Library/bin` (home of `libssl-*.dll`/`libcrypto-*.dll`) isn't on `PATH`, so any HTTPS call conda makes fails immediately.
+- **Wrong fix (don't do this)**: manually prepending `Anaconda3/Library/bin` to `PATH` for one command. It papers over the symptom for that single call but doesn't fix `python`/`pip` resolution generally and has to be repeated every session.
+- **Correct fix**: activate the environment properly — this runs the existing `conda.sh` hook and sets up `PATH` correctly (Anaconda root, `Scripts`, `Library/bin`) in one step:
+  ```bash
+  conda activate <env_name>   # e.g. conda activate ml, or conda activate ansys
+  python script.py
+  ```
+  If an env is missing packages/Python entirely (check with `conda run -n <env> python --version` — an empty env silently falls back to whatever `python` is on `PATH`), install into it the same way, after activating:
+  ```bash
+  conda activate <env_name>
+  conda install python=3.11 -y
+  pip install <packages>
+  ```
+- **Diagnostic checklist for next time**: (1) `which python` — is it actually the conda env's python? (2) `conda run -n <env> python --version` — does the env even have Python installed? (3) if conda HTTP calls fail instantly with no elapsed time, suspect the base env's `_ssl` module / `Library/bin` PATH issue, and fix via `conda activate`, not manual PATH edits.
+
 #### Path Configuration Issues
 - **ML Scripts**: Use environment variables to override default paths:
   ```bash
