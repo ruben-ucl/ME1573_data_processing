@@ -396,6 +396,9 @@ class FinalModelTrainer:
         if config.get('k_folds', 5) < 2:
             config['k_folds'] = 5
 
+        # Always save the best model when running final training
+        config['save_model'] = True
+
         # Create corrected config file
         corrected_path = Path(config_file_path).parent / f"corrected_{Path(config_file_path).name}"
         with open(corrected_path, 'w') as f:
@@ -1279,11 +1282,14 @@ class FinalModelTrainer:
 
         # Find the best model file
         if self.classifier_type == 'cwt_image':
-            # For CWT, look for best_model from 5-fold CV
-            model_files = list(model_dir.glob('best_model*.h5'))
-            if not model_files:
-                # Fallback to models directory
-                model_files = list(model_dir.glob('models/*.h5')) + list(model_dir.glob('models/*.keras'))
+            # Prefer canonical name (no fold suffix), fall back to glob for older models
+            canonical = model_dir / f'best_model_{version_str}.h5'
+            if canonical.exists():
+                model_files = [canonical]
+            else:
+                model_files = list(model_dir.glob('best_model*.h5'))
+                if not model_files:
+                    model_files = list(model_dir.glob('models/*.h5')) + list(model_dir.glob('models/*.keras'))
         else:
             # For PD, look in models directory
             model_files = list(model_dir.glob('models/*.h5')) + list(model_dir.glob('models/*.keras'))
@@ -1411,68 +1417,6 @@ class FinalModelTrainer:
 
         except Exception as e:
             print(f"Warning: Could not generate P-V map: {e}")
-            if self.verbose:
-                import traceback
-                traceback.print_exc()
-            return None
-
-    def _select_best_fold_model(self, version_dir, fold_models):
-        """
-        Select the best fold model based on validation F1-score from experiment summary.
-
-        Args:
-            version_dir: Path to version directory
-            fold_models: List of fold model file paths
-
-        Returns:
-            Path to best fold model, or None if couldn't determine
-        """
-        import json
-
-        try:
-            # Try to load experiment summary JSON
-            summary_json = version_dir / 'logs' / f'experiment_summary_{version_dir.name}.json'
-
-            if not summary_json.exists():
-                print(f"   No experiment summary found at {summary_json}")
-                return None
-
-            with open(summary_json, 'r') as f:
-                summary = json.load(f)
-
-            # Extract fold F1 scores from results
-            if 'results' not in summary or 'fold_f1_scores' not in summary['results']:
-                print("   No fold_f1_scores in experiment summary")
-                return None
-
-            fold_f1_scores = summary['results']['fold_f1_scores']
-
-            # Find fold with highest F1 score (folds are 1-indexed)
-            best_fold_idx = None
-            best_f1 = -1
-
-            for idx, f1_score in enumerate(fold_f1_scores):
-                if f1_score > best_f1:
-                    best_f1 = f1_score
-                    best_fold_idx = idx + 1  # Convert to 1-indexed
-
-            if best_fold_idx is None:
-                print("   Could not find F1 scores in fold results")
-                return None
-
-            # Find the model file for the best fold
-            best_model_pattern = f'best_model_fold_{best_fold_idx}'
-            for model_path in fold_models:
-                if best_model_pattern in model_path.name:
-                    print(f"✅ Selected best performing fold: {best_fold_idx} (F1={best_f1:.4f})")
-                    print(f"   Using model: {model_path.name}")
-                    return model_path
-
-            print(f"   Could not find model file for best fold {best_fold_idx}")
-            return None
-
-        except Exception as e:
-            print(f"   Error selecting best fold: {e}")
             if self.verbose:
                 import traceback
                 traceback.print_exc()

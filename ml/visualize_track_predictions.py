@@ -689,6 +689,83 @@ def generate_substrate_map_viz(track_data, output_dir, version,
     return str(png)
 
 
+def generate_roc_curve(y_true, y_proba, output_dir, version, subdir='test_evaluation'):
+    """
+    Generate a ROC curve with AUC annotation.
+
+    Formatted at 1/3 A4 width (square) at 300 DPI with 9pt/8pt text.
+
+    Args:
+        y_true:     Ground-truth binary labels
+        y_proba:    Predicted probabilities for the positive class
+        output_dir: Base output directory (version root)
+        version:    Version string for file naming
+        subdir:     Subdirectory within output_dir (default: 'test_evaluation')
+
+    Returns:
+        str: Path to saved PNG file
+    """
+    from sklearn.metrics import roc_curve, roc_auc_score
+    import matplotlib as mpl
+
+    THIRD_A4   = 2.28
+    LABEL_SIZE = 9
+    TICK_SIZE  = 8
+
+    try:
+        auc = roc_auc_score(y_true, y_proba)
+        fpr, tpr, _ = roc_curve(y_true, y_proba)
+    except ValueError as e:
+        print(f"Warning: could not compute ROC curve: {e}")
+        return None
+
+    mpl.rcParams.update({
+        'font.size':         TICK_SIZE,
+        'axes.labelsize':    LABEL_SIZE,
+        'axes.titlesize':    LABEL_SIZE,
+        'xtick.labelsize':   TICK_SIZE,
+        'ytick.labelsize':   TICK_SIZE,
+        'axes.linewidth':    0.8,
+        'xtick.major.width': 0.8,
+        'ytick.major.width': 0.8,
+        'xtick.major.size':  3.0,
+        'ytick.major.size':  3.0,
+        'axes.edgecolor':    'black',
+    })
+
+    fig, ax = plt.subplots(figsize=(THIRD_A4, THIRD_A4))
+
+    ax.plot(fpr, tpr, color='#2171b5', linewidth=1.2)
+    ax.plot([0, 1], [0, 1], color='#888888', linestyle='--', linewidth=0.8)
+    ax.text(0.97, 0.06, f'AUC = {auc:.3f}',
+            transform=ax.transAxes, fontsize=TICK_SIZE,
+            ha='right', va='bottom', color='#2171b5')
+
+    ax.set_xlabel('False positive rate')
+    ax.set_ylabel('True positive rate')
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_xticks([0, 0.5, 1])
+    ax.set_yticks([0, 0.5, 1])
+
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('black')
+    ax.spines['bottom'].set_color('black')
+
+    fig.tight_layout()
+
+    out_dir = Path(output_dir) / subdir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = out_dir / f'roc_curve_{version}'
+    fig.savefig(f'{stem}.pdf', bbox_inches='tight')
+    fig.savefig(f'{stem}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+    print(f"✅ ROC curve saved to: {stem}.png")
+    return f'{stem}.png'
+
+
 def generate_confusion_matrix(y_true, y_pred, output_dir, version, threshold, test_files=None, exclude_final_window=False, class_labels=None, subdir='test_evaluation'):
     """
     Generate a normalized confusion matrix with percentage values.
@@ -760,11 +837,7 @@ def generate_confusion_matrix(y_true, y_pred, output_dir, version, threshold, te
     # Normalize to percentages (row-wise)
     cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis] * 100
 
-    # A4 width is 210mm, half is 105mm = 4.13 inches at 300 DPI
-    fig_width = 4.13
-    fig_height = 3.5  # Maintain reasonable aspect ratio
-
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    fig, ax = plt.subplots(figsize=(2.95, 2.5))  # original 4.13:3.5 ratio, height matches attribution figure
 
     # Create heatmap without annotations first
     sns.heatmap(cm_normalized, annot=False, fmt='', cmap='Blues',
@@ -780,20 +853,14 @@ def generate_confusion_matrix(y_true, y_pred, output_dir, version, threshold, te
             percentage = cm_normalized[i, j]
             text_color = 'white' if percentage > 50 else 'black'
 
-            # Percentage text (9pt, regular weight)
             ax.text(j + 0.5, i + 0.42, f'{percentage:.1f}%',
                    ha='center', va='center', fontsize=9, color=text_color)
-            # Small count text (7pt, closer to percentage)
             ax.text(j + 0.5, i + 0.60, f'n={cm[i, j]}',
-                   ha='center', va='center', fontsize=7, color=text_color)
+                   ha='center', va='center', fontsize=8, color=text_color)
 
-    # Set labels with 9pt font
     ax.set_xlabel('Predicted Label', fontsize=9)
     ax.set_ylabel('True Label', fontsize=9)
-    ax.set_title('Confusion Matrix', fontsize=10, fontweight='bold')
-
-    # Set tick label sizes
-    ax.tick_params(axis='both', which='major', labelsize=9)
+    ax.tick_params(axis='both', which='major', labelsize=8)
 
     # Set colorbar label size
     cbar = ax.collections[0].colorbar

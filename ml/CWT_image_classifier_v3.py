@@ -1387,13 +1387,17 @@ def main():
         # Get model complexity from first fold (should be same for all folds)
         model_complexity = fold_results[0].get('model_complexity', 0) if fold_results else 0
 
-        # Identify best fold once, reused by threshold sweep, save_model, and run_gradcam blocks
-        best_fold_idx = np.argmax(val_accuracies)
+        # Identify best fold — use F1 for binary tasks (better for imbalanced data), accuracy for continuous
+        label_type = fold_results[0].get('label_type', 'binary') if fold_results else 'binary'
+        if label_type != 'continuous':
+            fold_f1_scores = [r.get('f1_score', 0.0) for r in fold_results]
+            best_fold_idx = int(np.argmax(fold_f1_scores))
+        else:
+            best_fold_idx = int(np.argmax(val_accuracies))
         best_fold_num = fold_results[best_fold_idx]['fold']
 
         # Threshold sweep on best fold's validation set (binary classifiers only)
         best_val_threshold = None
-        label_type = fold_results[0].get('label_type', 'binary') if fold_results else 'binary'
         if label_type != 'continuous':
             _y_proba = fold_results[best_fold_idx]['y_pred_proba']
             if _y_proba.ndim == 1 or _y_proba.shape[-1] == 1:
@@ -1426,7 +1430,6 @@ def main():
         
         # Save experiment summary files using consolidated function
         if config.get('run_gradcam', False):
-            output_dir = CWT_OUTPUTS_DIR / version
             ensure_path_exists(output_dir)
             
             # Prepare data info and experiment results for consolidated function
@@ -1476,28 +1479,27 @@ def main():
                 print(f"Experiment summary saved: {summary_filename}")
                 print(f"Human-readable summary saved: {readable_summary_filename}")
         
-        # Load best model once from checkpoint (used by save_model and/or run_gradcam)
+        # Load best model checkpoint when needed for saving or Grad-CAM
+        output_dir = CWT_OUTPUTS_DIR / version
+        models_dir = output_dir / 'models'
         best_model_post = None
-        if config.get('save_model', False) or config.get('run_gradcam', False):
-            output_dir = CWT_OUTPUTS_DIR / version
-            models_dir = output_dir / 'models'
+        if (config.get('save_model', False) or config.get('run_gradcam', False)) and models_dir.exists():
             checkpoint_path = models_dir / f'best_model_fold_{best_fold_num}.h5'
             best_model_post = tf.keras.models.load_model(str(checkpoint_path))
-            if models_dir.exists():
-                shutil.rmtree(models_dir)
 
-        # Save best model (independent of Grad-CAM)
-        if config.get('save_model', False):
-            output_dir = CWT_OUTPUTS_DIR / version
-            best_model_filename = output_dir / f"best_model_{version}_fold_{best_fold_num}.h5"
+        # Always clean up per-fold checkpoints to avoid stale files from re-runs
+        if models_dir.exists():
+            shutil.rmtree(models_dir)
+
+        # Save best model with canonical name (no fold suffix) for unambiguous discovery
+        if config.get('save_model', False) and best_model_post is not None:
+            best_model_filename = output_dir / f'best_model_{version}.h5'
             best_model_post.save(best_model_filename)
             if not args.concise:
                 print(f"Best model saved: {best_model_filename.name} (fold {best_fold_num})")
 
         # Run Grad-CAM analysis on the best model
         if config.get('run_gradcam', False):
-            output_dir = CWT_OUTPUTS_DIR / version
-
             # Run Grad-CAM on validation set from best fold
             gradcam_results = run_gradcam_analysis(
                 best_model_post,

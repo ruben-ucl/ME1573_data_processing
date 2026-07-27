@@ -54,14 +54,18 @@ def _resolve_paths_from_version(version_str, classifier_type='cwt_image'):
     """Resolve model, test_data, and output_dir paths from a version string."""
     base_dir = PD_OUTPUTS_DIR if classifier_type == 'pd_signal' else CWT_OUTPUTS_DIR
     version_dir = base_dir / version_str
-    # Search in priority order: best_model* at root, then models/ subdir
-    model_candidates = (
-        sorted(version_dir.glob('best_model*.h5')) +
-        sorted(version_dir.glob('best_model*.keras')) +
-        sorted(version_dir.glob('models/final_model*.h5')) +
-        sorted(version_dir.glob('models/final_model*.keras'))
-    )
-    model_path = str(model_candidates[-1]) if model_candidates else str(version_dir / f'best_model_{version_str}.h5')
+    # Prefer canonical name (no fold suffix), fall back to glob for older models
+    canonical = version_dir / f'best_model_{version_str}.h5'
+    if canonical.exists():
+        model_path = str(canonical)
+    else:
+        model_candidates = (
+            sorted(version_dir.glob('best_model*.h5')) +
+            sorted(version_dir.glob('best_model*.keras')) +
+            sorted(version_dir.glob('models/final_model*.h5')) +
+            sorted(version_dir.glob('models/final_model*.keras'))
+        )
+        model_path = str(model_candidates[-1]) if model_candidates else str(canonical)
     return {
         'model':      model_path,
         'test_data':  str(version_dir / 'test_set_data.pkl'),
@@ -1053,7 +1057,7 @@ class ModelTester:
         except Exception as e:
             raise Exception(f"Evaluation failed: {e}")
 
-    def run_full_evaluation(self, model_version, model, X_test, y_test, test_files, classifier_type, gradcam=False):
+    def run_full_evaluation(self, model_version, model, X_test, y_test, test_files, classifier_type, gradcam=False, threshold_override=None):
         """
         Complete evaluation: threshold optimization, Grad-CAM, P-V map, classification report,
         and all standard outputs. Produces the same file set as final_model_trainer's
@@ -1069,7 +1073,7 @@ class ModelTester:
         """
         from sklearn.metrics import (accuracy_score, precision_score, recall_score,
                                      f1_score as sk_f1, roc_auc_score, classification_report as sk_report)
-        from visualize_track_predictions import generate_track_predictions_viz, generate_confusion_matrix
+        from visualize_track_predictions import generate_track_predictions_viz, generate_confusion_matrix, generate_roc_curve
 
         test_eval_dir = self.output_dir  # already points to version/test_evaluation
 
@@ -1081,13 +1085,20 @@ class ModelTester:
             y_proba = model.predict([pd1, pd2], verbose=0)
         y_proba_flat = y_proba.flatten()
 
-        # --- Load val-set threshold from training log ---
-        best_threshold = self._load_val_threshold(model_version, classifier_type)
-        if best_threshold is None:
-            print("Warning: val-set threshold not found in log; falling back to 0.4")
-            best_threshold = 0.4
+        # --- Load val-set threshold from training log (CLI --threshold overrides) ---
+        if threshold_override is not None:
+            best_threshold = threshold_override
+            print(f"Using threshold from --threshold flag: {best_threshold:.2f}")
         else:
-            print(f"Using val-set threshold from training: {best_threshold:.2f}")
+            best_threshold = self._load_val_threshold(model_version, classifier_type)
+            if best_threshold is None or best_threshold == 0.0:
+                if best_threshold == 0.0:
+                    print("Warning: logged threshold is 0.0 (likely unset during training); falling back to 0.4")
+                else:
+                    print("Warning: val-set threshold not found in log; falling back to 0.4")
+                best_threshold = 0.4
+            else:
+                print(f"Using val-set threshold from training: {best_threshold:.2f}")
 
         y_pred = (y_proba_flat >= best_threshold).astype(int)
 
@@ -1135,6 +1146,14 @@ class ModelTester:
             test_files=test_files, class_labels=class_labels,
             subdir='test_evaluation',
         )
+
+        # --- ROC curve ---
+        if auc_score is not None:
+            generate_roc_curve(
+                y_true=y_test, y_proba=y_proba_flat,
+                output_dir=test_eval_dir.parent,
+                version=model_version, subdir='test_evaluation',
+            )
 
         # --- Track prediction figures (identical path to trainer) ---
         if test_files is not None:
@@ -1376,6 +1395,9 @@ def main():
                              'double-quote the path to preserve backslashes.')
     parser.add_argument('--vote_windows', action='store_true', default=False,
                         help='Show majority-voted label per offset step in track figures.')
+    parser.add_argument('--threshold', type=float, default=None,
+                        help='Override classification threshold (e.g. 0.4). '
+                             'Supersedes the val-set threshold stored in the experiment log.')
 
     args = parser.parse_args()
 
@@ -1463,6 +1485,7 @@ def main():
         results = tester.run_full_evaluation(
             version_str, model, X_test, y_test, test_files, classifier_type,
             gradcam=args.full,
+            threshold_override=args.threshold,
         )
         print(f"\nEvaluation complete.  Accuracy: {results['best_metrics']['accuracy']:.4f}")
         print(f"Results saved to: {output_dir}")

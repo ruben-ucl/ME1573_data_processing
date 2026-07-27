@@ -8,7 +8,6 @@ Created on Tue Apr  5 12:14:30 2022
 import sys, functools, os, glob, h5py, pywt, traceback
 import numpy as np
 import pandas as pd
-from ml.cwt_utils import cwt_full_signal, cwt_per_window, apply_coi_masking, save_cwt_image
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib import pyplot as plt, ticker as mticker
 import matplotlib as mpl
@@ -19,6 +18,7 @@ print = functools.partial(print, flush=True) # Re-implement print to fix issue w
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from tools import get_paths, printProgressBar, get_logbook, get_logbook_data, get_cwt_scales, get_excluded_trackids
+from ml.cwt_utils import cwt_full_signal, cwt_per_window, apply_coi_masking, save_cwt_image
 
 from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *

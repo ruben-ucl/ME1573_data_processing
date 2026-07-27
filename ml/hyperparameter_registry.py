@@ -53,7 +53,7 @@ HYPERPARAMETER_REGISTRY = {
         'tier': 1,
         'default': {
             'pd_signal': 0.2,
-            'cwt_image': 0.2
+            'cwt_image': 0.1
         },
         'search_space': {
             'pd_signal': [0.1, 0.2, 0.3],
@@ -114,7 +114,7 @@ HYPERPARAMETER_REGISTRY = {
         'tier': 2,
         'default': {
             'pd_signal': [8, 16, 32, 64],
-            'cwt_image': [16, 32]
+            'cwt_image': [8, 8, 16, 16, 32, 32]
         },
         'search_space': {
             'pd_signal': [
@@ -125,11 +125,12 @@ HYPERPARAMETER_REGISTRY = {
             ],
             'cwt_image': [
                 # Ordered by total filter count (sum) as a capacity proxy
-                [4, 8],
-                [8, 16],
+                [32, 32, 64, 64],
                 [16, 32],
-                [8, 16, 32],
-                [16, 32, 64]
+                [8, 8, 16, 16, 32, 32],
+                [16, 32, 64],
+                [16, 16, 32, 32],
+                [16, 16, 32, 32],
             ]
         },
         'description': 'Number of filters in each convolutional layer - high impact on model capacity'
@@ -150,9 +151,10 @@ HYPERPARAMETER_REGISTRY = {
                 [256, 128]
             ],
             'cwt_image': [
-                # [16, 8],
+                [16, 8],
                 [32, 16],
-                # [64, 32],
+                [128],
+                [64, 32],
             ]
         },
         'description': 'Number of units in each dense layer - high impact on model capacity'
@@ -189,7 +191,7 @@ HYPERPARAMETER_REGISTRY = {
         'type': 'discrete',
         'category': 'training_control',
         'tier': 4,
-        'default': 5,
+        'default': 7,
         'search_space': [3, 5, 7],
         'doe_range': (3, 10),
         'description': 'Epochs to wait before reducing learning rate - low impact on final performance'
@@ -198,14 +200,14 @@ HYPERPARAMETER_REGISTRY = {
         'type': 'continuous',
         'category': 'training_control',
         'tier': 4,
-        'default': 0.5,
+        'default': 0.3,
         'search_space': [0.3, 0.5, 0.7],
         'doe_range': (0.1, 0.9),
         'description': 'Factor to reduce learning rate by - low impact on final performance'
     },
 
     # =====================================================================
-    # AUGMENTATION CATEGORY (Simplified 3-parameter system)
+    # AUGMENTATION CATEGORY
     # =====================================================================
 
     # Tier 2 (High Impact)
@@ -237,7 +239,7 @@ HYPERPARAMETER_REGISTRY = {
         'tier': 3,
         'default': {
             'pd_signal': ['time_shift', 'noise'],
-            'cwt_image': ['time_shift', 'noise']
+            'cwt_image': ['time_shift', 'noise', 'brightness', 'contrast']
         },
         'search_space': {
             'pd_signal': [
@@ -249,12 +251,13 @@ HYPERPARAMETER_REGISTRY = {
                 ['time_shift', 'noise', 'stretch', 'amplitude']
             ],
             'cwt_image': [
-                [],
+                ['contrast'],
+                ['brightness'],
+                ['time_shift', 'noise', 'brightness', 'contrast'],
                 ['noise'],
                 ['time_shift'],
-                ['time_shift', 'noise'],
+                ['contrast', 'noise'],
                 ['brightness', 'contrast'],
-                ['time_shift', 'noise', 'brightness', 'contrast']
             ]
         },
         'description': 'List of augmentation techniques to randomly choose from - moderate impact on diversity'
@@ -360,7 +363,7 @@ HYPERPARAMETER_REGISTRY = {
         'type': 'categorical',
         'category': 'fixed',
         'tier': 3,
-        'default': False,
+        'default': True,
         'search_space': {
             'cwt_image': [True, False]
         },
