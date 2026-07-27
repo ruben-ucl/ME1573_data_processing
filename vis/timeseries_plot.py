@@ -30,7 +30,7 @@ TRACKIDS = [
     '0102_03',   # PWM demo set powder
     '0557_03',   # PWM demo set powder
     '0104_04',   # PWM demo set powder
-    '0323_03',   # PWM demo set powder
+    '0514_06',   # PWM demo set powder
 
 ]
 
@@ -72,8 +72,8 @@ LINE_STYLE   = '-'    # '-', '--', ':', '-.'
 
 # Colorblind-safe Okabe-Ito palette (one colour per dataset, reused across trackids)
 COLORS = [
-    '#e45a31',  # Primary
-    '#57106e',  # Secondary
+    '#320a5e',  # Primary
+    '#bc3754',  # Secondary
 ]
 
 HSPACE      = 0.08    # vertical space between subplots (figure fraction)
