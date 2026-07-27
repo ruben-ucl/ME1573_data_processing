@@ -346,13 +346,13 @@ def define_column_labels():
         'MP_depth':                 ['melt_pool_depth [um]',
                                      'Melt pool depth [μm]'
                                      ],
-        'MP_depth_err':             ['per_regime_MP_depth_error',
+        'MP_depth_err':             ['per_regime_MP_depth_error_new',
                                      'Melt pool depth error [μm]'
                                      ],
         'MP_length':                ['melt_pool_length [um]',
                                      'Melt pool length [μm]'
                                      ],
-        'MP_length_err':            ['per_regime_MP_length_error',
+        'MP_length_err':            ['scaled_per_regime_MP_length_error_new',
                                      'Melt pool length error [μm]'
                                      ],
         'MP_width':                 ['track_width_mean [um]',
@@ -360,6 +360,12 @@ def define_column_labels():
                                      ],
         'MP_width_err':             ['track_width_sterr [um]',
                                      'Melt pool width SE [μm]'
+                                     ],
+        'MP_frontal_area':          ['melt_pool_frontal_area [um^2]',
+                                     'Melt pool area, $\it{A_{yz}}$ [μm$^2$]'
+                                     ],
+        'MP_frontal_area_err':      ['melt_pool_frontal_area_error [um^2]',
+                                     'Melt pool area error [μm$^2$]'
                                      ],
         'track_height':             ['track_height [um]',
                                      'Track height [μm]'
