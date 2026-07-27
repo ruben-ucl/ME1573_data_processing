@@ -23,6 +23,7 @@ figsize = (2.1, 1.6)      # inch (page width = 6.3)
 dpi = 300
 plot_bg = 'w'
 cat_cmap_name = 'inferno_r' # colormap for category colour coding
+cat_colours = None          # explicit colour list (e.g. ['#f6d746', '#f37819']); None → auto from cmap
 alpha = 0.8
 box_width = 0.7         # width of each individual box
 cluster_gap = 0.8       # whitespace between clusters (box_width units)
@@ -243,13 +244,14 @@ def plot_boxplots(ax, log_red, col_dict, cat_colors, hdf5_dir):
                 fontsize=font_size - 2, color='gray',
                 clip_on=False)
 
-def create_legend(ax, cat_colors):
-    handles = [
+def create_legend(ax, col_dict, cat_colors):
+    header = mpl.patches.Patch(visible=False, label=col_dict[categories[0]['col']][1])
+    handles = [header] + [
         mpl.patches.Patch(facecolor=cat_colors[ic], edgecolor='k',
                           linewidth=0.7, alpha=alpha, label=cat['label'])
         for ic, cat in enumerate(categories)
     ]
-    legend = ax.legend(handles, [cat['label'] for cat in categories],
+    legend = ax.legend(handles, [h.get_label() for h in handles],
                        ncol=1, fontsize='medium',
                        fancybox=False, framealpha=1.00, edgecolor='w')
     legend.get_frame().set_linewidth(mpl.rcParams['axes.linewidth'])
@@ -261,14 +263,17 @@ def main():
     col_dict = define_column_labels()
     fig, ax = set_up_figure(col_dict)
 
-    cmap = mpl.colormaps[cat_cmap_name]
     n_cats = len(categories)
-    cat_colors = [mpl.colors.to_hex(cmap.resampled(n_cats)(ic)) for ic in range(n_cats)] if categories else ['#555555']
+    if cat_colours is not None:
+        cat_colors = [mpl.colors.to_hex(c) for c in cat_colours]
+    else:
+        cmap = mpl.colormaps[cat_cmap_name]
+        cat_colors = [mpl.colors.to_hex(cmap.resampled(n_cats)(ic)) for ic in range(n_cats)] if categories else ['#555555']
 
     plot_boxplots(ax, log_red, col_dict, cat_colors, hdf5_dir)
 
     if include_legend and categories:
-        create_legend(ax, cat_colors)
+        create_legend(ax, col_dict, cat_colors)
 
     if save_figure:
         y_part = HDF5_DATASET['name'] if DATA_SOURCE == 'hdf5' else ploty
