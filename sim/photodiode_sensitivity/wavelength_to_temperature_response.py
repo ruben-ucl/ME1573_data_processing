@@ -13,6 +13,7 @@ kB = 1.381e-23   # Boltzmann constant (J/K)
 
 # ── Options ──────────────────────────────────────────────────────────────────
 USE_FILTERS     = False    # set False to integrate over the full responsivity band
+HIDE_FILTERS    = True    # hide QUAD transmission curve (subplot 2) and post-filter responsivity panel (subplot 3)
 USE_EMISSIVITY  = False     # apply temperature-dependent graybody emissivity
 EMISSIVITY_REF  = 0.3      # ε at T_plot[0]
 EMISSIVITY_GRAD = 0.000025 # dε/dT [K⁻¹]
@@ -112,17 +113,38 @@ plt.rcParams.update({
     'legend.fontsize':  FS_LEGEND,
 })
 
-fig = plt.figure(figsize=(6.30, 7.3))   # A4 width minus 25 mm margins, × height
+# Reference per-row heights (from the original 3-top-row, 7.3 in layout) are held fixed;
+# figure height and group spacing are then derived so every panel keeps the same size
+# regardless of how many top rows are shown or how much whitespace separates the groups.
+TOP_MARGIN, BOTTOM_MARGIN = 0.07, 0.08
+TOP_HSPACE, BOT_HSPACE    = 0.08, 0.18
+GROUP_HSPACE = 0.28   # whitespace between the top and bottom groups (was 0.175)
+
+_ref_axes_area = 7.3 * (1 - TOP_MARGIN - BOTTOM_MARGIN)
+_ref_mean      = (2.05 + 1) / 2
+_ref_top_h     = _ref_axes_area * 2.05 / (2.05 + 1 + 0.175 * _ref_mean)
+_ref_bot_h     = _ref_axes_area * 1    / (2.05 + 1 + 0.175 * _ref_mean)
+TOP_ROW_H = _ref_top_h / (3 + TOP_HSPACE * 2)
+BOT_ROW_H = _ref_bot_h / (2 + BOT_HSPACE)
+
+n_top_rows  = 2 if HIDE_FILTERS else 3
+top_group_h = TOP_ROW_H * (n_top_rows + TOP_HSPACE * (n_top_rows - 1))
+bot_group_h = BOT_ROW_H * (2 + BOT_HSPACE)
+group_mean  = (top_group_h + bot_group_h) / 2
+axes_area   = top_group_h + bot_group_h + GROUP_HSPACE * group_mean
+fig_height  = axes_area / (1 - TOP_MARGIN - BOTTOM_MARGIN)
+
+fig = plt.figure(figsize=(6.30, fig_height))   # A4 width minus 25 mm margins, × height
 fig.suptitle("Photodiode Blackbody Temperature Sensitivity", fontsize=FS_SUPTITLE)
 
-gs     = GridSpec(2, 1, figure=fig, hspace=0.175, height_ratios=[2.05, 1])
-gs_top = gs[0].subgridspec(3, 1, hspace=0.08, height_ratios=[1, 1, 1])
-gs_bot = gs[1].subgridspec(2, 1, hspace=0.18)
+gs     = GridSpec(2, 1, figure=fig, hspace=GROUP_HSPACE, height_ratios=[top_group_h, bot_group_h])
+gs_top = gs[0].subgridspec(n_top_rows, 1, hspace=TOP_HSPACE, height_ratios=[1] * n_top_rows)
+gs_bot = gs[1].subgridspec(2, 1, hspace=BOT_HSPACE)
 ax1_planck = fig.add_subplot(gs_top[0])
 ax1_resp   = fig.add_subplot(gs_top[1], sharex=ax1_planck)
-ax_filt    = fig.add_subplot(gs_top[2], sharex=ax1_planck)
+ax_filt    = None if HIDE_FILTERS else fig.add_subplot(gs_top[2], sharex=ax1_planck)
 plt.setp(ax1_planck.get_xticklabels(), visible=False)
-plt.setp(ax1_resp.get_xticklabels(), visible=False)
+plt.setp(ax1_resp.get_xticklabels(), visible=HIDE_FILTERS)
 ax2 = fig.add_subplot(gs_bot[0])
 ax3 = fig.add_subplot(gs_bot[1], sharex=ax2)
 plt.setp(ax2.get_xticklabels(), visible=False)
@@ -139,7 +161,7 @@ ax1_planck.set_xlim(lam_global_um.min(), lam_global_um.max())
 ax1_planck.legend(loc='lower right', ncol=2, framealpha=0.7)
 
 # — Plot 2: Raw responsivity ——————————————————————————————————————————————————
-if filter_wl_um is not None:
+if filter_wl_um is not None and not HIDE_FILTERS:
     ax1_resp.fill_between(filter_wl_um, filter_trans, alpha=0.10, color='grey')
     ax1_resp.plot(filter_wl_um, filter_trans, color='grey', linewidth=1.0,
                   linestyle='--', alpha=0.8, label='QUAD transmission')
@@ -160,24 +182,28 @@ for det in DETECTORS:
 ax1_resp.set_ylabel(r'Responsivity, $R(\lambda)$' + '\n[A/W]')
 ax1_resp.set_xlim(lam_global_um.min(), lam_global_um.max())
 ax1_resp.set_ylim(bottom=0)
-h_resp, l_resp = ax1_resp.get_legend_handles_labels()
-ax1_resp.legend(h_resp, l_resp, loc='upper left', framealpha=0.7)
+if HIDE_FILTERS:
+    ax1_resp.set_xlabel('Wavelength (µm)')
+else:
+    h_resp, l_resp = ax1_resp.get_legend_handles_labels()
+    ax1_resp.legend(h_resp, l_resp, loc='upper left', framealpha=0.7)
 
 # — Plot 1b: Post-filtering effective responsivity ————————————————————————————
-for det in DETECTORS:
-    ax_filt.fill_between(det["lam_um"], det["R_filt"], alpha=0.25, color=det["color"])
-    ax_filt.plot(det["lam_um"], det["R_filt"], color=det["color"], linewidth=1.5, label=det["label"], alpha=0.8)
-    x_mid = (det["lam_um"].min() + det["lam_um"].max()) / 2
-    r_max = det["R_filt"].max()
-    if r_max > 0:
-        ax_filt.text(x_mid, r_max * 0.45, det["label"],
-                     color=det["color"], fontweight='bold', fontsize=FS_ANNOT,
-                     ha='center', va='center',
-                     bbox=dict(facecolor='white', edgecolor='none', alpha=0.0, pad=3))
-ax_filt.set_xlabel('Wavelength (µm)')
-ax_filt.set_ylabel(r'Filtered $R(\lambda)$' + '\n[A/W]')
-ax_filt.set_xlim(lam_global_um.min(), lam_global_um.max())
-ax_filt.set_ylim(bottom=0)
+if ax_filt is not None:
+    for det in DETECTORS:
+        ax_filt.fill_between(det["lam_um"], det["R_filt"], alpha=0.25, color=det["color"])
+        ax_filt.plot(det["lam_um"], det["R_filt"], color=det["color"], linewidth=1.5, label=det["label"], alpha=0.8)
+        x_mid = (det["lam_um"].min() + det["lam_um"].max()) / 2
+        r_max = det["R_filt"].max()
+        if r_max > 0:
+            ax_filt.text(x_mid, r_max * 0.45, det["label"],
+                         color=det["color"], fontweight='bold', fontsize=FS_ANNOT,
+                         ha='center', va='center',
+                         bbox=dict(facecolor='white', edgecolor='none', alpha=0.0, pad=3))
+    ax_filt.set_xlabel('Wavelength (µm)')
+    ax_filt.set_ylabel(r'Filtered $R(\lambda)$' + '\n[A/W]')
+    ax_filt.set_xlim(lam_global_um.min(), lam_global_um.max())
+    ax_filt.set_ylim(bottom=0)
 
 # — Plot 2: Integrated signal S(T) ————————————————————————————————————————————
 has_gain = any(d["gain"] is not None for d in DETECTORS)
@@ -193,7 +219,7 @@ ax2.set_xticks(T_plot)
 formula = (r'$S(T) = G\int B(\lambda,T)\cdot R_{filt}(\lambda)\,\mathrm{d}\lambda$'
            if has_gain else
            r'$S(T) = \int B(\lambda,T)\cdot R{_filt}(\lambda)\,\mathrm{d}\lambda$')
-ax2.text(0.03, 0.93, formula, transform=ax2.transAxes, va='top', ha='left', fontsize=FS_ANNOT)
+ax2.text(0.09, 0.93, formula, transform=ax2.transAxes, va='top', ha='left', fontsize=FS_ANNOT)
 
 # — Plot 3: Sensitivity dS/dT ——————————————————————————————————————————————
 for det in DETECTORS:
@@ -203,11 +229,12 @@ ax3.set_xlabel('Temperature [K]')
 ax3.set_ylabel(r'$\mathrm{d}S/\mathrm{d}T$' + f'\n[{dsdt_unit}]')
 ax3.ticklabel_format(style='sci', axis='y', scilimits=(-3, 3))
 
-ax3.legend(loc='upper left')
+ax3.legend(loc='upper left', bbox_to_anchor=(0.0, 0.78))
 ax3.set_xlim(T_plot[0], T_plot[-1])
 ax3.set_xticks(T_plot)
 
 
-fig.subplots_adjust(left=0.12, right=0.82, top=0.93, bottom=0.08)
-plt.savefig("sim/photodiode_sensitivity/photodiode_temp_sensitivity.png", dpi=600, bbox_inches='tight')
+fig.subplots_adjust(left=0.12, right=0.82, top=1 - TOP_MARGIN, bottom=BOTTOM_MARGIN)
+suffix = "_hide_filters" if HIDE_FILTERS else ""
+plt.savefig(f"sim/photodiode_sensitivity/photodiode_temp_sensitivity{suffix}.png", dpi=600, bbox_inches='tight')
 plt.show()
