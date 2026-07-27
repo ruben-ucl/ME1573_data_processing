@@ -1,11 +1,9 @@
 #!/usr/bin/env python
 """
-Compute statistics for 1D datasets in HDF5 files.
+Compute per-track statistics for 1D datasets in HDF5 files.
 
-This script iterates through all HDF5 files, calculates statistics
-(min, max, mean, std, count) for each 1D dataset, and saves them to a CSV log file.
-Multi-dimensional datasets (images, timeseries images) are skipped.
-Overall statistics are computed using weighted averages based on counts.
+Iterates through all HDF5 files, calculates statistics for each 1D dataset,
+and saves them to a CSV log file. Multi-dimensional datasets are skipped.
 
 Author: AI Assistant
 Date: 2025-12-10
@@ -25,12 +23,13 @@ if str(parent_dir) not in sys.path:
 
 import h5py
 import numpy as np
+from scipy import stats
 import pandas as pd
 from tqdm import tqdm
 from tools import get_paths
 
 
-def compute_dataset_statistics(dataset):
+def compute_dataset_statistics(dataset, crop=0):
     """
     Compute statistics for a single dataset.
 
@@ -38,6 +37,8 @@ def compute_dataset_statistics(dataset):
     -----------
     dataset : h5py.Dataset
         HDF5 dataset to analyze
+    crop : int
+        Number of datapoints to remove from each end before computing statistics
 
     Returns:
     --------
@@ -48,6 +49,12 @@ def compute_dataset_statistics(dataset):
         # Read dataset into memory
         data = dataset[:]
 
+        # Crop ends if requested (e.g. to remove transient effects)
+        if crop > 0:
+            if len(data) <= 2 * crop:
+                raise ValueError(f"Dataset length {len(data)} is too short to crop {crop} points from each end")
+            data = data[crop:-crop]
+
         # Flatten if multi-dimensional
         data_flat = data.flatten()
 
@@ -57,32 +64,53 @@ def compute_dataset_statistics(dataset):
         if len(data_clean) == 0:
             # Handle empty or all-NaN datasets
             return {
+                'count': 0,
                 'min': np.nan,
                 'max': np.nan,
                 'mean': np.nan,
                 'std': np.nan,
-                'count': 0
+                'se': np.nan,
+                'med': np.nan,
+                'q25': np.nan,
+                'q75': np.nan,
+                'q90': np.nan,
+                'iqr': np.nan,
+                'skew': np.nan
             }
 
         # Compute statistics
-        stats = {
+        result = {
+            'count': int(len(data_clean)),
             'min': float(np.min(data_clean)),
             'max': float(np.max(data_clean)),
             'mean': float(np.mean(data_clean)),
             'std': float(np.std(data_clean)),
-            'count': int(len(data_clean))
+            'se': float(stats.sem(data_clean)),
+            'med': float(np.median(data_clean)),
+            'q25': float(np.percentile(data_clean, 25)),
+            'q75': float(np.percentile(data_clean, 75)),
+            'q90': float(np.percentile(data_clean, 90)),
+            'iqr': float(stats.iqr(data_clean)),
+            'skew': float(stats.skew(data_clean))
         }
 
-        return stats
+        return result
 
     except Exception as e:
         print(f"Warning: Error computing statistics for dataset: {e}")
         return {
+            'count': 0,
             'min': np.nan,
             'max': np.nan,
             'mean': np.nan,
             'std': np.nan,
-            'count': 0
+            'se': np.nan,
+            'med': np.nan,
+            'q25': np.nan,
+            'q75': np.nan,
+            'q90': np.nan,
+            'iqr': np.nan,
+            'skew': np.nan
         }
 
 
@@ -110,8 +138,9 @@ def process_hdf5_file(hdf5_path):
                     # Skip multi-dimensional datasets (images, timeseries images)
                     if obj.ndim != 1:
                         return
-                    # Compute statistics for this dataset
-                    stats = compute_dataset_statistics(obj)
+                    # Compute statistics for this dataset; crop AMPM transient ends
+                    crop = 500 if name.startswith('AMPM/') else 0
+                    stats = compute_dataset_statistics(obj, crop=crop)
                     # Use full path as key (e.g., "AMPM/Photodiode1Bits")
                     file_stats[name] = stats
 
@@ -122,102 +151,6 @@ def process_hdf5_file(hdf5_path):
 
     return file_stats
 
-
-def compute_overall_statistics(all_stats_df):
-    """
-    Compute overall statistics using weighted averages.
-
-    For mean: weighted average using counts
-    For std: combined standard deviation using counts
-    For min/max: global min/max across all tracks
-
-    Parameters:
-    -----------
-    all_stats_df : pd.DataFrame
-        DataFrame with trackids as rows and dataset_stat columns
-
-    Returns:
-    --------
-    pd.Series
-        Series containing overall statistics
-    """
-    overall_stats = {}
-
-    # Get unique dataset names (extract from column names like "AMPM/Photodiode1Bits_mean")
-    dataset_names = set()
-    for col in all_stats_df.columns:
-        if col == 'trackid':
-            continue
-        # Extract dataset name (everything before the last underscore)
-        dataset_name = '_'.join(col.split('_')[:-1])
-        dataset_names.add(dataset_name)
-
-    # Compute overall stats for each dataset
-    for dataset in dataset_names:
-        mean_col = f'{dataset}_mean'
-        std_col = f'{dataset}_std'
-        min_col = f'{dataset}_min'
-        max_col = f'{dataset}_max'
-        count_col = f'{dataset}_count'
-
-        # Check if columns exist
-        if count_col not in all_stats_df.columns:
-            continue
-
-        # Get counts and valid data
-        counts = all_stats_df[count_col]
-        valid_mask = (counts > 0) & (counts.notna())
-
-        if not valid_mask.any():
-            # No valid data for this dataset
-            overall_stats[mean_col] = np.nan
-            overall_stats[std_col] = np.nan
-            overall_stats[min_col] = np.nan
-            overall_stats[max_col] = np.nan
-            overall_stats[count_col] = 0
-            continue
-
-        # Total count
-        total_count = counts[valid_mask].sum()
-        overall_stats[count_col] = int(total_count)
-
-        # Global min and max
-        if min_col in all_stats_df.columns:
-            overall_stats[min_col] = all_stats_df[min_col][valid_mask].min()
-        else:
-            overall_stats[min_col] = np.nan
-
-        if max_col in all_stats_df.columns:
-            overall_stats[max_col] = all_stats_df[max_col][valid_mask].max()
-        else:
-            overall_stats[max_col] = np.nan
-
-        # Weighted mean
-        if mean_col in all_stats_df.columns:
-            means = all_stats_df[mean_col][valid_mask]
-            weights = counts[valid_mask]
-            weighted_mean = (means * weights).sum() / total_count
-            overall_stats[mean_col] = weighted_mean
-        else:
-            overall_stats[mean_col] = np.nan
-
-        # Combined standard deviation
-        # Formula: σ_total = sqrt( Σ(n_i * (σ_i^2 + (μ_i - μ_total)^2)) / Σ(n_i) )
-        if std_col in all_stats_df.columns and mean_col in all_stats_df.columns:
-            stds = all_stats_df[std_col][valid_mask]
-            means = all_stats_df[mean_col][valid_mask]
-            weights = counts[valid_mask]
-
-            # Combined variance
-            variances = stds ** 2
-            mean_diffs_sq = (means - weighted_mean) ** 2
-            combined_variance = (weights * (variances + mean_diffs_sq)).sum() / total_count
-            overall_stats[std_col] = np.sqrt(combined_variance)
-        else:
-            overall_stats[std_col] = np.nan
-
-    overall_stats['trackid'] = 'OVERALL'
-    return pd.Series(overall_stats)
 
 
 def main():
@@ -264,40 +197,37 @@ def main():
     print("\nCreating statistics dataframe...")
     df = pd.DataFrame(all_stats)
 
-    # Compute overall statistics
-    print("Computing overall statistics...")
-    overall_row = compute_overall_statistics(df)
+    # Sort columns: trackid first, KH/ group before AMPM/, datasets alphabetically within each
+    # group, stat suffixes in definition order within each dataset
+    _stat_order = ['count', 'min', 'max', 'mean', 'std', 'se', 'med', 'q25', 'q75', 'q90', 'iqr', 'skew']
 
-    # Append overall row
-    df = pd.concat([df, pd.DataFrame([overall_row])], ignore_index=True)
+    def _col_key(col):
+        group = 0 if col.startswith('KH/') else (1 if col.startswith('AMPM/') else 2)
+        last_under = col.rfind('_')
+        if last_under >= 0:
+            dataset, stat = col[:last_under], col[last_under + 1:]
+            stat_idx = _stat_order.index(stat) if stat in _stat_order else len(_stat_order)
+        else:
+            dataset, stat_idx = col, len(_stat_order)
+        return (group, dataset, stat_idx)
 
-    # Sort columns: trackid first, then alphabetically
-    cols = ['trackid'] + sorted([c for c in df.columns if c != 'trackid'])
+    cols = ['trackid'] + sorted([c for c in df.columns if c != 'trackid'], key=_col_key)
     df = df[cols]
 
     # Save to CSV
-    output_path = hdf5_dir / 'hdf5_dataset_statistics.csv'
+    output_path = hdf5_dir / 'hdf5_dataset_statistics_extended.csv'
     df.to_csv(output_path, index=False, encoding='utf-8')
 
     print(f"\n✓ Statistics saved to: {output_path}")
-    print(f"✓ Total rows: {len(df)} (including OVERALL)")
+    print(f"✓ Tracks processed: {len(df)}")
     print(f"✓ Total columns: {len(df.columns)}")
 
     # Display summary
     print("\n" + "=" * 80)
     print("Summary")
     print("=" * 80)
-    print(f"Individual tracks: {len(df) - 1}")
+    print(f"Tracks: {len(df)}")
     print(f"Datasets analyzed: {len([c for c in df.columns if c.endswith('_count')])}")
-    print("\nFirst few columns of OVERALL statistics:")
-
-    # Show a sample of overall statistics
-    overall_series = df[df['trackid'] == 'OVERALL'].iloc[0]
-    sample_cols = [c for c in cols[:20] if c != 'trackid']  # Show first 19 columns
-    for col in sample_cols:
-        value = overall_series[col]
-        if pd.notna(value):
-            print(f"  {col}: {value:.4f}" if isinstance(value, float) else f"  {col}: {value}")
 
     print("\n✓ Done!")
 
