@@ -4,7 +4,7 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
-import scipy.optimize as optimize
+from curve_fitter import fit_curve
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 sys.path.append ('D:\\ME1573_data_processing')
@@ -30,14 +30,6 @@ cmap_name = 'inferno_r'    # colormap for z-value colour coding
 marker_size = 30        # scatter marker area (points²)
 marker_edge_width = 0.5 # marker edge linewidth (points)
 fit_lw = 0.7            # curve fit line width
-fit_p0 = [1, 2.5]      # initial parameter guess for curve_function
-
-    # Data #
-pop_nans = True
-fit_curves = True
-show_r2 = False          # show R² label at end of each fit curve
-show_r2_in_legend = True # show R² in parentheses after category label in legend
-include_error_bars = True
 
     # Visual #
 colour_curves = False    # False → all fit curves drawn in black
@@ -46,9 +38,65 @@ regime_point_shapes = False
 label_points = False
 include_hline = None
 
+    # Data #
+pop_nans = True
+show_r2 = False          # show R² label at end of each fit curve
+show_r2_in_legend = True # show R² in parentheses after category label in legend
+include_error_bars = True
+log_log_axes = False     # True → both axes use log scale
+
+    # Curve fitting #
+fit_curves = True
+fit_p0 = [0.1, 1, 1, 1] # initial parameter guess (None → auto-compute via log-linear OLS)
+fit_bounds = None       # (lower, upper) bounds — None disables bounded solver and DE fallback
+fit_linearize = True   # bootstrap p0 via log-linear OLS (power-exponential models)
+fit_auto_select = True  # True → fit every candidate below; plot the one with the best R²
+fit_candidates = [       # evaluated only when fit_auto_select = True
+    # {
+        # 'func':      lambda x, a, b, c, d: a * x**b * c**(-x/d),
+        # 'bounds':    ([0, 0, 1.001, 0], [1e8, 10, 1e6, 1e6]),
+        # 'p0':        None,
+        # 'linearize': True,
+        # 'label':     'y = a·x^b·c^(−x/d)',
+        # 'symbol':    '‡',
+    # },
+    # {
+        # 'func':      lambda x, a, b, c, d: a * x**b * d**c / (x + d)**(b + c),
+        # 'bounds':    ([0, 0, 0, 0], [1e8, 10, 10, 1e6]),
+        # 'p0':        [1e5, 0.5, 0.5, 800],
+        # 'linearize': False,
+        # 'label':     'y = a·x^b·d^c / (x+d)^(b+c)',
+        # 'symbol':    '‖',
+    # },
+    {
+        'func':      lambda x, a, b: a * x**b,
+        'bounds':    ([0, -10], [1e9, 10]),
+        'p0':        None,
+        'linearize': True,
+        'label':     'y = a·x^b',
+        'symbol':    '†',
+    },
+    # {
+        # 'func':      lambda x, a, b, c: a + b**(-c*x),
+        # 'bounds':    ([0, 1.001, 0], [1, 1e6, 1e6]),
+        # 'p0':        [0.05, 2.0, 0.001],
+        # 'linearize': False,
+        # 'label':     'y = a+b^(−c·x)',
+        # 'symbol':    '§',
+    # },
+    # {
+        # 'func':      lambda x, a, b: a * x + b,
+        # 'bounds':    ([-1e8, -1e8], [1e8, 1e8]),
+        # 'p0':        None,
+        # 'linearize': False,
+        # 'label':     'y = a·x+b',
+        # 'symbol':    '*',
+    # },
+]
+
     # Legend #
 include_legend = True
-stack_legends  = True            # True → single stacked legend; False → two independent legends
+stack_legends  = False            # True → single stacked legend; False → two independent legends
 legend_loc_z   = 'upper right'  # location of z-value legend (or combined legend when stacked)
 legend_loc_cat = 'lower left'   # location of category legend (ignored when stacked)
 legend_z_sigfigs = 2             # significant figures for z-value legend labels, or None to use str()
@@ -59,9 +107,9 @@ if True:
     plotx = 'scan_speed'
     xerr_col = None         # col_dict key for x error bars, or None
     xlim = [300, 2100]
-    xticks = [400, 800, 1200, 1600, 2000]
+    # xticks = [400, 800, 1200, 1600, 2000]
     # xlim = None
-    # xticks = None
+    xticks = None
     # xlim = [275, 525]
     # xticks = [300, 400, 500]
     # xlim = [0, 0.13]
@@ -70,12 +118,12 @@ if True:
 ### Y-axis settings ###
 #----------------------
 if True:
-    ploty = 'melting_efficiency'
-    # yerr_col = ploty + '_err' # col_dict key for y error bars, or None
-    yerr_col = None # col_dict key for y error bars, or None
+    ploty = 'MP_length'
+    yerr_col = ploty + '_err' # col_dict key for y error bars, or None
+    # yerr_col = None # col_dict key for y error bars, or None
     # ylim = [-0.001, 0.071]
     # yticks = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07]
-    ylim = [-0.01, 0.33]
+    # ylim = [-0.01, 0.33]
     # yticks = [0, 0.1, 0.2, 0.3]
     # yticks = [0, 10, 20, 30, 40, 50]
     # ylim = [-2, 56]
@@ -83,13 +131,13 @@ if True:
     # yticks = [0, 0.01, 0.02]
     # ylim = [-10, 180]
     # yticks = [0, 50, 100, 150]
-    # ylim = None
-    # yticks = None
-    # ylim = [0, 1200]
+    ylim = [0, 1490]
     # ylim = [-10, 450]
     # yticks = [0, 100, 200, 300, 400]
     # ylim = [-20, 520]
     # ylim = [-0.001, 0.066]
+    # ylim = [4000, 110000]
+    # ylim = None
     yticks = None
 
 ### Z-axis settings ###
@@ -108,7 +156,7 @@ if True:
     # zvals = [1.0, 8/9, 6/7, 0.8]
     # zvals = [1.0, 8/9, 0.8]
     # zvals = [500, 450, 400, 350, 300]
-    zvals = [350]
+    zvals = [500]
     # zvals = [0.80, 0.89, 1.00]
     # zcolours = ['#fcffa4', '#f98e09', '#bc3754', '#781c6d', '#2d0b59']
     # zcolours = ['#f98e09']     # None → auto from cmap; or e.g. ['#e41a1c', '#377eb8', '#4daf4a']
@@ -129,20 +177,21 @@ LOGBOOK_FILTERS = {
                     # '0304_04', '0304_05', '0304_06', '0305_01', '0305_02',    # Weld D=0.80
                     # '0305_03', '0305_04', '0305_05', '0305_06', '0306_01',     # Weld D=0.86
                     # '0306_02', '0306_03', '0306_04', '0306_05', '0306_06',     # Weld D=0.89
-                    # '0110_01', '0110_02', '0110_03',     # Weld D=1.0
+                    # '0110_01', '0507_05', '0507_01', '0110_03',  #'0110_02',     # Weld D=1.0
                     # '0102_01', '0102_02', '0102_03', '0102_04', '0102_05',     # Powder D=0.8
                     # '0557_05', '0557_06', '0557_03', '0558_02', '0557_01',     # Powder D=0.86
                     # '0104_02', '0104_03', '0104_04', '0104_05', '0104_06',     # Powder D=0.89
-                    # '0516_05', '0323_01', '0323_02', '0323_03'     # Powder D=1.0
+                    # '0516_05', '0514_05', '0514_06', '0323_02', '0323_03', #'0323_01',     # Powder D=1.0
                     # ] 
 }
 
 ### Category settings ###
 #------------------------
-# col: col_dict key for the column used to split rows into categories
-# op:  comparison operator ('==', '!=', '>', '<')
-# val: value to compare against
-# ls:  line/marker-edge style for this category
+# col:        col_dict key for the column used to split rows into categories
+# op:         comparison operator ('==', '!=', '>', '<')
+# val:        value to compare against
+# ls:         line style for curve fit
+# connect_ls: line style for straight lines connecting scatter points in z-colour (omit or None for scatter only)
 categories = [
     # {'label': 'powder', 'col': 'base_type', 'op': '==', 'val': 'powder', 'ls': '-'},
     # {'label': 'weld',   'col': 'base_type', 'op': '==', 'val': 'weld', 'ls': '--'},
@@ -150,12 +199,17 @@ categories = [
     {'label': '0.89',   'col': 'duty_cycle', 'op': '~=', 'val': 0.89, 'ls': '--'},
     # {'label': '0.86',   'col': 'duty_cycle', 'op': '~=', 'val': 0.86, 'ls': ':'},
     {'label': '0.80',   'col': 'duty_cycle', 'op': '~=', 'val': 0.8, 'ls': ':'},
-    
+
 ]
+
+TRACKID_EXCLUDE_PREFIXES = ['0106']
 
 def filter_logbook():
     log = get_logbook()
     log_red, _ = filter_logbook_tracks(log, LOGBOOK_FILTERS)
+    if TRACKID_EXCLUDE_PREFIXES:
+        mask = ~log_red['trackid'].str.startswith(tuple(TRACKID_EXCLUDE_PREFIXES))
+        log_red = log_red[mask]
     log_red.reset_index(inplace=True)
     return log_red
 
@@ -167,15 +221,33 @@ def set_up_figure(col_dict):
 
     if plot_bg != None: ax.set_facecolor(plot_bg)
 
+    if log_log_axes:
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+
     ax.set_xlabel(col_dict[plotx][1])
     if xlim != None: ax.set_xlim(xlim[0], xlim[1])
-    if xticks != None: ax.set_xticks(xticks)
-
     ax.set_ylabel(col_dict[ploty][1])
     if ylim != None: ax.set_ylim(ylim[0], ylim[1])
-    if yticks != None: ax.set_yticks(yticks)
 
-    ax.tick_params(labelsize=font_size - 1)
+    if log_log_axes:
+        def _minor_label(x, _):
+            exp = int(np.floor(np.log10(abs(x))))
+            mantissa = int(round(x / 10**exp))
+            if mantissa not in (5,):
+                return ''
+            return rf'$\mathdefault{{{mantissa}\times10^{{{exp}}}}}$'
+        for axis in (ax.xaxis, ax.yaxis):
+            axis.set_major_locator(mpl.ticker.LogLocator(base=10.0, subs=(1.0,)))
+            axis.set_minor_locator(mpl.ticker.LogLocator(base=10.0, subs=np.arange(2, 10)))
+            axis.set_minor_formatter(mpl.ticker.FuncFormatter(_minor_label))
+    else:
+        if xticks != None: ax.set_xticks(xticks)
+        if yticks != None: ax.set_yticks(yticks)
+
+    ax.tick_params(which='major', labelsize=font_size - 1)
+    if log_log_axes:
+        ax.tick_params(which='minor', labelsize=font_size - 2)
     for spine in ax.spines.values():
         spine.set_edgecolor('black')
 
@@ -247,7 +319,16 @@ def draw_hline(ax, hliney):
             transform=ax.get_yaxis_transform(),
             c='gray', va='bottom', ha='right')
 
-def curve_function(x, a, b):
+def draw_connecting_lines(ax, iz, marker_dict, cat, x, y):
+    ls = cat.get('connect_ls')
+    if ls is None:
+        return
+    sort_idx = np.argsort(x)
+    xs = np.array(x)[sort_idx]
+    ys = np.array(y)[sort_idx]
+    ax.plot(xs, ys, color=marker_dict[iz]['c'], linestyle=ls, linewidth=fit_lw, zorder=0)
+
+def curve_function(x, a, b, c, d):
     # return a*x**3 + b*x**2 + c*x + d
     # return a*np.exp(-(x-b)**2/(2*c**2))+d
     # return a*x**2 + b*x + c
@@ -255,7 +336,7 @@ def curve_function(x, a, b):
     # return a + b*np.log(x)
     # return a*np.exp(b*x)
     # return np.arctan(a*(x+b))*(180/np.pi)
-    return a * x**b
+    return a * x**b #* c**(-x/d)
     # return a * x + b
 
 curve_function_str = next(
@@ -265,26 +346,62 @@ curve_function_str = next(
 )
 
 def draw_curve_fit(ax, iz, marker_dict, ls, xx, yy):
-    try:
-        popt, _ = optimize.curve_fit(curve_function, xx, yy, p0=fit_p0, maxfev=10000)
-        X = np.linspace(min(xx), max(xx), 50)
-        Y = curve_function(X, *popt)
-        residuals = np.array(yy) - curve_function(np.array(xx), *popt)
-        ss_res = np.sum(residuals**2)
-        ss_tot = np.sum((np.array(yy) - np.mean(yy))**2)
-        r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else float('nan')
-        curve_colour = marker_dict[iz]['c'] if colour_curves else 'k'
-        ax.plot(X, Y, c=curve_colour, ls=ls, lw=fit_lw, zorder=0)
-        if show_r2:
-            ax.text(X[-1], Y[-1], f' R\u00b2={round(r2, 2)}',
-                    color=curve_colour,
-                    fontsize=font_size - 1,
-                    va='center', ha='left',
-                    clip_on=False)
-        return popt, r2
-    except (RuntimeError, ValueError, TypeError) as e:
-        print(f'\nCurve fit failed for z-index {iz}: {e}')
-        return None, None
+    xx_arr = np.array(xx, dtype=float)
+    yy_arr = np.array(yy, dtype=float)
+
+    if fit_auto_select:
+        best_result, best_candidate = None, None
+        for cand in fit_candidates:
+            n_cand = len(cand['bounds'][0])
+            if len(xx_arr) < n_cand:
+                print(f'  [auto-select] Skipping "{cand["label"]}" \u2014 only {len(xx_arr)} points, need {n_cand}.')
+                continue
+            result = fit_curve(
+                cand['func'], xx_arr, yy_arr,
+                p0=cand.get('p0'),
+                bounds=cand['bounds'],
+                linearize=cand.get('linearize', True),
+                verbose=True,
+            )
+            if result.converged and (best_result is None or result.r2 > best_result.r2):
+                best_result, best_candidate = result, cand
+        if best_result is None:
+            print(f'\nAll candidate fits failed for z-index {iz}.')
+            return None, None, None
+        result     = best_result
+        func_used  = best_candidate['func']
+        fit_info   = {'label': best_candidate['label'], 'symbol': best_candidate['symbol']}
+        print(f'  [auto-select] Best: "{best_candidate["label"]}"  R\u00b2={result.r2:.4f}  [{best_candidate["symbol"]}]')
+    else:
+        result = fit_curve(
+            curve_function, xx_arr, yy_arr,
+            p0=fit_p0,
+            bounds=fit_bounds,
+            linearize=fit_linearize,
+            verbose=True,
+        )
+        if not result.converged:
+            print(f'\nCurve fit failed for z-index {iz}:')
+            for w in result.warnings:
+                print(f'  {w}')
+            return None, None, None
+        func_used = curve_function
+        fit_info  = None
+
+    popt = result.popt
+    r2   = result.r2
+    X = np.geomspace(min(xx), max(xx), 50) if log_log_axes else np.linspace(min(xx), max(xx), 50)
+    Y = func_used(X, *popt)
+    curve_colour = marker_dict[iz]['c'] if colour_curves else 'k'
+    ax.plot(X, Y, c=curve_colour, ls=ls, lw=fit_lw, zorder=0)
+    if show_r2:
+        symbol = fit_info['symbol'] if fit_info else ''
+        ax.text(X[-1], Y[-1], f' R\u00b2={round(r2, 2)}{symbol}',
+                color=curve_colour,
+                fontsize=font_size - 1,
+                va='center', ha='left',
+                clip_on=False)
+    return popt, r2, fit_info
 
 def create_legend(ax, col_dict, marker_dict, fit_results=None):
     def section_header(label):
@@ -315,16 +432,17 @@ def create_legend(ax, col_dict, marker_dict, fit_results=None):
     ]
     if categories:
         cat_col_label = col_dict[categories[0]['col']][1]
-        cat_r2 = {}
+        cat_r2 = {}  # {category: [(r2_float, symbol_str), ...]}
         if show_r2_in_legend and fit_results:
             for r in fit_results:
                 if r['r2'] is not None:
-                    cat_r2.setdefault(r['category'], []).append(r['r2'])
+                    entry = (r['r2'], r.get('fit_symbol', ''))
+                    cat_r2.setdefault(r['category'], []).append(entry)
         def _cat_label(cat):
             label = cat['label']
             if show_r2_in_legend and label in cat_r2:
-                r2_vals = cat_r2[label]
-                r2_str = ', '.join(f'{v:.2f}' for v in r2_vals)
+                entries = cat_r2[label]
+                r2_str = ', '.join(f'{v:.2f}{sym}' for v, sym in entries)
                 return f'{label} (R²={r2_str})'
             return label
         style_handles = [section_header(cat_col_label)] + [
@@ -393,10 +511,19 @@ def main():
             log_red_i_c.reset_index(inplace=True)
             x, y = plot_data(ax, iz, log_red_i_c, marker_dict, cat, col_dict)
             (x, y) = remove_nan_values((x[0], y[0]))
-            popt, r2 = None, None
-            if fit_curves and len(x) >= len(fit_p0):
-                popt, r2 = draw_curve_fit(ax, iz, marker_dict, cat['ls'], x, y)
-            fit_results.append({'zval': zval, 'category': cat['label'], 'popt': popt, 'r2': r2})
+            draw_connecting_lines(ax, iz, marker_dict, cat, x, y)
+            popt, r2, fit_info = None, None, None
+            if fit_auto_select:
+                n_params_min = min(len(c['bounds'][0]) for c in fit_candidates)
+            else:
+                n_params_min = len(fit_p0) if fit_p0 is not None else len(fit_bounds[0])
+            if fit_curves and len(x) >= n_params_min:
+                popt, r2, fit_info = draw_curve_fit(ax, iz, marker_dict, cat['ls'], x, y)
+            fit_results.append({
+                'zval': zval, 'category': cat['label'], 'popt': popt, 'r2': r2,
+                'fit_label':  fit_info['label']  if fit_info else curve_function_str,
+                'fit_symbol': fit_info['symbol'] if fit_info else '',
+            })
             print_data_summary(x, y, zval, cat['label'])
 
     if include_hline != None:
@@ -418,13 +545,21 @@ def main():
         if fit_curves:
             zval_labels = fmt_sigfigs_padded(zvals, legend_z_sigfigs)
             zval_label_map = {zv: lbl for zv, lbl in zip(zvals, zval_labels)}
-            param_names = list('abcdefghij')[:len(fit_p0)]
-            lines = [f'Curve function: {curve_function_str}', '']
+            if fit_auto_select:
+                lines = ['Fit candidates (auto-selected by R²):']
+                for cand in fit_candidates:
+                    lines.append(f'  {cand["symbol"]}  {cand["label"]}')
+                lines.append('')
+            else:
+                lines = [f'Curve function: {curve_function_str}', '']
             for r in fit_results:
                 zv_str = zval_label_map[r['zval']]
                 tag = f'{plotz}={zv_str}' + (f', category={r["category"]}' if r['category'] else '')
                 lines.append(f'Series: {tag}')
                 if r['popt'] is not None:
+                    if fit_auto_select:
+                        lines.append(f'  Selected: {r["fit_label"]} [{r["fit_symbol"]}]')
+                    param_names = list('abcdefghij')[:len(r['popt'])]
                     for name, val in zip(param_names, r['popt']):
                         lines.append(f'  {name} = {val:.6g}')
                     lines.append(f'  R² = {r["r2"]:.4f}')
